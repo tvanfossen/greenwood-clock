@@ -1,0 +1,10 @@
+# idf_component.yml
+dependencies:
+
+  espressif/esp32_p4_function_ev_board: "*"
+
+  espressif/esp_hosted: "*"
+
+  espressif/esp_wifi_remote: "*"
+
+  espressif/esp_lcd_ek79007: "*"         
