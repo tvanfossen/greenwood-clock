@@ -1,2 +1,3 @@
 /build
 /managed_components
+/components/weather/secrets.h
