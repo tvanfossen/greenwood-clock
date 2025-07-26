@@ -34,6 +34,7 @@ static inline float celsius_to_fahrenheit(float c) {
 }
 
 
+
 static void clock_update_cb(lv_timer_t* t) {
     ESP_LOGI(TAG, "clock_update_cb: start");
 
@@ -122,19 +123,6 @@ static void weather_update_cb(lv_timer_t* t)
     ESP_LOGI(TAG, "weather_update_cb: complete");
 }
 
-void ui_show_splash(void) {
-    ESP_LOGI(TAG, "ui_show_splash: start");
-    lvgl_port_lock(0);
-    lv_obj_t* scr = lv_scr_act();
-    lv_obj_clean(scr);
-    LV_IMG_DECLARE(splash);
-    lv_obj_t* img = lv_img_create(scr);
-    lv_img_set_src(img, &splash);
-    lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
-    lvgl_port_unlock();
-    ESP_LOGI(TAG, "ui_show_splash: complete");
-}
-
 void ui_clock_init(const struct tm *ti0) {
     ESP_LOGI(TAG, "ui_clock_init: start");
     lvgl_port_lock(0);
@@ -175,7 +163,6 @@ void ui_clock_init(const struct tm *ti0) {
         ESP_LOGI(TAG, "ui_clock_init: complete");
     lvgl_port_unlock();
 }
-
 
 void ui_weather_init(void)
 {
@@ -221,4 +208,17 @@ void ui_weather_init(void)
         lv_timer_create(weather_update_cb, 30 * 60 * 1000, NULL);
     lvgl_port_unlock();
 
+}
+
+void ui_show_splash(void) {
+    ESP_LOGI(TAG, "ui_show_splash: start");
+    lvgl_port_lock(0);
+    lv_obj_t* scr = lv_scr_act();
+    lv_obj_clean(scr);
+    LV_IMG_DECLARE(splash);
+    lv_obj_t* img = lv_img_create(scr);
+    lv_img_set_src(img, &splash);
+    lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
+    lvgl_port_unlock();
+    ESP_LOGI(TAG, "ui_show_splash: complete");
 }
