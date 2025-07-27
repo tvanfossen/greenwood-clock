@@ -125,13 +125,12 @@ extern "C" void app_main()
     ESP_LOGI(TAG, "[6] Local time %04d-%02d-%02d %02d:%02d:%02d",
              ti.tm_year+1900, ti.tm_mon+1, ti.tm_mday,
              ti.tm_hour, ti.tm_min, ti.tm_sec);
+    weather_init();
+
     ESP_LOGI(TAG, "[6] Initializing clock UI…");
     ui_clock_init(&ti);
     ESP_LOGI(TAG, "[6] Clock UI up");
     
-    weather_init();
-    ui_weather_init();
-
     // 7) Idle loop
     ESP_LOGI(TAG, "[8] Entering idle");
     while (true) {

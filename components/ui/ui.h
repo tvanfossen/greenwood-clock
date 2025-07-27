@@ -10,7 +10,6 @@ extern "C" {
 
 void ui_show_splash(void);
 void ui_clock_init(const struct tm *timeinfo);
-void ui_weather_init(void);
 
 #ifdef __cplusplus
 }
