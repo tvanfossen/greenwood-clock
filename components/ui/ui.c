@@ -33,9 +33,9 @@ LV_FONT_DECLARE(nunito_48);
 LV_FONT_DECLARE(nunito_256);
 
 #define STYLE_SECTION(obj) \
-    lv_obj_set_style_bg_opa(obj, 51, 0); /* 20% opacity */ \
+    lv_obj_set_style_bg_opa(obj, LV_OPA_TRANSP, 0); /* 20% opacity */ \
     lv_obj_set_style_border_color(obj, lv_color_white(), 0); \
-    lv_obj_set_style_border_width(obj, 3, 0); \
+    lv_obj_set_style_border_width(obj, 0, 0); \
     lv_obj_set_style_radius(obj, 16, 0); \
     lv_obj_set_style_bg_color(obj, lv_color_black(), 0); // color is ignored if opa is TRANSP
 
