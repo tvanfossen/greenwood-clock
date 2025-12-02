@@ -3,8 +3,12 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_spiffs.h"
+#include "esp_system.h"
+#include "esp_task_wdt.h"
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include "network.h"
 #include "time_sync.h"
@@ -13,6 +17,20 @@
 #include "secrets.h"
 
 static const char* TAG = "main";
+
+// Panic handler to log crash information
+static void panic_handler_hook(void) {
+    ESP_LOGE(TAG, "========== PANIC DETECTED ==========");
+    ESP_LOGE(TAG, "Heap free: %lu bytes", (unsigned long)esp_get_free_heap_size());
+    ESP_LOGE(TAG, "Min heap ever: %lu bytes", (unsigned long)esp_get_minimum_free_heap_size());
+
+    // Log stack watermarks for all tasks
+    char task_list[1024];
+    vTaskList(task_list);
+    ESP_LOGE(TAG, "Task list:\n%s", task_list);
+
+    ESP_LOGE(TAG, "====================================");
+}
 
 #define DEFAULT_FD_NUM      2
 #define DEFAULT_MOUNT_POINT ""
@@ -69,6 +87,10 @@ extern "C" void app_main()
     struct tm ti;
 
     ESP_LOGI(TAG, "=== app_main starting ===");
+
+    // Register panic handler
+    esp_register_shutdown_handler(panic_handler_hook);
+    ESP_LOGI(TAG, "[0] Panic handler registered");
 
     // 1) Mount SPIFFS
     ESP_LOGI(TAG, "[1] Mounting SPIFFS...");
@@ -131,10 +153,29 @@ extern "C" void app_main()
     ui_clock_init(&ti);
     ESP_LOGI(TAG, "[6] Clock UI up");
     
-    // 7) Idle loop
-    ESP_LOGI(TAG, "[8] Entering idle");
+    // 7) Idle loop with heap monitoring
+    ESP_LOGI(TAG, "[7] Entering idle loop with heap monitoring");
+    size_t last_free_heap = esp_get_free_heap_size();
+    uint32_t loop_count = 0;
+
     while (true) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(60000));  // Every 60 seconds
+        loop_count++;
+
+        size_t free_heap = esp_get_free_heap_size();
+        size_t min_heap = esp_get_minimum_free_heap_size();
+
+        ESP_LOGI(TAG, "[HEALTH] Loop %lu: Heap free=%lu, min=%lu, delta=%ld",
+                 (unsigned long)loop_count,
+                 (unsigned long)free_heap,
+                 (unsigned long)min_heap,
+                 (long)(free_heap - last_free_heap));
+
+        if (free_heap < 20000) {
+            ESP_LOGW(TAG, "[HEALTH] LOW HEAP WARNING! Free: %lu bytes", (unsigned long)free_heap);
+        }
+
+        last_free_heap = free_heap;
     }
 }
 
