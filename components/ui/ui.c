@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include "esp_log.h"
+#include "esp_system.h"            // esp_get_free_heap_size()
 #include "lvgl.h"
 #include "esp_lvgl_port.h"         // lvgl_port_lock()/unlock()
 #include "bsp/display.h"           // bsp_display APIs (if needed)
@@ -90,48 +91,61 @@ static void clock_update_cb(lv_timer_t* t) {
 
 static void weather_update_cb(lv_timer_t* t)
 {
-    ESP_LOGI(TAG, "weather_update_cb: start");
-    lvgl_port_lock(0);
+    ESP_LOGI(TAG, "weather_update_cb: start (heap: %lu bytes)", (unsigned long)esp_get_free_heap_size());
 
+    // CRITICAL FIX: Do NOT lock LVGL before network operations!
+    // Network fetch can take seconds and would block LVGL task
     weather_data_t wd;
     if (weather_fetch(GREENWOOD_LAT, GREENWOOD_LONG, &wd) != ESP_OK) {
         ESP_LOGE(TAG, "weather_update_cb: fetch failed");
         return;
     }
 
+    ESP_LOGI(TAG, "weather_update_cb: fetch complete, updating UI");
+
+    // Prepare display strings BEFORE locking LVGL
     float ftemp = celsius_to_fahrenheit(wd.temp_c);
     char temp_txt[32];
-    snprintf(temp_txt, sizeof(temp_txt), "%.0fF", ftemp); // Drop feels like
-    lv_label_set_text(lbl_temp, temp_txt);
+    snprintf(temp_txt, sizeof(temp_txt), "%.0fF", ftemp);
 
     int uv = wd.uv_index;
     char uv_text[32];
     snprintf(uv_text, sizeof(uv_text), "UV %d", uv);
-    lv_label_set_text(lbl_weather_util, uv_text);
 
+    // Fetch weather icon (network operation, do NOT lock)
     free(weather_icon_buf);
     weather_icon_buf = NULL;
     weather_icon_size = 0;
 
+    bool icon_ready = false;
     if (weather_fetch_icon(&wd, &weather_icon_buf, &weather_icon_size) == ESP_OK) {
         ESP_LOGI(TAG, "weather_update_cb: icon %u bytes", (unsigned)weather_icon_size);
+        icon_ready = true;
 
         weather_icon_dsc.header.magic     = LV_IMAGE_HEADER_MAGIC;
-        weather_icon_dsc.header.cf        = LV_COLOR_FORMAT_RAW;  /* RAW container */
-        weather_icon_dsc.header.flags     = 0;                 /* no extras */
-        weather_icon_dsc.header.w         = 0;                 /* let LVGL parse from data */
+        weather_icon_dsc.header.cf        = LV_COLOR_FORMAT_RAW;
+        weather_icon_dsc.header.flags     = 0;
+        weather_icon_dsc.header.w         = 0;
         weather_icon_dsc.header.h         = 0;
         weather_icon_dsc.header.stride    = 0;
-
         weather_icon_dsc.data_size        = weather_icon_size;
         weather_icon_dsc.data             = weather_icon_buf;
+    }
 
-        /* hand it off to LVGL */
+    // NOW lock LVGL for UI updates
+    lvgl_port_lock(0);
+
+    // Update UI widgets (fast, with lock held)
+    lv_label_set_text(lbl_temp, temp_txt);
+    lv_label_set_text(lbl_weather_util, uv_text);
+
+    if (icon_ready) {
         lv_img_set_src(img_weather, &weather_icon_dsc);
     }
+
     lvgl_port_unlock();
 
-    ESP_LOGI(TAG, "weather_update_cb: complete");
+    ESP_LOGI(TAG, "weather_update_cb: complete (heap: %lu bytes)", (unsigned long)esp_get_free_heap_size());
 }
 
 void ui_clock_init(const struct tm *ti0) {
