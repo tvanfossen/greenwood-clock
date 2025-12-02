@@ -18,7 +18,7 @@ static const char* TAG = "main";
 #define DEFAULT_MOUNT_POINT ""
 
 
-esp_err_t bsp_spiffs_init(char *partition_label, char *mount_point, size_t max_files)
+esp_err_t bsp_spiffs_init(const char *partition_label, const char *mount_point, size_t max_files)
 {
     esp_vfs_spiffs_conf_t conf = {
         .base_path = mount_point,
@@ -52,7 +52,7 @@ esp_err_t bsp_spiffs_init_default(void)
     return bsp_spiffs_init(NULL, DEFAULT_MOUNT_POINT, DEFAULT_FD_NUM);
 }
 
-esp_err_t bsp_spiffs_deinit(char *partition_label)
+esp_err_t bsp_spiffs_deinit(const char *partition_label)
 {
     return esp_vfs_spiffs_unregister(partition_label);
 }
