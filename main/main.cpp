@@ -18,6 +18,15 @@
 
 static const char* TAG = "main";
 
+// LVGL assert handler - reset instead of hanging
+extern "C" void lv_assert_handler(void) {
+    ESP_LOGE(TAG, "========== LVGL ASSERT FAILED ==========");
+    ESP_LOGE(TAG, "Heap free: %lu bytes", (unsigned long)esp_get_free_heap_size());
+    ESP_LOGE(TAG, "LVGL assertion triggered, resetting device...");
+    vTaskDelay(pdMS_TO_TICKS(1000));  // Give time for log to flush
+    esp_restart();
+}
+
 // Panic handler to log crash information
 static void panic_handler_hook(void) {
     ESP_LOGE(TAG, "========== PANIC DETECTED ==========");
