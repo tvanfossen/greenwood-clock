@@ -15,5 +15,10 @@ idf_component_register(
         time_sync                   # your SNTP/TZ module
         ui                          # your LVGL splash & clock UI
         weather
+        settings                    # persistent settings via NVS
+        ota                         # OTA firmware updates
+        sdcard                      # SD card support
+        http_api                    # HTTP server for file management
+        debug_log                   # Debug log capture to SD card
 )
 spiffs_create_partition_image(storage ../spiffs FLASH_IN_PROJECT)

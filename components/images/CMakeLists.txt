@@ -1,8 +1,8 @@
-# Glob all generated C sources under c_array/
-file(GLOB IMAGE_SRCS "c_array/*.c")
+# Images loaded from SD card at runtime to save firmware space
+# Splash is loaded from /sdcard/splash.png via HTTP API upload
+# No C array sources needed
 
 idf_component_register(
-    SRCS         ${IMAGE_SRCS}
     INCLUDE_DIRS .
     REQUIRES     lvgl
 )

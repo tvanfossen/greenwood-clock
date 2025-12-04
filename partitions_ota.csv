@@ -1,0 +1,16 @@
+# Greenwood Clock OTA Partition Table
+# ESP32-P4 with 16MB Flash
+#
+# OTA Update Flow:
+#   1. Factory partition: Initial firmware (fallback)
+#   2. ota_0/ota_1: Alternating update slots
+#   3. Device boots from most recent valid firmware
+#
+# Name,   Type, SubType,  Offset,  Size,   Flags
+nvs,      data, nvs,      0x9000,  0x6000,
+phy_init, data, phy,      0xf000,  0x1000,
+factory,  app,  factory,  0x10000, 0x400000,
+ota_0,    app,  ota_0,    ,        0x400000,
+ota_1,    app,  ota_1,    ,        0x400000,
+storage,  data, spiffs,   ,        0x300000,
+coredump, data, coredump, ,        0x10000,

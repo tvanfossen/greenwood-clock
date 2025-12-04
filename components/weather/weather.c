@@ -12,6 +12,13 @@
 
 static const char *TAG = "weather";
 
+// HTTP client configuration
+#define HTTP_CONNECT_TIMEOUT_MS 5000
+#define HTTP_READ_TIMEOUT_MS    10000
+#define HTTP_MAX_RETRIES        3
+#define HTTP_RETRY_DELAY_MS     2000
+#define HTTP_RATE_LIMIT_DELAY_MS 60000
+
 esp_err_t weather_init(void)
 {
     ESP_LOGI(TAG, "weather_init: API key = %s…", WEATHER_API_KEY[0] ? "[redacted]" : "[none]");
@@ -47,56 +54,116 @@ esp_err_t weather_fetch(float latitude,
             WEATHER_API_KEY);
     ESP_LOGI(TAG, "weather_fetch: URL=%s", url);
 
-    // 2) HTTPS client config
+    // 2) HTTPS client config with timeouts
     esp_http_client_config_t cfg = {
         .url               = url,
         .transport_type    = HTTP_TRANSPORT_OVER_SSL,
         .crt_bundle_attach = esp_crt_bundle_attach,
+        .timeout_ms        = HTTP_READ_TIMEOUT_MS,
     };
-    esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    if (!client) {
-        ESP_LOGE(TAG, "http_client_init failed");
-        return ESP_FAIL;
-    }
 
-    // 3) Open + fetch headers
-    esp_err_t err = esp_http_client_open(client, 0);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "http_client_open: %s", esp_err_to_name(err));
-        esp_http_client_cleanup(client);
-        return err;
-    }
-    int clen = esp_http_client_fetch_headers(client);
-    ESP_LOGI(TAG, "weather_fetch: content_length=%d", clen);
+    esp_err_t err = ESP_FAIL;
+    int status_code = 0;
+    char *buf = NULL;
+    int retry = 0;
 
-    // 4) Read body into dynamically growing buffer
-    size_t cap   = (clen > 0 && clen < 32*1024) ? clen + 1 : 4096;
-    size_t total = 0;
-    char *buf    = malloc(cap);
-    if (!buf) {
-        ESP_LOGE(TAG, "malloc(%d) failed", cap);
+    // Retry loop with exponential backoff
+    for (retry = 0; retry < HTTP_MAX_RETRIES; retry++) {
+        if (retry > 0) {
+            ESP_LOGW(TAG, "Retry attempt %d/%d", retry+1, HTTP_MAX_RETRIES);
+            vTaskDelay(pdMS_TO_TICKS(HTTP_RETRY_DELAY_MS * retry));
+        }
+
+        esp_http_client_handle_t client = esp_http_client_init(&cfg);
+        if (!client) {
+            ESP_LOGE(TAG, "http_client_init failed");
+            continue;  // Retry
+        }
+
+        // 3) Open + fetch headers
+        err = esp_http_client_open(client, 0);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "http_client_open: %s", esp_err_to_name(err));
+            esp_http_client_cleanup(client);
+            continue;  // Retry
+        }
+
+        int clen = esp_http_client_fetch_headers(client);
+        status_code = esp_http_client_get_status_code(client);
+        ESP_LOGI(TAG, "HTTP Status: %d, Content-Length: %d", status_code, clen);
+
+        // Check HTTP status code
+        if (status_code == 429) {
+            // Rate limited - wait longer before retry
+            ESP_LOGW(TAG, "Rate limited (HTTP 429), waiting %dms", HTTP_RATE_LIMIT_DELAY_MS);
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            vTaskDelay(pdMS_TO_TICKS(HTTP_RATE_LIMIT_DELAY_MS));
+            continue;
+        } else if (status_code >= 500) {
+            // Server error - retry
+            ESP_LOGW(TAG, "Server error (HTTP %d), retrying", status_code);
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            continue;
+        } else if (status_code >= 400) {
+            // Client error - don't retry
+            ESP_LOGE(TAG, "Client error (HTTP %d), not retrying", status_code);
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            return ESP_FAIL;
+        } else if (status_code != 200) {
+            // Unexpected status code
+            ESP_LOGW(TAG, "Unexpected HTTP status: %d", status_code);
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            continue;
+        }
+
+        // 4) Success! Read body into dynamically growing buffer
+        size_t cap   = (clen > 0 && clen < 32*1024) ? clen + 1 : 4096;
+        size_t total = 0;
+        buf = malloc(cap);
+        if (!buf) {
+            ESP_LOGE(TAG, "malloc(%zu) failed", cap);
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            return ESP_ERR_NO_MEM;
+        }
+
+        while (true) {
+            int r = esp_http_client_read(client, buf + total, cap - total - 1);
+            if (r <= 0) break;
+            total += r;
+            if (total >= cap - 1) {
+                size_t newcap = cap * 2;
+                char *tmp = realloc(buf, newcap);
+                if (!tmp) {
+                    ESP_LOGE(TAG, "realloc failed, truncating response");
+                    break;
+                }
+                buf = tmp;
+                cap = newcap;
+            }
+        }
+        buf[total] = '\0';
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
-        return ESP_ERR_NO_MEM;
-    }
-    while (true) {
-        int r = esp_http_client_read(client, buf + total, cap - total - 1);
-        if (r <= 0) break;
-        total += r;
-        if (total >= cap - 1) {
-            size_t newcap = cap * 2;
-            char *tmp = realloc(buf, newcap);
-            if (!tmp) break;
-            buf = tmp;
-            cap = newcap;
-        }
-    }
-    buf[total] = '\0';
-    esp_http_client_close(client);
-    esp_http_client_cleanup(client);
 
-    ESP_LOGI(TAG, "weather_fetch: received %u bytes JSON", total);
-    ESP_LOGI(TAG, "weather_fetch: payload:\n%s", buf);
+        ESP_LOGI(TAG, "weather_fetch: received %zu bytes JSON", total);
+        ESP_LOGI(TAG, "weather_fetch: payload:\n%s", buf);
+
+        // Break out of retry loop on success
+        err = ESP_OK;
+        break;
+    }
+
+    // Check if all retries failed
+    if (err != ESP_OK || buf == NULL) {
+        ESP_LOGE(TAG, "Failed to fetch weather data after %d attempts", HTTP_MAX_RETRIES);
+        if (buf) free(buf);
+        return ESP_FAIL;
+    }
 
     cJSON *root = cJSON_Parse(buf);
     if (!root) {
@@ -197,49 +264,97 @@ esp_err_t weather_fetch_icon(const weather_data_t *wd,
     if (!wd || !wd->icon_url[0] || !out_buf || !out_len) {
         return ESP_ERR_INVALID_ARG;
     }
+
     ESP_LOGI(TAG, "weather icon url: %s", wd->icon_url);
+
     esp_http_client_config_t cfg = {
         .url               = wd->icon_url,
         .transport_type    = HTTP_TRANSPORT_OVER_SSL,
         .crt_bundle_attach = esp_crt_bundle_attach,
+        .timeout_ms        = HTTP_READ_TIMEOUT_MS,
     };
-    esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    if (!client) return ESP_FAIL;
 
-    esp_err_t err = esp_http_client_open(client, 0);
-    if (err != ESP_OK) {
-        esp_http_client_cleanup(client);
-        return err;
-    }
-    esp_http_client_fetch_headers(client);
+    esp_err_t err = ESP_FAIL;
+    uint8_t *buf = NULL;
+    int retry = 0;
 
-    // Start with a reasonable chunk; grow as needed
-    size_t cap   = 4096;
-    size_t total = 0;
-    uint8_t *buf = malloc(cap);
-    if (!buf) {
+    // Retry loop
+    for (retry = 0; retry < HTTP_MAX_RETRIES; retry++) {
+        if (retry > 0) {
+            ESP_LOGW(TAG, "Icon fetch retry %d/%d", retry+1, HTTP_MAX_RETRIES);
+            vTaskDelay(pdMS_TO_TICKS(HTTP_RETRY_DELAY_MS * retry));
+        }
+
+        esp_http_client_handle_t client = esp_http_client_init(&cfg);
+        if (!client) {
+            ESP_LOGE(TAG, "http_client_init failed");
+            continue;
+        }
+
+        err = esp_http_client_open(client, 0);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "http_client_open: %s", esp_err_to_name(err));
+            esp_http_client_cleanup(client);
+            continue;
+        }
+
+        esp_http_client_fetch_headers(client);
+        int status_code = esp_http_client_get_status_code(client);
+
+        // Check HTTP status
+        if (status_code != 200) {
+            ESP_LOGW(TAG, "Icon fetch HTTP status: %d", status_code);
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            if (status_code >= 400 && status_code < 500) {
+                return ESP_FAIL;  // Don't retry client errors
+            }
+            continue;
+        }
+
+        // Start with a reasonable chunk; grow as needed
+        size_t cap   = 4096;
+        size_t total = 0;
+        buf = malloc(cap);
+        if (!buf) {
+            ESP_LOGE(TAG, "malloc failed for icon buffer");
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            return ESP_ERR_NO_MEM;
+        }
+
+        // Read until EOF
+        int r;
+        while ((r = esp_http_client_read(client, (char*)buf + total, cap - total)) > 0) {
+            total += r;
+            if (total >= cap) {
+                size_t newcap = cap * 2;
+                uint8_t *tmp = realloc(buf, newcap);
+                if (!tmp) {
+                    ESP_LOGW(TAG, "realloc failed, truncating icon");
+                    break;   // out of memory: we'll use what we have
+                }
+                buf = tmp;
+                cap = newcap;
+            }
+        }
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
-        return ESP_ERR_NO_MEM;
+
+        *out_buf = buf;
+        *out_len = total;
+        ESP_LOGI(TAG, "weather_fetch_icon: downloaded %zu bytes", total);
+
+        err = ESP_OK;
+        break;  // Success - break out of retry loop
     }
 
-    // Read until EOF
-    int r;
-    while ((r = esp_http_client_read(client, (char*)buf + total, cap - total)) > 0) {
-        total += r;
-        if (total >= cap) {
-            size_t newcap = cap * 2;
-            uint8_t *tmp = realloc(buf, newcap);
-            if (!tmp) break;   // out of memory: we'll use what we have
-            buf = tmp;
-            cap = newcap;
-        }
+    // Check if all retries failed
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to fetch icon after %d attempts", HTTP_MAX_RETRIES);
+        if (buf) free(buf);
+        return ESP_FAIL;
     }
-    esp_http_client_close(client);
-    esp_http_client_cleanup(client);
 
-    *out_buf = buf;
-    *out_len = total;
-    ESP_LOGI("weather", "weather_fetch_icon: downloaded %u bytes", (unsigned)total);
     return ESP_OK;
 }

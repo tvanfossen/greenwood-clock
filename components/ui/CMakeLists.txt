@@ -1,7 +1,7 @@
 # components/ui/CMakeLists.txt
 
 idf_component_register(
-    SRCS        "ui.c"
+    SRCS        "ui.c" "screen_manager.c"
     INCLUDE_DIRS "."
     REQUIRES
         lvgl
@@ -14,4 +14,9 @@ idf_component_register(
         weather
         astronomy
         secrets
+        esp_netif
+        network
+        settings
+        ota
+        sdcard
 )

@@ -9,11 +9,21 @@
 #include "time_sync.h"   // time_sync_get_local()
 #include "secrets.h"
 #include "weather.h"
+#include "screen_manager.h"        // screen navigation
+#include "sdcard.h"                // sdcard_is_mounted()
+#include "settings.h"              // clock_settings_t
 // #include "astronomy.h" // astronomy_fetch_moon_phase() (removed)
 #include "freertos/FreeRTOS.h"     // pdMS_TO_TICKS
 #include "freertos/task.h"         // vTaskDelay
 
 static const char* TAG = "ui";
+
+// Screen references
+static lv_obj_t* screen_clock = NULL;
+static lv_obj_t* screen_settings = NULL;
+static lv_obj_t* screen_wifi = NULL;
+static lv_obj_t* screen_brightness = NULL;
+static lv_obj_t* screen_about = NULL;
 
 static lv_obj_t* lbl_time;
 static lv_obj_t* lbl_ampm;
@@ -34,11 +44,11 @@ LV_FONT_DECLARE(nunito_48);
 LV_FONT_DECLARE(nunito_256);
 
 #define STYLE_SECTION(obj) \
-    lv_obj_set_style_bg_opa(obj, LV_OPA_TRANSP, 0); /* 20% opacity */ \
+    lv_obj_set_style_bg_opa(obj, LV_OPA_TRANSP, 0); /* Transparent - allows background to show through */ \
     lv_obj_set_style_border_color(obj, lv_color_white(), 0); \
     lv_obj_set_style_border_width(obj, 0, 0); \
     lv_obj_set_style_radius(obj, 16, 0); \
-    lv_obj_set_style_bg_color(obj, lv_color_black(), 0); // color is ignored if opa is TRANSP
+    lv_obj_set_style_bg_color(obj, lv_color_black(), 0); // BG color ignored due to transparency
 
 #define ICON_BOX_W 120
 #define ICON_BOX_H 120
@@ -148,12 +158,79 @@ static void weather_update_cb(lv_timer_t* t)
     ESP_LOGI(TAG, "weather_update_cb: complete (heap: %lu bytes)", (unsigned long)esp_get_free_heap_size());
 }
 
-void ui_clock_init(const struct tm *ti0) {
+// Touch event callback for the clock screen (for debugging only)
+static void clock_screen_touch_cb(lv_event_t* e) {
+    lv_event_code_t code = lv_event_get_code(e);
+
+    if (code == LV_EVENT_PRESSED) {
+        ESP_LOGI(TAG, "Touch: PRESSED");
+    } else if (code == LV_EVENT_RELEASED) {
+        ESP_LOGI(TAG, "Touch: RELEASED");
+    } else if (code == LV_EVENT_CLICKED) {
+        ESP_LOGI(TAG, "Touch: CLICKED");
+    }
+    // Long press removed - only swipe up gesture opens settings
+}
+
+// Gesture detection callback
+static void clock_screen_gesture_cb(lv_event_t* e) {
+    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
+
+    if (dir == LV_DIR_TOP) {
+        ESP_LOGI(TAG, "Gesture: SWIPE UP - Opening settings menu");
+        screen_manager_push(SCREEN_SETTINGS_MENU);
+    } else if (dir == LV_DIR_BOTTOM) {
+        ESP_LOGI(TAG, "Gesture: SWIPE DOWN");
+    } else if (dir == LV_DIR_LEFT) {
+        ESP_LOGI(TAG, "Gesture: SWIPE LEFT");
+    } else if (dir == LV_DIR_RIGHT) {
+        ESP_LOGI(TAG, "Gesture: SWIPE RIGHT");
+    }
+}
+
+void ui_clock_init(const struct tm *ti0, const clock_settings_t *settings) {
     ESP_LOGI(TAG, "ui_clock_init: start");
+
+    // Initialize screen manager
+    screen_manager_init();
+
     lvgl_port_lock(0);
     lv_obj_t* scr = lv_scr_act();
+    screen_clock = scr;  // Store reference to clock screen
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
-    // Do not clean screen here: preserve splash image
+
+    // Set screen background to black by default (will be overlaid by image if available)
+    lv_obj_set_style_bg_color(scr, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
+
+    // Load splash from SD card to overlay on black background
+    lv_obj_t* bg_img = NULL;
+    if (sdcard_is_mounted() && settings != NULL && settings->background_image[0] != '\0') {
+        ESP_LOGI(TAG, "SD card mounted, attempting to load background from %s", settings->background_image);
+        bg_img = lv_img_create(scr);
+        lv_img_set_src(bg_img, settings->background_image);
+        lv_obj_align(bg_img, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_move_background(bg_img);  // Move to back so UI elements appear on top
+
+        // Mark as non-scrollable and prevent unnecessary redraws
+        lv_obj_clear_flag(bg_img, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(bg_img, LV_OBJ_FLAG_IGNORE_LAYOUT);
+
+        // Verify image loaded
+        const void* src = lv_img_get_src(bg_img);
+        if (src == NULL) {
+            ESP_LOGW(TAG, "Background image failed to load from %s - file may not exist or be invalid",
+                     settings->background_image);
+            ESP_LOGW(TAG, "Will use solid black background instead");
+            lv_obj_del(bg_img);
+            bg_img = NULL;
+        } else {
+            ESP_LOGI(TAG, "Background image loaded successfully from %s, source pointer: %p",
+                     settings->background_image, src);
+        }
+    } else {
+        ESP_LOGW(TAG, "SD card not mounted or no background image configured, using solid black background");
+    }
 
     // Time+Date box: full screen width, top aligned, 8px padding left/right/top
     box_time_ampm = lv_obj_create(scr);
@@ -226,18 +303,40 @@ void ui_clock_init(const struct tm *ti0) {
     lv_timer_create(clock_update_cb, 60000, NULL);
     lv_timer_create(weather_update_cb, 30 * 60 * 1000, NULL);
 
+    // Register touch event handlers (long press removed - only swipe up for settings)
+    lv_obj_add_event_cb(scr, clock_screen_touch_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(scr, clock_screen_touch_cb, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(scr, clock_screen_touch_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(scr, clock_screen_gesture_cb, LV_EVENT_GESTURE, NULL);
+    ESP_LOGI(TAG, "ui_clock_init: touch event handlers registered");
+
     lvgl_port_unlock();
+
+    // Set clock screen in screen manager (after unlock since it will lock again)
+    screen_manager_set_clock_screen(scr);
+
+    ESP_LOGI(TAG, "ui_clock_init: complete");
 }
 
 void ui_show_splash(void) {
-    ESP_LOGI(TAG, "ui_show_splash: start");
+    ESP_LOGI(TAG, "ui_show_splash: start - loading from SD card");
     lvgl_port_lock(0);
     lv_obj_t* scr = lv_scr_act();
     lv_obj_clean(scr);
-    LV_IMG_DECLARE(splash);
+
+    // Load splash image from SD card instead of compiled C array to save firmware space
     lv_obj_t* img = lv_img_create(scr);
-    lv_img_set_src(img, &splash);
+    lv_img_set_src(img, "A:/sdcard/splash.png");
     lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
+
+    // Log image loading status
+    const void* src = lv_img_get_src(img);
+    if (src == NULL) {
+        ESP_LOGW(TAG, "Splash image failed to load from A:/sdcard/splash.png");
+    } else {
+        ESP_LOGI(TAG, "Splash image set, source pointer: %p", src);
+    }
+
     lvgl_port_unlock();
     ESP_LOGI(TAG, "ui_show_splash: complete");
 }

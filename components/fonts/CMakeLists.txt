@@ -1,5 +1,9 @@
-# Glob all generated C sources under c_array/
-file(GLOB FONT_SRCS "c_array/*.c")
+# Only compile fonts that are actually used in the code
+# ui.c uses: nunito_48, nunito_256
+set(FONT_SRCS
+    "c_array/nunito_48.c"
+    "c_array/nunito_256.c"
+)
 
 idf_component_register(
     SRCS         ${FONT_SRCS}
