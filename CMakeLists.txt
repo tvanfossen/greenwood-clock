@@ -23,4 +23,4 @@ add_compile_options(
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-enum-enum-conversion")
 
-project(greenwood-clock VERSION 1.0.1)
+project(greenwood-clock VERSION 1.0.2)
