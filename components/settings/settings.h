@@ -11,7 +11,7 @@ extern "C" {
 #include <stdbool.h>
 #include "esp_err.h"
 
-#define SETTINGS_VERSION 2  // Incremented: added background_image field
+#define SETTINGS_VERSION 3  // Incremented: added text_color field
 
 typedef struct {
     uint32_t version;  // Settings schema version
@@ -31,7 +31,8 @@ typedef struct {
     uint8_t brightness;
     uint32_t clock_update_ms;
     uint32_t weather_update_ms;
-    char background_image[128];  // Path to background image (e.g., "A:/sdcard/splash.png")
+    char background_image[128];  // Path to background image (A:/file.gif = /sdcard/file.gif, B:/file.png = /spiffs/file.png)
+    uint32_t text_color;  // Text color as RGB888 (0xRRGGBB format) for main clock screen
 
     // Features
     bool enable_weather;

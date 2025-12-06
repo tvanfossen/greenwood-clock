@@ -7,6 +7,7 @@
 #include "esp_https_ota.h"
 #include "esp_app_format.h"
 #include "esp_system.h"
+#include "esp_crt_bundle.h"
 #include <string.h>
 
 static const char* TAG = "ota";
@@ -154,13 +155,16 @@ esp_err_t ota_perform_update(const char* server_url,
     }
 
     // Configure HTTP client (for plain HTTP, not HTTPS)
+    // ESP-IDF v5.5 requires at least one verification method to be "configured"
+    // even for HTTP. We attach the cert bundle but skip all verification.
     esp_http_client_config_t http_config = {
         .url = url,
         .timeout_ms = OTA_READ_TIMEOUT_MS,
         .keep_alive_enable = true,
         .buffer_size = OTA_BUFFER_SIZE,
-        .skip_cert_common_name_check = true,
-        .use_global_ca_store = false,  // Disable CA store for HTTP
+        .transport_type = HTTP_TRANSPORT_OVER_TCP,
+        .crt_bundle_attach = esp_crt_bundle_attach,  // Required by ESP-IDF v5.5 validation
+        .skip_cert_common_name_check = true,         // But skip actual verification for HTTP
     };
 
     // Configure OTA

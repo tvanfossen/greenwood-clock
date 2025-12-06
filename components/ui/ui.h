@@ -10,7 +10,10 @@ extern "C" {
 #include "settings.h"  // for clock_settings_t
 
 void ui_show_splash(void);
+void ui_show_start_screen(const struct tm *timeinfo, const clock_settings_t *settings);
 void ui_clock_init(const struct tm *timeinfo, const clock_settings_t *settings);
+void ui_refresh_background(void);
+void ui_refresh_text_color(void);
 
 #ifdef __cplusplus
 }

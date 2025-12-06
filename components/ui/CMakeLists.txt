@@ -5,6 +5,7 @@ idf_component_register(
     INCLUDE_DIRS "."
     REQUIRES
         lvgl
+        lvgl_mem_esp
         esp32_p4_function_ev_board
         esp_lvgl_port
         time_sync
