@@ -1,10 +1,11 @@
 # Name,   Type, SubType, Offset,  Size, Flags
 # Note: if you change the phy_init or app partition offset, make sure to change the offset in Kconfig.projbuild
+# Updated 2025-12-05: Increased app partitions 4MB->5MB for ARGB8888_PREMULTIPLIED support, reduced SPIFFS 3MB->512KB
 nvs,      data, nvs,     0x9000,  0x6000,
 phy_init, data, phy,     0xf000,  0x1000,
 otadata,  data, ota,     0x10000, 0x2000,
-factory,  app,  factory, 0x20000, 4M,
-ota_0,    app,  ota_0,   ,        4M,
-ota_1,    app,  ota_1,   ,        4M,
-storage,  data, spiffs,  ,        3M,
+factory,  app,  factory, 0x20000, 5M,
+ota_0,    app,  ota_0,   ,        5M,
+ota_1,    app,  ota_1,   ,        5M,
+storage,  data, spiffs,  ,        512K,
 coredump, data, coredump,,        64K,

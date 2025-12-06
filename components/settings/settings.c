@@ -23,7 +23,8 @@ static const clock_settings_t default_settings = {
     .brightness = 50,
     .clock_update_ms = 60000,
     .weather_update_ms = 1800000,
-    .background_image = "A:/sdcard/splash.png",
+    .background_image = "A:/splash.png",  // A: maps to /sdcard, so A:/splash.png = /sdcard/splash.png
+    .text_color = 0xFFFFFF,  // Default to white (RGB888)
     .enable_weather = true,
     .enable_touch = true,
     .ota_server_url = "http://192.168.1.96:8000",

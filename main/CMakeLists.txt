@@ -10,6 +10,7 @@ idf_component_register(
         esp_lcd_ek79007             # panel driver
 
         spiffs                      # for bsp_spiffs_init_default()
+        lvgl_mem_esp                # LVGL SPIRAM memory allocator
 
         network                     # your network module
         time_sync                   # your SNTP/TZ module

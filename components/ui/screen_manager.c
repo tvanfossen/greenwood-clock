@@ -1,9 +1,11 @@
 // components/ui/screen_manager.c
 
 #include "screen_manager.h"
+#include "ui.h"           // For UI refresh functions
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
 #include "esp_system.h"   // For esp_restart()
+#include "esp_task_wdt.h" // For esp_task_wdt_reset()
 #include "bsp/display.h"  // For brightness control
 #include "esp_mac.h"      // For MAC address
 #include "esp_netif.h"    // For IP address
@@ -15,6 +17,7 @@
 #include "freertos/task.h"
 #include <string.h>
 #include <dirent.h>       // For directory scanning
+#include <sys/stat.h>     // For stat()
 
 static const char* TAG = "screen_mgr";
 
@@ -29,6 +32,7 @@ static lv_obj_t* create_settings_menu(void);
 static lv_obj_t* create_wifi_settings(void);
 static lv_obj_t* create_brightness_settings(void);
 static lv_obj_t* create_background_selector(void);
+static lv_obj_t* create_text_color_settings(void);
 static lv_obj_t* create_ota_settings(void);
 static lv_obj_t* create_animation_preview(void);
 static lv_obj_t* create_about_screen(void);
@@ -94,6 +98,9 @@ static lv_obj_t* get_or_create_screen(screen_id_t screen) {
             break;
         case SCREEN_BACKGROUND_SELECTOR:
             screens[screen] = create_background_selector();
+            break;
+        case SCREEN_TEXT_COLOR_SETTINGS:
+            screens[screen] = create_text_color_settings();
             break;
         case SCREEN_OTA_SETTINGS:
             screens[screen] = create_ota_settings();
@@ -235,6 +242,7 @@ static void settings_menu_item_cb(lv_event_t* e) {
 static screen_id_t wifi_screen_id = SCREEN_WIFI_SETTINGS;
 static screen_id_t brightness_screen_id = SCREEN_BRIGHTNESS_SETTINGS;
 static screen_id_t background_selector_screen_id = SCREEN_BACKGROUND_SELECTOR;
+static screen_id_t text_color_settings_screen_id = SCREEN_TEXT_COLOR_SETTINGS;
 static screen_id_t ota_screen_id = SCREEN_OTA_SETTINGS;
 static screen_id_t animation_preview_screen_id = SCREEN_ANIMATION_PREVIEW;
 static screen_id_t about_screen_id = SCREEN_ABOUT;
@@ -289,6 +297,10 @@ static lv_obj_t* create_settings_menu(void) {
     // Background Image
     lv_obj_t* btn_background = lv_list_add_btn(list, LV_SYMBOL_IMAGE, "Background Image");
     lv_obj_add_event_cb(btn_background, settings_menu_item_cb, LV_EVENT_CLICKED, &background_selector_screen_id);
+
+    // Text Color
+    lv_obj_t* btn_text_color = lv_list_add_btn(list, LV_SYMBOL_EDIT, "Text Color");
+    lv_obj_add_event_cb(btn_text_color, settings_menu_item_cb, LV_EVENT_CLICKED, &text_color_settings_screen_id);
 
     // Software Update (OTA)
     lv_obj_t* btn_ota = lv_list_add_btn(list, LV_SYMBOL_DOWNLOAD, "Software Update");
@@ -560,6 +572,110 @@ static void brightness_slider_cb(lv_event_t* e) {
     lvgl_port_lock(0);
 }
 
+// Text color settings callback
+typedef struct {
+    uint32_t color;     // RGB888 color value
+    const char* name;   // Color name for display
+} color_preset_t;
+
+static const color_preset_t COLOR_PRESETS[] = {
+    {0x000000, "Black"},
+    {0xFFFFFF, "White"},
+    {0xFF0000, "Red"},
+    {0x00FF00, "Green"},
+    {0x0000FF, "Blue"},
+    {0xFFFF00, "Yellow"},
+    {0x00FFFF, "Cyan"},
+    {0xFF00FF, "Magenta"},
+    {0xFF8800, "Orange"},
+};
+#define NUM_COLOR_PRESETS (sizeof(COLOR_PRESETS) / sizeof(COLOR_PRESETS[0]))
+
+static void color_select_cb(lv_event_t* e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code != LV_EVENT_CLICKED) return;
+
+    uint32_t color_value = (uint32_t)(uintptr_t)lv_event_get_user_data(e);
+    ESP_LOGI(TAG, "Text color selected: 0x%06lX", color_value);
+
+    // Load current settings
+    clock_settings_t cfg;
+    if (settings_load(&cfg) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to load settings");
+        return;
+    }
+
+    // Update text color
+    cfg.text_color = color_value;
+
+    // Save settings
+    if (settings_save(&cfg) == ESP_OK) {
+        ESP_LOGI(TAG, "Text color saved: 0x%06lX", cfg.text_color);
+
+        // Refresh text color immediately
+        ui_refresh_text_color();
+
+        // Show confirmation message
+        lv_obj_t* mbox = lv_msgbox_create(NULL);
+        lv_msgbox_add_title(mbox, "Success");
+        lv_msgbox_add_text(mbox, "Text color updated!");
+        lv_msgbox_add_close_button(mbox);
+        lv_obj_center(mbox);
+
+        // Go back after a delay
+        vTaskDelay(pdMS_TO_TICKS(1500));
+        screen_manager_pop();
+    } else {
+        ESP_LOGE(TAG, "Failed to save settings");
+    }
+}
+
+// Text color settings screen
+static lv_obj_t* create_text_color_settings(void) {
+    lv_obj_t* scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+
+    // Title
+    lv_obj_t* title = lv_label_create(scr);
+    lv_label_set_text(title, "Text Color");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
+
+    // Back button
+    create_back_button(scr);
+
+    // Create list for color options
+    lv_obj_t* list = lv_list_create(scr);
+    lv_obj_set_size(list, 700, 450);
+    lv_obj_align(list, LV_ALIGN_CENTER, 0, 30);
+    lv_obj_set_style_text_font(list, &lv_font_montserrat_20, 0);
+
+    // Load current color from settings
+    clock_settings_t cfg;
+    uint32_t current_color = 0xFFFFFF;  // Default white
+    if (settings_load(&cfg) == ESP_OK) {
+        current_color = cfg.text_color;
+    }
+
+    // Add color presets as buttons
+    for (int i = 0; i < NUM_COLOR_PRESETS; i++) {
+        const char* label = COLOR_PRESETS[i].name;
+        uint32_t color_val = COLOR_PRESETS[i].color;
+
+        // Create button
+        lv_obj_t* btn = lv_list_add_btn(list, LV_SYMBOL_BULLET, label);
+        lv_obj_add_event_cb(btn, color_select_cb, LV_EVENT_CLICKED, (void*)(uintptr_t)color_val);
+
+        // Highlight current color
+        if (color_val == current_color) {
+            lv_obj_add_state(btn, LV_STATE_FOCUSED);
+        }
+    }
+
+    return scr;
+}
+
 // Brightness settings screen
 static lv_obj_t* create_brightness_settings(void) {
     lv_obj_t* scr = lv_obj_create(NULL);
@@ -624,15 +740,18 @@ static void background_select_cb(lv_event_t* e) {
     if (settings_save(&cfg) == ESP_OK) {
         ESP_LOGI(TAG, "Background saved to settings: %s", cfg.background_image);
 
+        // Refresh background immediately
+        ui_refresh_background();
+
         // Show confirmation message
         lv_obj_t* mbox = lv_msgbox_create(NULL);
         lv_msgbox_add_title(mbox, "Success");
-        lv_msgbox_add_text(mbox, "Background updated!\nRestart to apply changes.");
+        lv_msgbox_add_text(mbox, "Background updated!");
         lv_msgbox_add_close_button(mbox);
         lv_obj_center(mbox);
 
         // Go back after a delay
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        vTaskDelay(pdMS_TO_TICKS(1500));
         screen_manager_pop();
     } else {
         ESP_LOGE(TAG, "Failed to save settings");
@@ -654,7 +773,7 @@ static lv_obj_t* create_background_selector(void) {
     // Back button
     create_back_button(scr);
 
-    // Create list for PNG files
+    // Create list for image files (PNG/GIF)
     lv_obj_t* list = lv_list_create(scr);
     lv_obj_set_size(list, 700, 500);
     lv_obj_align(list, LV_ALIGN_CENTER, 0, 30);
@@ -678,18 +797,24 @@ static lv_obj_t* create_background_selector(void) {
     struct dirent* entry;
     int count = 0;
     while ((entry = readdir(dir)) != NULL) {
-        // Skip directories and non-PNG files
+        // Skip directories
         if (entry->d_type == DT_DIR) continue;
 
         const char* ext = strrchr(entry->d_name, '.');
-        if (ext == NULL || strcasecmp(ext, ".png") != 0) continue;
+        if (ext == NULL) continue;
 
-        // Create full path
+        // Check for PNG or GIF files
+        bool is_png = strcasecmp(ext, ".png") == 0;
+        bool is_gif = strcasecmp(ext, ".gif") == 0;
+        if (!is_png && !is_gif) continue;
+
+        // Create path for LVGL (A: drive maps to /sdcard, so path is just /filename)
         static char filepath[256];  // Static to keep it alive for callback
-        snprintf(filepath, sizeof(filepath), "/sdcard/%s", entry->d_name);
+        snprintf(filepath, sizeof(filepath), "/%s", entry->d_name);
 
-        // Add to list
-        lv_obj_t* btn = lv_list_add_btn(list, LV_SYMBOL_IMAGE, entry->d_name);
+        // Add to list with appropriate icon
+        const char* icon = is_gif ? LV_SYMBOL_LOOP : LV_SYMBOL_IMAGE;
+        lv_obj_t* btn = lv_list_add_btn(list, icon, entry->d_name);
         lv_obj_add_event_cb(btn, background_select_cb, LV_EVENT_CLICKED, (void*)strdup(filepath));
 
         count++;
@@ -697,10 +822,10 @@ static lv_obj_t* create_background_selector(void) {
     closedir(dir);
 
     if (count == 0) {
-        lv_obj_t* btn = lv_list_add_btn(list, LV_SYMBOL_WARNING, "No PNG files found");
+        lv_obj_t* btn = lv_list_add_btn(list, LV_SYMBOL_WARNING, "No PNG/GIF files found");
         lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
     } else {
-        ESP_LOGI(TAG, "Found %d PNG files on SD card", count);
+        ESP_LOGI(TAG, "Found %d background files on SD card", count);
     }
 
     return scr;
@@ -930,10 +1055,54 @@ static lv_obj_t* create_ota_settings(void) {
     return scr;
 }
 
-// Animation Preview screen
-// Note: Large animations removed to save flash space
-// TODO: Load animations from SPIFFS or SD card instead
+// Animation preview play button callback
+static void animation_preview_play_btn_cb(lv_event_t* e) {
+    lv_obj_t* scr = lv_obj_get_parent(lv_event_get_target(e));
 
+    // Check file exists (use POSIX path for filesystem access)
+    struct stat st;
+    if (stat("/sdcard/hummingbird.json", &st) != 0) {
+        ESP_LOGE(TAG, "Animation file not found");
+        return;
+    }
+
+    ESP_LOGI(TAG, "Loading animation from A:/sdcard/hummingbird.json (%ld bytes)...", st.st_size);
+
+    // Temporarily disable watchdog for this task while loading large JSON
+    // (ignore error if task not in watchdog)
+    esp_err_t wdt_err = esp_task_wdt_delete(NULL);
+    if (wdt_err == ESP_OK) {
+        ESP_LOGI(TAG, "Watchdog disabled for animation load");
+    }
+
+    // NOW create the Lottie widget (after button click)
+    lv_obj_t* lottie_anim = lv_lottie_create(scr);
+    if (!lottie_anim) {
+        ESP_LOGE(TAG, "Failed to create Lottie widget");
+        esp_task_wdt_add(NULL);  // Re-add to watchdog
+        return;
+    }
+
+    lv_obj_set_size(lottie_anim, 200, 200);
+
+    // Allocate buffer - MUST be ARGB8888 (4 bytes/pixel) for Lottie
+    static uint8_t lottie_buf[200 * 200 * 4];  // ARGB8888 - Fixed from RGB565
+    lv_lottie_set_buffer(lottie_anim, 200, 200, lottie_buf);
+    lv_obj_align(lottie_anim, LV_ALIGN_CENTER, 0, 0);
+
+    // Load the animation - this blocks while parsing 742KB JSON
+    // Watchdog disabled above to prevent timeout
+    lv_lottie_set_src_file(lottie_anim, "A:/sdcard/hummingbird.json");  // Use LVGL POSIX path
+    ESP_LOGI(TAG, "Animation loaded successfully");
+
+    // Re-add task to watchdog (if it was removed)
+    if (wdt_err == ESP_OK) {
+        esp_task_wdt_add(NULL);
+        ESP_LOGI(TAG, "Watchdog re-enabled");
+    }
+}
+
+// Animation Preview screen
 static lv_obj_t* create_animation_preview(void) {
     lv_obj_t* scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
@@ -948,100 +1117,46 @@ static lv_obj_t* create_animation_preview(void) {
     // Back button
     create_back_button(scr);
 
+    size_t free_heap = esp_get_free_heap_size();
+    ESP_LOGI(TAG, "Animation Preview - Free heap: %lu bytes", (unsigned long)free_heap);
+
+#if LV_USE_LOTTIE
+    // Check memory
+    if (free_heap < 500000) {
+        lv_obj_t* info_label = lv_label_create(scr);
+        lv_label_set_text(info_label, "ERROR: Insufficient memory\nRequires 500 KB free heap");
+        lv_obj_set_style_text_color(info_label, lv_color_make(255, 100, 100), 0);
+        lv_obj_set_style_text_align(info_label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(info_label, LV_ALIGN_CENTER, 0, 0);
+        return scr;
+    }
+
     // Info label
     lv_obj_t* info_label = lv_label_create(scr);
+    lv_label_set_text(info_label, "Click PLAY to load animation\n\nFile: /sdcard/hummingbird.json\n(~742 KB Lottie JSON)");
     lv_obj_set_style_text_color(info_label, lv_color_white(), 0);
     lv_obj_set_style_text_align(info_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(info_label, 700);
-    lv_obj_align(info_label, LV_ALIGN_TOP_MID, 0, 80);
+    lv_obj_align(info_label, LV_ALIGN_TOP_MID, 0, 100);
 
-    // Check memory before attempting to load animation
-    size_t free_heap_before = esp_get_free_heap_size();
-    ESP_LOGI(TAG, "Animation Preview - Free heap before: %lu bytes", (unsigned long)free_heap_before);
-
-#if LV_USE_LOTTIE
-    // Only proceed if we have enough memory (need ~160KB for buffer + animation overhead)
-    if (free_heap_before < 500000) {  // 500 KB minimum
-        ESP_LOGW(TAG, "Not enough memory for animation preview");
-        lv_label_set_text(info_label,
-            "Insufficient memory for animation\n\n"
-            "Animation requires ~500 KB free heap\n"
-            "Current free: < 500 KB");
-        lv_obj_set_style_text_color(info_label, lv_color_make(255, 100, 100), 0);
-        return scr;
-    }
-
-    lv_label_set_text(info_label,
-        "Loading animation from SPIFFS...\n\n"
-        "This is a safe test environment.\n"
-        "If the animation crashes, the device\n"
-        "will reboot to the main screen.");
-
-    // Create Lottie animation widget
-    lv_obj_t* lottie_anim = lv_lottie_create(scr);
-    if (!lottie_anim) {
-        ESP_LOGE(TAG, "Failed to create Lottie widget");
-        lv_label_set_text(info_label, "Failed to create animation widget");
-        lv_obj_set_style_text_color(info_label, lv_color_make(255, 100, 100), 0);
-        return scr;
-    }
-
-    // Set explicit size for the animation widget
-    lv_obj_set_size(lottie_anim, 200, 200);
-
-    // Allocate buffer for animation using RGB565 format (2 bytes/pixel) for better compatibility
-    // This avoids color format conversion warnings during rendering
-    static uint8_t lottie_buf[200 * 200 * 2];  // ~80 KB for RGB565
-    lv_lottie_set_buffer(lottie_anim, 200, 200, lottie_buf);
+    // Play button
+    lv_obj_t* play_btn = lv_btn_create(scr);
+    lv_obj_set_size(play_btn, 120, 50);
+    lv_obj_align(play_btn, LV_ALIGN_BOTTOM_MID, 0, -40);
+    lv_obj_add_event_cb(play_btn, animation_preview_play_btn_cb, LV_EVENT_CLICKED, NULL);
     
-    // Set buffer format to RGB565 to match display and avoid conversion warnings
-    lv_obj_set_style_img_recolor_opa(lottie_anim, LV_OPA_0, 0);  // Disable recolor to preserve animation colors
+    lv_obj_t* play_label = lv_label_create(play_btn);
+    lv_label_set_text(play_label, "PLAY");
+    lv_obj_center(play_label);
+    lv_obj_set_style_text_color(play_label, lv_color_white(), 0);
 
-    // Load animation from SD card file (function returns void - errors logged internally by LVGL)
-    ESP_LOGI(TAG, "Loading Lottie animation from A:/sdcard/hummingbird.json");
-    lv_lottie_set_src_file(lottie_anim, "A:/sdcard/hummingbird.json");
-
-    // Check if animation loaded by examining the object
-    lv_anim_t * anim = lv_lottie_get_anim(lottie_anim);
-    if (anim != NULL) {
-        ESP_LOGI(TAG, "Lottie animation loaded successfully");
-    } else {
-        ESP_LOGW(TAG, "Lottie animation may not have loaded - check SD card mount and A:/sdcard/hummingbird.json file");
-    }
-
-    // Center the animation
-    lv_obj_center(lottie_anim);
-
-    // Check memory after loading
-    size_t free_heap_after = esp_get_free_heap_size();
-    size_t memory_used = free_heap_before - free_heap_after;
-
-    ESP_LOGI(TAG, "Animation loaded from SD card successfully");
-    ESP_LOGI(TAG, "Free heap after: %lu bytes", (unsigned long)free_heap_after);
-    ESP_LOGI(TAG, "Memory used: %lu bytes (~%lu KB)",
-             (unsigned long)memory_used,
-             (unsigned long)(memory_used / 1024));
-
-    // Update info label with success message
-    char info_text[256];
-    snprintf(info_text, sizeof(info_text),
-        "Animation loaded successfully!\n\n"
-        "Source: A:/sdcard/hummingbird.json\n"
-        "Memory used: ~%lu KB\n"
-        "Free heap: %lu KB\n\n"
-        "Animation: Hummingbird (200x200px)",
-        (unsigned long)(memory_used / 1024),
-        (unsigned long)(free_heap_after / 1024));
-
-    lv_label_set_text(info_label, info_text);
-    lv_obj_set_style_text_color(info_label, lv_color_make(100, 255, 100), 0);  // Green
-
-    ESP_LOGI(TAG, "Animation preview ready - loaded from SPIFFS");
+    ESP_LOGI(TAG, "Animation preview screen created with PLAY button");
 #else
-    lv_label_set_text(info_label,
-        "Lottie animations not enabled\n\n"
-        "CONFIG_LV_USE_LOTTIE is not set");
+    lv_obj_t* info_label = lv_label_create(scr);
+    lv_label_set_text(info_label, "Lottie animations not enabled\nCONFIG_LV_USE_LOTTIE is not set");
     lv_obj_set_style_text_color(info_label, lv_color_make(255, 200, 100), 0);
+    lv_obj_set_style_text_align(info_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(info_label, LV_ALIGN_CENTER, 0, 0);
 #endif
 
     return scr;

@@ -8,4 +8,5 @@ idf_component_register(
         esp_https_ota
         app_update
         esp_partition
+        mbedtls
 )
