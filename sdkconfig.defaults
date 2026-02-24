@@ -1439,7 +1439,7 @@ CONFIG_SPIRAM_USE_CAPS_ALLOC=y
 # CONFIG_SPIRAM_USE_MALLOC is not set
 CONFIG_SPIRAM_MEMTEST=y
 # CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP is not set
-# CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY is not set
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y  # Recommended for LVGL with SPIRAM
 # CONFIG_SPIRAM_ALLOW_NOINIT_SEG_EXTERNAL_MEMORY is not set
 # end of PSRAM config
 # end of ESP PSRAM
@@ -2534,7 +2534,8 @@ CONFIG_LV_USE_DRAW_SW_ASM=0
 # CONFIG_LV_USE_DRAW_SDL is not set
 # CONFIG_LV_USE_DRAW_VG_LITE is not set
 CONFIG_LV_USE_VECTOR_GRAPHIC=y
-# CONFIG_LV_USE_PPA is not set  # Disabled - strict alignment issues, see BACKLOG/fix-ppa-hardware-acceleration.md
+CONFIG_LV_USE_PPA=y  # Hardware acceleration with proper 64-byte alignment
+CONFIG_LV_USE_PPA_IMG=y  # Enable PPA for image operations (critical for GIF performance)
 # end of Rendering Configuration
 
 #
@@ -3124,7 +3125,7 @@ CONFIG_ESP_LCD_TOUCH_MAX_BUTTONS=1
 #
 # ESP LVGL PORT
 #
-# CONFIG_LVGL_PORT_ENABLE_PPA is not set
+CONFIG_LVGL_PORT_ENABLE_PPA=y  # Critical: Enable PPA in BSP display driver
 # end of ESP LVGL PORT
 
 #

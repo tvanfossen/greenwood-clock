@@ -30,6 +30,126 @@ static const clock_settings_t default_settings = {
     .ota_server_url = "http://192.168.1.96:8000",
 };
 
+// ─── Internal helpers ─────────────────────────────────────────────────────────
+
+/**
+ * @brief Copy the compile-time defaults into the output struct.
+ *
+ * @param out  Destination settings struct.
+ */
+static void settings_use_defaults(clock_settings_t* out)
+{
+    memcpy(out, &default_settings, sizeof(clock_settings_t));
+}
+
+/**
+ * @brief Check that a stored blob exists and has the expected size.
+ *
+ * @param handle    Open NVS handle.
+ * @param size_out  Set to the stored blob size.
+ * @return true if the blob is present and matches sizeof(clock_settings_t).
+ */
+static bool settings_nvs_readable(nvs_handle_t handle, size_t* size_out)
+{
+    esp_err_t err = nvs_get_blob(handle, SETTINGS_KEY, NULL, size_out);
+    if (err != ESP_OK) return false;
+    return (*size_out == sizeof(clock_settings_t));
+}
+
+/**
+ * @brief Read the settings blob and validate the version field.
+ *
+ * @param handle  Open NVS handle.
+ * @param out     Destination settings struct.
+ * @return true if read succeeded and version matches SETTINGS_VERSION.
+ */
+static bool settings_nvs_read(nvs_handle_t handle, clock_settings_t* out)
+{
+    size_t size = sizeof(clock_settings_t);
+    esp_err_t err = nvs_get_blob(handle, SETTINGS_KEY, out, &size);
+    return (err == ESP_OK) && (out->version == SETTINGS_VERSION);
+}
+
+/**
+ * @brief Log a summary of the loaded settings to INFO.
+ *
+ * @param out  Loaded settings.
+ */
+static void settings_log_load_result(const clock_settings_t* out)
+{
+    ESP_LOGI(TAG, "Settings loaded — WiFi configured: %s",
+             out->wifi_configured ? "yes" : "no");
+    if (out->wifi_configured) {
+        ESP_LOGI(TAG, "  SSID: %s", out->wifi_ssid);
+    }
+    ESP_LOGI(TAG, "  Brightness: %d%%", out->brightness);
+    ESP_LOGI(TAG, "  Location: %.3f, %.3f", out->latitude, out->longitude);
+}
+
+/**
+ * @brief Attempt to load settings from an already-open NVS handle.
+ *
+ * Populates defaults on any error (size mismatch, read failure, version
+ * mismatch). The handle must be closed by the caller.
+ *
+ * @param handle  Open NVS handle.
+ * @param out     Destination settings struct.
+ */
+static void settings_load_from_open_handle(nvs_handle_t handle, clock_settings_t* out)
+{
+    size_t stored_size = 0;
+    bool ok = settings_nvs_readable(handle, &stored_size) && settings_nvs_read(handle, out);
+    if (!ok) {
+        ESP_LOGW(TAG, "Settings unavailable, size mismatch, or version change — using defaults");
+        settings_use_defaults(out);
+    }
+}
+
+/**
+ * @brief Write a settings blob and commit in a single NVS operation sequence.
+ *
+ * @param handle  Open NVS handle (NVS_READWRITE).
+ * @param in      Settings to persist.
+ * @return ESP_OK on success; error code on failure.
+ */
+static esp_err_t settings_write_and_commit(nvs_handle_t handle, const clock_settings_t* in)
+{
+    esp_err_t err = nvs_set_blob(handle, SETTINGS_KEY, in, sizeof(clock_settings_t));
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to save settings: %d", (int)err);
+        return err;
+    }
+    err = nvs_commit(handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to commit settings: %d", (int)err);
+    }
+    return err;
+}
+
+/**
+ * @brief Erase the settings key and commit the result.
+ *
+ * ESP_ERR_NVS_NOT_FOUND is treated as success (key already absent).
+ *
+ * @param handle  Open NVS handle (NVS_READWRITE).
+ * @return ESP_OK on success; error code on failure.
+ */
+static esp_err_t settings_erase_and_commit(nvs_handle_t handle)
+{
+    esp_err_t err = nvs_erase_key(handle, SETTINGS_KEY);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGE(TAG, "Failed to erase settings: %d", (int)err);
+        return err;
+    }
+    err = nvs_commit(handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to commit reset: %d", (int)err);
+    }
+    return err;
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
 esp_err_t settings_init(void) {
     ESP_LOGI(TAG, "Initializing settings system");
 
@@ -51,143 +171,69 @@ esp_err_t settings_init(void) {
     return ESP_OK;
 }
 
+/**
+ * @brief Load settings from NVS into @p out.
+ *
+ * Falls back to compile-time defaults on any failure (namespace not found,
+ * size mismatch, read error, version mismatch).  Always returns ESP_OK unless
+ * @p out is NULL.
+ *
+ * @param out  Destination settings struct.
+ * @return ESP_OK or ESP_ERR_INVALID_ARG.
+ */
 esp_err_t settings_load(clock_settings_t* out) {
-    if (out == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
+    if (!out) return ESP_ERR_INVALID_ARG;
     nvs_handle_t handle;
-    esp_err_t err;
-
-    // Try to open NVS namespace
-    err = nvs_open(SETTINGS_NAMESPACE, NVS_READONLY, &handle);
+    esp_err_t err = nvs_open(SETTINGS_NAMESPACE, NVS_READONLY, &handle);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Settings namespace not found, using defaults");
-        memcpy(out, &default_settings, sizeof(clock_settings_t));
+        settings_use_defaults(out);
         return ESP_OK;
     }
-
-    // First check the size of stored settings
-    size_t stored_size = 0;
-    err = nvs_get_blob(handle, SETTINGS_KEY, NULL, &stored_size);
-
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Settings not found in NVS, using defaults");
-        memcpy(out, &default_settings, sizeof(clock_settings_t));
-        nvs_close(handle);
-        return ESP_OK;
-    }
-
-    // Check if size matches - if not, settings are from old version
-    if (stored_size != sizeof(clock_settings_t)) {
-        ESP_LOGW(TAG, "Settings size mismatch (stored: %zu, expected: %zu), using defaults",
-                 stored_size, sizeof(clock_settings_t));
-        memcpy(out, &default_settings, sizeof(clock_settings_t));
-        nvs_close(handle);
-        return ESP_OK;
-    }
-
-    // Now safe to load settings blob
-    size_t size = sizeof(clock_settings_t);
-    err = nvs_get_blob(handle, SETTINGS_KEY, out, &size);
+    settings_load_from_open_handle(handle, out);
     nvs_close(handle);
-
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to read settings from NVS, using defaults");
-        memcpy(out, &default_settings, sizeof(clock_settings_t));
-        return ESP_OK;
-    }
-
-    // Validate version (redundant check, but keeps it for future)
-    if (out->version != SETTINGS_VERSION) {
-        ESP_LOGW(TAG, "Settings version mismatch (found %lu, expected %d), using defaults",
-                 (unsigned long)out->version, SETTINGS_VERSION);
-        memcpy(out, &default_settings, sizeof(clock_settings_t));
-        return ESP_OK;
-    }
-
-    ESP_LOGI(TAG, "Settings loaded from NVS");
-    ESP_LOGI(TAG, "  WiFi configured: %s", out->wifi_configured ? "yes" : "no");
-    if (out->wifi_configured) {
-        ESP_LOGI(TAG, "  SSID: %s", out->wifi_ssid);
-    }
-    ESP_LOGI(TAG, "  Brightness: %d%%", out->brightness);
-    ESP_LOGI(TAG, "  Location: %.3f, %.3f", out->latitude, out->longitude);
-
+    settings_log_load_result(out);
     return ESP_OK;
 }
 
+/**
+ * @brief Persist @p in to NVS.
+ *
+ * @param in  Settings to save.
+ * @return ESP_OK on success; error code on failure.
+ */
 esp_err_t settings_save(const clock_settings_t* in) {
-    if (in == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    nvs_handle_t handle;
-    esp_err_t err;
-
+    if (!in) return ESP_ERR_INVALID_ARG;
     ESP_LOGI(TAG, "Saving settings to NVS");
-
-    // Open NVS namespace for writing
-    err = nvs_open(SETTINGS_NAMESPACE, NVS_READWRITE, &handle);
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(SETTINGS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to open NVS for writing: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "Failed to open NVS for writing: %d", (int)err);
         return err;
     }
-
-    // Save settings blob
-    err = nvs_set_blob(handle, SETTINGS_KEY, in, sizeof(clock_settings_t));
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to save settings: %s", esp_err_to_name(err));
-        nvs_close(handle);
-        return err;
-    }
-
-    // Commit changes
-    err = nvs_commit(handle);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to commit settings: %s", esp_err_to_name(err));
-        nvs_close(handle);
-        return err;
-    }
-
+    err = settings_write_and_commit(handle, in);
     nvs_close(handle);
-    ESP_LOGI(TAG, "Settings saved successfully");
-
-    return ESP_OK;
+    if (err == ESP_OK) ESP_LOGI(TAG, "Settings saved successfully");
+    return err;
 }
 
+/**
+ * @brief Erase persisted settings from NVS (restores defaults on next load).
+ *
+ * @return ESP_OK on success; error code on commit failure.
+ */
 esp_err_t settings_reset(void) {
-    nvs_handle_t handle;
-    esp_err_t err;
-
     ESP_LOGI(TAG, "Resetting settings to factory defaults");
-
-    // Open NVS namespace
-    err = nvs_open(SETTINGS_NAMESPACE, NVS_READWRITE, &handle);
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(SETTINGS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "No settings to erase");
         return ESP_OK;
     }
-
-    // Erase the settings key
-    err = nvs_erase_key(handle, SETTINGS_KEY);
-    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
-        ESP_LOGE(TAG, "Failed to erase settings: %s", esp_err_to_name(err));
-        nvs_close(handle);
-        return err;
-    }
-
-    // Commit changes
-    err = nvs_commit(handle);
+    err = settings_erase_and_commit(handle);
     nvs_close(handle);
-
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to commit reset: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    ESP_LOGI(TAG, "Settings reset complete");
-    return ESP_OK;
+    if (err == ESP_OK) ESP_LOGI(TAG, "Settings reset complete");
+    return err;
 }
 
 const clock_settings_t* settings_get_defaults(void) {

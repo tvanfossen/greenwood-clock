@@ -1,0 +1,35 @@
+PROJECT_NAME           = "Greenwood Clock"
+PROJECT_BRIEF          = "ESP32-P4 smart clock — ESP-IDF v5.5 / LVGL v9.3"
+OUTPUT_DIRECTORY       = docs/api
+
+# Source
+INPUT                  = components/
+RECURSIVE              = YES
+FILE_PATTERNS          = *.c *.cpp *.h
+
+# Exclude third-party
+EXCLUDE                = components/lvgl \
+                         components/cjson
+
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+
+# Output formats
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+HTML_OUTPUT            = html
+
+# Diagrams (requires graphviz)
+HAVE_DOT               = YES
+CALL_GRAPH             = YES
+CALLER_GRAPH           = YES
+INCLUDE_GRAPH          = YES
+
+# Warnings
+WARN_IF_UNDOCUMENTED   = YES
+WARN_NO_PARAMDOC       = YES
+WARNINGS               = YES
+WARN_LOGFILE           = docs/api/doxygen_warnings.log
+
+QUIET                  = NO

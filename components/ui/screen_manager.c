@@ -41,20 +41,17 @@ static lv_obj_t* create_about_screen(void);
 static void wifi_scan_btn_cb(lv_event_t* e);
 static void wifi_network_select_cb(lv_event_t* e);
 static void wifi_connect_btn_cb(lv_event_t* e);
+static void background_select_cb(lv_event_t* e);
+static void animation_preview_play_btn_cb(lv_event_t* e);
+
+// =============================================================================
+// Navigation stack
+// =============================================================================
 
 void screen_manager_init(void) {
     ESP_LOGI(TAG, "Screen manager initialized");
     stack_top = -1;
-
-    // Clock screen is already created by ui_clock_init()
-    // We'll get it when needed
-    screens[SCREEN_CLOCK] = NULL;  // Will be set by ui module
-
-    // TODO: Pre-create settings menu to avoid stutter on first swipe
-    // Currently disabled for debugging - may cause crash during init
-    // ESP_LOGI(TAG, "Pre-creating settings menu...");
-    // screens[SCREEN_SETTINGS_MENU] = create_settings_menu();
-    // ESP_LOGI(TAG, "Settings menu pre-created");
+    screens[SCREEN_CLOCK] = NULL;  // Set by ui module via screen_manager_set_clock_screen
 }
 
 static void push_stack(screen_id_t screen) {
@@ -78,48 +75,41 @@ static screen_id_t pop_stack(void) {
     return SCREEN_CLOCK;
 }
 
+// =============================================================================
+// Screen creation dispatch — function pointer array eliminates switch-case ABC
+// =============================================================================
+
+/** @brief Function pointer type for screen factory functions. */
+typedef lv_obj_t* (*screen_creator_fn_t)(void);
+
+/** @brief Dispatch table mapping each screen_id_t to its factory function. */
+static const screen_creator_fn_t SCREEN_CREATORS[SCREEN_MAX] = {
+    [SCREEN_CLOCK]              = NULL,  // Created externally by ui module
+    [SCREEN_SETTINGS_MENU]      = create_settings_menu,
+    [SCREEN_WIFI_SETTINGS]      = create_wifi_settings,
+    [SCREEN_BRIGHTNESS_SETTINGS]= create_brightness_settings,
+    [SCREEN_BACKGROUND_SELECTOR]= create_background_selector,
+    [SCREEN_TEXT_COLOR_SETTINGS]= create_text_color_settings,
+    [SCREEN_OTA_SETTINGS]       = create_ota_settings,
+    [SCREEN_ANIMATION_PREVIEW]  = create_animation_preview,
+    [SCREEN_ABOUT]              = create_about_screen,
+};
+
+/**
+ * @brief Return existing screen or create it on first access.
+ * @param screen  Screen ID to retrieve or create.
+ * @return LVGL screen object, or NULL on failure.
+ */
 static lv_obj_t* get_or_create_screen(screen_id_t screen) {
     if (screens[screen] != NULL) {
         return screens[screen];
     }
-
-    // Create screen on demand
-    ESP_LOGI(TAG, "Creating screen %d", screen);
-
-    switch (screen) {
-        case SCREEN_SETTINGS_MENU:
-            screens[screen] = create_settings_menu();
-            break;
-        case SCREEN_WIFI_SETTINGS:
-            screens[screen] = create_wifi_settings();
-            break;
-        case SCREEN_BRIGHTNESS_SETTINGS:
-            screens[screen] = create_brightness_settings();
-            break;
-        case SCREEN_BACKGROUND_SELECTOR:
-            screens[screen] = create_background_selector();
-            break;
-        case SCREEN_TEXT_COLOR_SETTINGS:
-            screens[screen] = create_text_color_settings();
-            break;
-        case SCREEN_OTA_SETTINGS:
-            screens[screen] = create_ota_settings();
-            break;
-        case SCREEN_ANIMATION_PREVIEW:
-            screens[screen] = create_animation_preview();
-            break;
-        case SCREEN_ABOUT:
-            screens[screen] = create_about_screen();
-            break;
-        case SCREEN_CLOCK:
-            // Clock screen is created separately
-            ESP_LOGW(TAG, "Clock screen should be set externally");
-            break;
-        default:
-            ESP_LOGE(TAG, "Unknown screen ID: %d", screen);
-            break;
+    if (screen >= SCREEN_MAX || SCREEN_CREATORS[screen] == NULL) {
+        ESP_LOGW(TAG, "No creator for screen %d", screen);
+        return NULL;
     }
-
+    ESP_LOGI(TAG, "Creating screen %d on demand", screen);
+    screens[screen] = SCREEN_CREATORS[screen]();
     return screens[screen];
 }
 
@@ -134,19 +124,14 @@ void screen_manager_push(screen_id_t screen) {
         ESP_LOGE(TAG, "Invalid screen ID: %d", screen);
         return;
     }
-
     ESP_LOGI(TAG, "Navigating to screen %d", screen);
-
     lv_obj_t* scr = get_or_create_screen(screen);
     if (scr == NULL) {
         ESP_LOGE(TAG, "Failed to create screen %d", screen);
         return;
     }
-
     push_stack(screen);
-
     lvgl_port_lock(0);
-    // Slide over from bottom - smoother than push animation
     lv_scr_load_anim(scr, LV_SCREEN_LOAD_ANIM_OVER_TOP, 350, 0, false);
     lvgl_port_unlock();
 }
@@ -156,20 +141,15 @@ void screen_manager_pop(void) {
         ESP_LOGW(TAG, "Already at root screen, cannot pop");
         return;
     }
-
-    pop_stack();  // Remove current screen
-    screen_id_t prev_screen = screen_stack[stack_top];  // Get previous screen
-
+    pop_stack();
+    screen_id_t prev_screen = screen_stack[stack_top];
     ESP_LOGI(TAG, "Going back to screen %d", prev_screen);
-
     lv_obj_t* scr = get_or_create_screen(prev_screen);
     if (scr == NULL) {
         ESP_LOGE(TAG, "Failed to get screen %d", prev_screen);
         return;
     }
-
     lvgl_port_lock(0);
-    // Slide down to match reverse of swipe up gesture - smooth 500ms movement
     lv_scr_load_anim(scr, LV_SCREEN_LOAD_ANIM_MOVE_BOTTOM, 500, 0, false);
     lvgl_port_unlock();
 }
@@ -179,18 +159,14 @@ void screen_manager_home(void) {
         ESP_LOGI(TAG, "Already at home screen");
         return;
     }
-
     ESP_LOGI(TAG, "Returning to home screen");
-    stack_top = 0;  // Reset to home
-
+    stack_top = 0;
     lv_obj_t* scr = screens[SCREEN_CLOCK];
     if (scr == NULL) {
         ESP_LOGE(TAG, "Clock screen not set!");
         return;
     }
-
     lvgl_port_lock(0);
-    // Smooth fade for home transition
     lv_scr_load_anim(scr, LV_SCREEN_LOAD_ANIM_FADE_IN, 400, 0, false);
     lvgl_port_unlock();
 }
@@ -203,10 +179,10 @@ screen_id_t screen_manager_get_current(void) {
 }
 
 // =============================================================================
-// Screen creation functions
+// Shared UI helpers
 // =============================================================================
 
-// Back button callback
+/** @brief Back-button event callback — pops one screen off the stack. */
 static void back_button_cb(lv_event_t* e) {
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_CLICKED) {
@@ -215,21 +191,56 @@ static void back_button_cb(lv_event_t* e) {
     }
 }
 
-// Create a standard back button
+/**
+ * @brief Create the standard back button in the top-left corner.
+ * @param parent  Parent screen object.
+ * @return Back button object.
+ */
 static lv_obj_t* create_back_button(lv_obj_t* parent) {
     lv_obj_t* btn = lv_btn_create(parent);
     lv_obj_set_size(btn, 100, 50);
     lv_obj_align(btn, LV_ALIGN_TOP_LEFT, 10, 10);
     lv_obj_add_event_cb(btn, back_button_cb, LV_EVENT_CLICKED, NULL);
-
     lv_obj_t* label = lv_label_create(btn);
     lv_label_set_text(label, "< Back");
     lv_obj_center(label);
-
     return btn;
 }
 
+/**
+ * @brief Create a black full-screen LVGL screen with a centered title and back button.
+ *
+ * Shared by all settings screens so each create_* function starts with a
+ * single call instead of 8+ setup calls.
+ *
+ * @param title  Title string shown at the top of the screen.
+ * @return New LVGL screen object.
+ */
+static lv_obj_t* sm_new_screen(const char* title) {
+    lv_obj_t* scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+    lv_obj_t* lbl = lv_label_create(scr);
+    lv_label_set_text(lbl, title);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 20);
+    create_back_button(scr);
+    return scr;
+}
+
+// =============================================================================
 // Settings menu screen
+// =============================================================================
+
+static screen_id_t wifi_screen_id             = SCREEN_WIFI_SETTINGS;
+static screen_id_t brightness_screen_id       = SCREEN_BRIGHTNESS_SETTINGS;
+static screen_id_t background_selector_id     = SCREEN_BACKGROUND_SELECTOR;
+static screen_id_t text_color_settings_id     = SCREEN_TEXT_COLOR_SETTINGS;
+static screen_id_t ota_screen_id              = SCREEN_OTA_SETTINGS;
+static screen_id_t animation_preview_id       = SCREEN_ANIMATION_PREVIEW;
+static screen_id_t about_screen_id            = SCREEN_ABOUT;
+
+/** @brief Navigate to a settings sub-screen when a menu item is clicked. */
 static void settings_menu_item_cb(lv_event_t* e) {
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_CLICKED) {
@@ -239,174 +250,162 @@ static void settings_menu_item_cb(lv_event_t* e) {
     }
 }
 
-static screen_id_t wifi_screen_id = SCREEN_WIFI_SETTINGS;
-static screen_id_t brightness_screen_id = SCREEN_BRIGHTNESS_SETTINGS;
-static screen_id_t background_selector_screen_id = SCREEN_BACKGROUND_SELECTOR;
-static screen_id_t text_color_settings_screen_id = SCREEN_TEXT_COLOR_SETTINGS;
-static screen_id_t ota_screen_id = SCREEN_OTA_SETTINGS;
-static screen_id_t animation_preview_screen_id = SCREEN_ANIMATION_PREVIEW;
-static screen_id_t about_screen_id = SCREEN_ABOUT;
-
-// Reboot button callback
+/** @brief Reboot the device via esp_restart after a brief UI settle delay. */
 static void reboot_btn_cb(lv_event_t* e) {
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_CLICKED) {
         ESP_LOGI(TAG, "Reboot button clicked - initiating system restart");
-        
-        // Give LVGL time to update
         lvgl_port_unlock();
-        
-        // Wait a moment for UI to settle
         vTaskDelay(pdMS_TO_TICKS(500));
-        
-        // Perform system restart
         esp_restart();
     }
 }
 
-static lv_obj_t* create_settings_menu(void) {
-    lv_obj_t* scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+/**
+ * @brief Add one item to a settings list with its navigation callback.
+ * @param list      LVGL list to append to.
+ * @param icon      Symbol icon string (e.g. LV_SYMBOL_WIFI).
+ * @param label     Display text for the item.
+ * @param screen_id Pointer to screen_id_t stored in static memory.
+ */
+static void sm_add_menu_item(lv_obj_t* list, const char* icon,
+                              const char* label, screen_id_t* screen_id) {
+    lv_obj_t* btn = lv_list_add_btn(list, icon, label);
+    lv_obj_add_event_cb(btn, settings_menu_item_cb, LV_EVENT_CLICKED, screen_id);
+}
 
-    // Title
-    lv_obj_t* title = lv_label_create(scr);
-    lv_label_set_text(title, "Settings");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
+/**
+ * @brief Populate the settings list with all navigation items and reboot.
+ * @param list  LVGL list object to populate.
+ */
+static void sm_populate_settings_menu(lv_obj_t* list) {
+    sm_add_menu_item(list, LV_SYMBOL_WIFI,     "WiFi Settings",    &wifi_screen_id);
+    sm_add_menu_item(list, LV_SYMBOL_IMAGE,    "Brightness",       &brightness_screen_id);
+    sm_add_menu_item(list, LV_SYMBOL_IMAGE,    "Background Image", &background_selector_id);
+    sm_add_menu_item(list, LV_SYMBOL_EDIT,     "Text Color",       &text_color_settings_id);
+    sm_add_menu_item(list, LV_SYMBOL_DOWNLOAD, "Software Update",  &ota_screen_id);
+    sm_add_menu_item(list, LV_SYMBOL_PLAY,     "Animation Preview",&animation_preview_id);
+    sm_add_menu_item(list, LV_SYMBOL_SETTINGS, "About",            &about_screen_id);
+    lv_obj_t* btn_reboot = lv_list_add_btn(list, LV_SYMBOL_POWER, "Reboot Device");
+    lv_obj_add_event_cb(btn_reboot, reboot_btn_cb, LV_EVENT_CLICKED, NULL);
+}
 
-    // Back button
-    create_back_button(scr);
-
-    // Create a list of settings options
+/**
+ * @brief Create the top-level settings menu list widget.
+ * @param scr  Parent screen.
+ * @return LVGL list object.
+ */
+static lv_obj_t* sm_create_menu_list(lv_obj_t* scr) {
     lv_obj_t* list = lv_list_create(scr);
     lv_obj_set_size(list, 700, 500);
     lv_obj_align(list, LV_ALIGN_CENTER, 0, 30);
-
-    // Set larger font for list items
     lv_obj_set_style_text_font(list, &lv_font_montserrat_24, 0);
+    return list;
+}
 
-    // WiFi Settings
-    lv_obj_t* btn_wifi = lv_list_add_btn(list, LV_SYMBOL_WIFI, "WiFi Settings");
-    lv_obj_add_event_cb(btn_wifi, settings_menu_item_cb, LV_EVENT_CLICKED, &wifi_screen_id);
-
-    // Brightness Settings
-    lv_obj_t* btn_brightness = lv_list_add_btn(list, LV_SYMBOL_IMAGE, "Brightness");
-    lv_obj_add_event_cb(btn_brightness, settings_menu_item_cb, LV_EVENT_CLICKED, &brightness_screen_id);
-
-    // Background Image
-    lv_obj_t* btn_background = lv_list_add_btn(list, LV_SYMBOL_IMAGE, "Background Image");
-    lv_obj_add_event_cb(btn_background, settings_menu_item_cb, LV_EVENT_CLICKED, &background_selector_screen_id);
-
-    // Text Color
-    lv_obj_t* btn_text_color = lv_list_add_btn(list, LV_SYMBOL_EDIT, "Text Color");
-    lv_obj_add_event_cb(btn_text_color, settings_menu_item_cb, LV_EVENT_CLICKED, &text_color_settings_screen_id);
-
-    // Software Update (OTA)
-    lv_obj_t* btn_ota = lv_list_add_btn(list, LV_SYMBOL_DOWNLOAD, "Software Update");
-    lv_obj_add_event_cb(btn_ota, settings_menu_item_cb, LV_EVENT_CLICKED, &ota_screen_id);
-
-    // Animation Preview
-    lv_obj_t* btn_animation = lv_list_add_btn(list, LV_SYMBOL_PLAY, "Animation Preview");
-    lv_obj_add_event_cb(btn_animation, settings_menu_item_cb, LV_EVENT_CLICKED, &animation_preview_screen_id);
-
-    // About
-    lv_obj_t* btn_about = lv_list_add_btn(list, LV_SYMBOL_SETTINGS, "About");
-    lv_obj_add_event_cb(btn_about, settings_menu_item_cb, LV_EVENT_CLICKED, &about_screen_id);
-
-    // Reboot Device
-    lv_obj_t* btn_reboot = lv_list_add_btn(list, LV_SYMBOL_POWER, "Reboot Device");
-    lv_obj_add_event_cb(btn_reboot, reboot_btn_cb, LV_EVENT_CLICKED, NULL);
-
+/**
+ * @brief Create the settings menu screen.
+ * @return New LVGL screen object.
+ */
+static lv_obj_t* create_settings_menu(void) {
+    lv_obj_t* scr  = sm_new_screen("Settings");
+    lv_obj_t* list = sm_create_menu_list(scr);
+    sm_populate_settings_menu(list);
     return scr;
 }
 
-// WiFi configuration state
-static char selected_ssid[33] = "";
-static char wifi_password[64] = "";
-static lv_obj_t* wifi_keyboard = NULL;
-static lv_obj_t* password_textarea = NULL;
-static lv_obj_t* wifi_list = NULL;
-static lv_obj_t* wifi_status_label = NULL;
+// =============================================================================
+// WiFi settings screen
+// =============================================================================
 
-// WiFi scan button callback
-static void wifi_scan_btn_cb(lv_event_t* e) {
-    lv_event_code_t code = lv_event_get_code(e);
-    if (code != LV_EVENT_CLICKED) return;
+static char selected_ssid[33]   = "";
+static char wifi_password[64]   = "";
+static lv_obj_t* wifi_keyboard        = NULL;
+static lv_obj_t* password_textarea    = NULL;
+static lv_obj_t* wifi_list            = NULL;
+static lv_obj_t* wifi_status_label    = NULL;
 
-    ESP_LOGI(TAG, "WiFi scan button clicked");
+/**
+ * @brief Add one AP entry to the WiFi network list.
+ * @param ap  AP info struct from network_scan.
+ */
+static void wifi_scan_add_network(const wifi_ap_info_t* ap) {
+    char btn_text[64];
+    const char* lock_icon = (ap->authmode != WIFI_AUTH_OPEN) ? "* " : "";
+    snprintf(btn_text, sizeof(btn_text), "%s%s (%d dBm)", lock_icon, ap->ssid, ap->rssi);
+    lv_obj_t* btn = lv_list_add_button(wifi_list, NULL, btn_text);
+    char* ssid_copy = (char*)malloc(33);
+    strncpy(ssid_copy, ap->ssid, 32);
+    ssid_copy[32] = '\0';
+    lv_obj_set_user_data(btn, ssid_copy);
+    lv_obj_add_event_cb(btn, wifi_network_select_cb, LV_EVENT_CLICKED, NULL);
+}
 
-    // Clear existing list
-    if (wifi_list != NULL) {
-        lv_obj_clean(wifi_list);
-    }
-
-    // Update status
-    if (wifi_status_label) {
-        lv_label_set_text(wifi_status_label, "Scanning...");
-    }
-
-    // Perform scan (this blocks, but LVGL will update after)
-    wifi_ap_info_t ap_list[20];
-    uint16_t found = 0;
-
-    // Unlock LVGL before network operation
-    lvgl_port_unlock();
-    esp_err_t err = network_scan(ap_list, 20, &found);
-    lvgl_port_lock(0);
-
-    if (err != ESP_OK || found == 0) {
-        ESP_LOGW(TAG, "WiFi scan failed or no networks found");
-        if (wifi_status_label) {
-            lv_label_set_text(wifi_status_label, "No networks found");
-        }
-        return;
-    }
-
-    ESP_LOGI(TAG, "Found %d networks", found);
-    if (wifi_status_label) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "Found %d networks", found);
-        lv_label_set_text(wifi_status_label, buf);
-    }
-
-    // Add networks to list
+/**
+ * @brief Populate the network list and update status label with scan results.
+ * @param ap_list  Array of AP info from network_scan.
+ * @param found    Number of APs found.
+ */
+static void wifi_scan_populate_list(const wifi_ap_info_t* ap_list, uint16_t found) {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "Found %d networks", found);
+    if (wifi_status_label) lv_label_set_text(wifi_status_label, buf);
     for (uint16_t i = 0; i < found; i++) {
-        char btn_text[64];
-        const char* lock_icon = (ap_list[i].authmode != WIFI_AUTH_OPEN) ? "* " : "";
-        snprintf(btn_text, sizeof(btn_text), "%s%s (%d dBm)",
-                 lock_icon, ap_list[i].ssid, ap_list[i].rssi);
-
-        lv_obj_t* btn = lv_list_add_button(wifi_list, NULL, btn_text);
-
-        // Store SSID in user data
-        char* ssid_copy = (char*)malloc(33);
-        strncpy(ssid_copy, ap_list[i].ssid, 32);
-        ssid_copy[32] = '\0';
-        lv_obj_set_user_data(btn, ssid_copy);
-
-        // Add click handler
-        lv_obj_add_event_cb(btn, wifi_network_select_cb, LV_EVENT_CLICKED, NULL);
+        wifi_scan_add_network(&ap_list[i]);
     }
 }
 
-// Network selection callback
+/**
+ * @brief Update UI and list after a scan: error path shows a message; success populates list.
+ * @param err      Return code from network_scan.
+ * @param ap_list  AP array (valid when err==ESP_OK && found>0).
+ * @param found    Number of APs discovered.
+ */
+static void wifi_scan_handle_result(esp_err_t err, wifi_ap_info_t* ap_list, uint16_t found) {
+    if (err != ESP_OK || found == 0) {
+        ESP_LOGW(TAG, "WiFi scan: err=%d found=%d", (int)err, (int)found);
+        if (wifi_status_label) lv_label_set_text(wifi_status_label, "No networks found");
+        return;
+    }
+    ESP_LOGI(TAG, "Scan complete: %d networks", found);
+    wifi_scan_populate_list(ap_list, found);
+}
+
+/**
+ * @brief Clear the list, perform a WiFi scan, and populate results.
+ *
+ * Releases the LVGL lock around the blocking network_scan call.
+ */
+static void wifi_scan_run(void) {
+    if (wifi_list != NULL) lv_obj_clean(wifi_list);
+    if (wifi_status_label) lv_label_set_text(wifi_status_label, "Scanning...");
+    wifi_ap_info_t ap_list[20];
+    uint16_t found = 0;
+    lvgl_port_unlock();
+    esp_err_t err = network_scan(ap_list, 20, &found);
+    lvgl_port_lock(0);
+    wifi_scan_handle_result(err, ap_list, found);
+}
+
+/** @brief Scan button event — delegates to wifi_scan_run on click. */
+static void wifi_scan_btn_cb(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    ESP_LOGI(TAG, "WiFi scan button clicked");
+    wifi_scan_run();
+}
+
+/** @brief Select a network from the list; reveal the password input. */
 static void wifi_network_select_cb(lv_event_t* e) {
     lv_obj_t* btn = lv_event_get_target(e);
     char* ssid = (char*)lv_obj_get_user_data(btn);
-
     if (ssid == NULL) return;
-
     ESP_LOGI(TAG, "Selected network: %s", ssid);
     strncpy(selected_ssid, ssid, sizeof(selected_ssid) - 1);
     selected_ssid[sizeof(selected_ssid) - 1] = '\0';
-
-    // Show password input
     if (password_textarea && wifi_keyboard) {
         lv_obj_clear_flag(password_textarea, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(wifi_keyboard, LV_OBJ_FLAG_HIDDEN);
         lv_textarea_set_text(password_textarea, "");
-
         if (wifi_status_label) {
             char buf[64];
             snprintf(buf, sizeof(buf), "Enter password for: %s", selected_ssid);
@@ -415,77 +414,79 @@ static void wifi_network_select_cb(lv_event_t* e) {
     }
 }
 
-// WiFi connect button callback
-static void wifi_connect_btn_cb(lv_event_t* e) {
-    lv_event_code_t code = lv_event_get_code(e);
-    if (code != LV_EVENT_CLICKED) return;
-
-    if (selected_ssid[0] == '\0') {
-        ESP_LOGW(TAG, "No network selected");
+/**
+ * @brief Save WiFi credentials to NVS after a successful connection.
+ * @param ssid      Network SSID string.
+ * @param password  Network password string.
+ */
+static void wifi_save_credentials(const char* ssid, const char* password) {
+    clock_settings_t cfg;
+    if (settings_load(&cfg) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to load settings for credential save");
         return;
     }
-
-    // Get password from textarea
-    const char* pwd = lv_textarea_get_text(password_textarea);
-    strncpy(wifi_password, pwd, sizeof(wifi_password) - 1);
-    wifi_password[sizeof(wifi_password) - 1] = '\0';
-
-    ESP_LOGI(TAG, "Connecting to %s...", selected_ssid);
-
-    if (wifi_status_label) {
-        lv_label_set_text(wifi_status_label, "Connecting...");
+    strncpy(cfg.wifi_ssid, ssid, sizeof(cfg.wifi_ssid) - 1);
+    cfg.wifi_ssid[sizeof(cfg.wifi_ssid) - 1] = '\0';
+    strncpy(cfg.wifi_password, password, sizeof(cfg.wifi_password) - 1);
+    cfg.wifi_password[sizeof(cfg.wifi_password) - 1] = '\0';
+    cfg.wifi_configured = true;
+    esp_err_t err = settings_save(&cfg);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "WiFi credentials saved for SSID: %s", ssid);
+    } else {
+        ESP_LOGE(TAG, "Failed to save WiFi credentials: %s", esp_err_to_name(err));
     }
+}
 
-    // Hide keyboard and password field
+/**
+ * @brief Hide password textarea and keyboard after user initiates a connection.
+ */
+static void wifi_hide_inputs(void) {
     if (password_textarea && wifi_keyboard) {
         lv_obj_add_flag(password_textarea, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(wifi_keyboard, LV_OBJ_FLAG_HIDDEN);
     }
-
-    // Connect (unlock LVGL first)
-    lvgl_port_unlock();
-    esp_err_t err = network_connect(selected_ssid, wifi_password);
-
-    if (err == ESP_OK) {
-        // Save credentials to NVS
-        clock_settings_t cfg;
-        settings_load(&cfg);
-        strncpy(cfg.wifi_ssid, selected_ssid, sizeof(cfg.wifi_ssid));
-        cfg.wifi_ssid[sizeof(cfg.wifi_ssid) - 1] = '\0';
-        strncpy(cfg.wifi_password, wifi_password, sizeof(cfg.wifi_password));
-        cfg.wifi_password[sizeof(cfg.wifi_password) - 1] = '\0';
-        cfg.wifi_configured = true;
-        settings_save(&cfg);
-        ESP_LOGI(TAG, "WiFi credentials saved");
-    }
-
-    lvgl_port_lock(0);
-
-    if (wifi_status_label) {
-        if (err == ESP_OK) {
-            lv_label_set_text(wifi_status_label, "Connected! Saved to settings.");
-        } else {
-            lv_label_set_text(wifi_status_label, "Connection failed");
-        }
-    }
 }
 
-// WiFi settings screen
-static lv_obj_t* create_wifi_settings(void) {
-    lv_obj_t* scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+/**
+ * @brief Connect to the network and update the status label.
+ *
+ * Releases the LVGL lock around the blocking network_connect call.
+ *
+ * @param ssid      Network SSID to connect to.
+ * @param password  Network password.
+ */
+static void wifi_connect_and_update(const char* ssid, const char* password) {
+    wifi_hide_inputs();
+    lvgl_port_unlock();
+    esp_err_t err = network_connect(ssid, password);
+    if (err == ESP_OK) wifi_save_credentials(ssid, password);
+    lvgl_port_lock(0);
+    const char* msg = (err == ESP_OK) ? "Connected! Saved to settings." : "Connection failed";
+    if (wifi_status_label) lv_label_set_text(wifi_status_label, msg);
+    ESP_LOGI(TAG, "WiFi connect result for %s: %d", ssid, (int)err);
+}
 
-    // Title
-    lv_obj_t* title = lv_label_create(scr);
-    lv_label_set_text(title, "WiFi Settings");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
+/** @brief Connect button callback — reads password and initiates connection. */
+static void wifi_connect_btn_cb(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (selected_ssid[0] == '\0') {
+        ESP_LOGW(TAG, "Connect clicked but no network selected");
+        return;
+    }
+    const char* pwd = lv_textarea_get_text(password_textarea);
+    strncpy(wifi_password, pwd, sizeof(wifi_password) - 1);
+    wifi_password[sizeof(wifi_password) - 1] = '\0';
+    ESP_LOGI(TAG, "Connecting to %s...", selected_ssid);
+    if (wifi_status_label) lv_label_set_text(wifi_status_label, "Connecting...");
+    wifi_connect_and_update(selected_ssid, wifi_password);
+}
 
-    // Back button
-    create_back_button(scr);
-
-    // Status label
+/**
+ * @brief Create and position the WiFi connection-status label.
+ * @param scr  Parent screen.
+ */
+static void wifi_create_status_row(lv_obj_t* scr) {
     wifi_status_label = lv_label_create(scr);
     char ssid[33] = "";
     if (network_is_connected() && network_get_ssid(ssid) == ESP_OK) {
@@ -497,74 +498,105 @@ static lv_obj_t* create_wifi_settings(void) {
     }
     lv_obj_set_style_text_color(wifi_status_label, lv_color_white(), 0);
     lv_obj_align(wifi_status_label, LV_ALIGN_TOP_MID, 0, 70);
+}
 
-    // Scan button
-    lv_obj_t* scan_btn = lv_button_create(scr);
-    lv_obj_set_size(scan_btn, 200, 50);
-    lv_obj_align(scan_btn, LV_ALIGN_TOP_MID, 0, 110);
-    lv_obj_add_event_cb(scan_btn, wifi_scan_btn_cb, LV_EVENT_CLICKED, NULL);
+/**
+ * @brief Create the Scan Networks button.
+ * @param scr  Parent screen.
+ */
+static void wifi_create_scan_btn(lv_obj_t* scr) {
+    lv_obj_t* btn = lv_button_create(scr);
+    lv_obj_set_size(btn, 200, 50);
+    lv_obj_align(btn, LV_ALIGN_TOP_MID, 0, 110);
+    lv_obj_add_event_cb(btn, wifi_scan_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* lbl = lv_label_create(btn);
+    lv_label_set_text(lbl, LV_SYMBOL_REFRESH " Scan Networks");
+    lv_obj_center(lbl);
+}
 
-    lv_obj_t* scan_label = lv_label_create(scan_btn);
-    lv_label_set_text(scan_label, LV_SYMBOL_REFRESH " Scan Networks");
-    lv_obj_center(scan_label);
-
-    // Network list
+/**
+ * @brief Create the scrollable network list (sets global wifi_list).
+ * @param scr  Parent screen.
+ */
+static void wifi_create_network_list(lv_obj_t* scr) {
     wifi_list = lv_list_create(scr);
     lv_obj_set_size(wifi_list, 700, 250);
     lv_obj_align(wifi_list, LV_ALIGN_CENTER, 0, 20);
+}
 
-    // Password input (hidden by default)
+/**
+ * @brief Create the hidden password text area (sets global password_textarea).
+ * @param scr  Parent screen.
+ */
+static void wifi_create_password_input(lv_obj_t* scr) {
     password_textarea = lv_textarea_create(scr);
     lv_obj_set_size(password_textarea, 600, 50);
     lv_obj_align(password_textarea, LV_ALIGN_BOTTOM_MID, 0, -280);
     lv_textarea_set_placeholder_text(password_textarea, "Enter password...");
     lv_textarea_set_password_mode(password_textarea, true);
     lv_obj_add_flag(password_textarea, LV_OBJ_FLAG_HIDDEN);
+}
 
-    // Keyboard (hidden by default)
+/**
+ * @brief Create the hidden on-screen keyboard (sets global wifi_keyboard).
+ * @param scr  Parent screen.
+ */
+static void wifi_create_keyboard(lv_obj_t* scr) {
     wifi_keyboard = lv_keyboard_create(scr);
     lv_keyboard_set_textarea(wifi_keyboard, password_textarea);
     lv_obj_set_size(wifi_keyboard, 750, 220);
     lv_obj_align(wifi_keyboard, LV_ALIGN_BOTTOM_MID, 0, -10);
     lv_obj_add_flag(wifi_keyboard, LV_OBJ_FLAG_HIDDEN);
+}
 
-    // Connect button (always visible, next to password field)
-    lv_obj_t* connect_btn = lv_button_create(scr);
-    lv_obj_set_size(connect_btn, 120, 50);
-    lv_obj_align_to(connect_btn, password_textarea, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
-    lv_obj_add_event_cb(connect_btn, wifi_connect_btn_cb, LV_EVENT_CLICKED, NULL);
+/**
+ * @brief Create the Connect button anchored next to the password text area.
+ * @param scr  Parent screen.
+ */
+static void wifi_create_connect_btn(lv_obj_t* scr) {
+    lv_obj_t* btn = lv_button_create(scr);
+    lv_obj_set_size(btn, 120, 50);
+    lv_obj_align_to(btn, password_textarea, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
+    lv_obj_add_event_cb(btn, wifi_connect_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* lbl = lv_label_create(btn);
+    lv_label_set_text(lbl, "Connect");
+    lv_obj_center(lbl);
+}
 
-    lv_obj_t* connect_label = lv_label_create(connect_btn);
-    lv_label_set_text(connect_label, "Connect");
-    lv_obj_center(connect_label);
-
+/**
+ * @brief Create the WiFi settings screen.
+ * @return New LVGL screen object.
+ */
+static lv_obj_t* create_wifi_settings(void) {
+    lv_obj_t* scr = sm_new_screen("WiFi Settings");
+    wifi_create_status_row(scr);
+    wifi_create_scan_btn(scr);
+    wifi_create_network_list(scr);
+    wifi_create_password_input(scr);
+    wifi_create_keyboard(scr);
+    wifi_create_connect_btn(scr);
     return scr;
 }
 
-// Brightness slider callback
-static void brightness_slider_cb(lv_event_t* e) {
-    lv_obj_t* slider = lv_event_get_target(e);
-    int32_t value = lv_slider_get_value(slider);
+// =============================================================================
+// Brightness settings screen
+// =============================================================================
 
-    ESP_LOGI(TAG, "Brightness changed to: %ld%%", value);
-    bsp_display_brightness_set(value);
-
-    // Update label
-    lv_obj_t* label = (lv_obj_t*)lv_event_get_user_data(e);
-    if (label) {
-        char buf[32];
-        snprintf(buf, sizeof(buf), "Brightness: %ld%%", value);
-        lv_label_set_text(label, buf);
-    }
-
-    // Save to settings (unlock LVGL first)
+/**
+ * @brief Persist the new brightness value to NVS.
+ *
+ * Releases the LVGL lock around the NVS write.
+ *
+ * @param value  Brightness percentage (10–100).
+ */
+static void brightness_save_setting(int32_t value) {
     lvgl_port_unlock();
     clock_settings_t cfg;
     if (settings_load(&cfg) == ESP_OK) {
         cfg.brightness = (uint8_t)value;
         esp_err_t err = settings_save(&cfg);
         if (err == ESP_OK) {
-            ESP_LOGI(TAG, "Brightness setting saved");
+            ESP_LOGI(TAG, "Brightness %ld%% saved", value);
         } else {
             ESP_LOGW(TAG, "Failed to save brightness: %s", esp_err_to_name(err));
         }
@@ -572,10 +604,71 @@ static void brightness_slider_cb(lv_event_t* e) {
     lvgl_port_lock(0);
 }
 
-// Text color settings callback
+/** @brief Slider value-changed callback — sets hardware brightness and saves. */
+static void brightness_slider_cb(lv_event_t* e) {
+    lv_obj_t* slider = lv_event_get_target(e);
+    int32_t value    = lv_slider_get_value(slider);
+    ESP_LOGI(TAG, "Brightness changed to %ld%%", value);
+    bsp_display_brightness_set(value);
+    lv_obj_t* label = (lv_obj_t*)lv_event_get_user_data(e);
+    if (label) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "Brightness: %ld%%", value);
+        lv_label_set_text(label, buf);
+    }
+    brightness_save_setting(value);
+}
+
+/**
+ * @brief Create the brightness percentage label.
+ * @param scr  Parent screen.
+ * @return Label object (passed to slider as user data).
+ */
+static lv_obj_t* bright_create_label(lv_obj_t* scr) {
+    lv_obj_t* lbl = lv_label_create(scr);
+    lv_label_set_text(lbl, "Brightness: 50%");
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_24, 0);
+    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, -100);
+    return lbl;
+}
+
+/**
+ * @brief Create and configure the brightness slider.
+ * @param scr    Parent screen.
+ * @param label  Label object to update on value change (passed as user data).
+ */
+static void bright_create_slider(lv_obj_t* scr, lv_obj_t* label) {
+    lv_obj_t* slider = lv_slider_create(scr);
+    lv_obj_set_width(slider, 600);
+    lv_slider_set_range(slider, 10, 100);
+    lv_slider_set_value(slider, 50, LV_ANIM_OFF);
+    lv_obj_align(slider, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_add_event_cb(slider, brightness_slider_cb, LV_EVENT_VALUE_CHANGED, label);
+}
+
+/**
+ * @brief Create the brightness settings screen.
+ * @return New LVGL screen object.
+ */
+static lv_obj_t* create_brightness_settings(void) {
+    lv_obj_t* scr   = sm_new_screen("Brightness");
+    lv_obj_t* label = bright_create_label(scr);
+    bright_create_slider(scr, label);
+    lv_obj_t* instr = lv_label_create(scr);
+    lv_label_set_text(instr, "Slide to adjust screen brightness");
+    lv_obj_set_style_text_color(instr, lv_color_white(), 0);
+    lv_obj_align(instr, LV_ALIGN_CENTER, 0, 100);
+    return scr;
+}
+
+// =============================================================================
+// Text color settings screen
+// =============================================================================
+
 typedef struct {
-    uint32_t color;     // RGB888 color value
-    const char* name;   // Color name for display
+    uint32_t    color;  ///< RGB888 color value
+    const char* name;   ///< Display name
 } color_preset_t;
 
 static const color_preset_t COLOR_PRESETS[] = {
@@ -591,258 +684,278 @@ static const color_preset_t COLOR_PRESETS[] = {
 };
 #define NUM_COLOR_PRESETS (sizeof(COLOR_PRESETS) / sizeof(COLOR_PRESETS[0]))
 
-static void color_select_cb(lv_event_t* e) {
-    lv_event_code_t code = lv_event_get_code(e);
-    if (code != LV_EVENT_CLICKED) return;
+/**
+ * @brief Show a success message box with msg, wait 1.5 s, then pop the screen.
+ *
+ * Shared by color and background selection callbacks.
+ * LVGL lock must be held by caller.
+ *
+ * @param msg  Body text shown inside the message box.
+ */
+static void sm_show_success_and_pop(const char* msg) {
+    lv_obj_t* mbox = lv_msgbox_create(NULL);
+    lv_msgbox_add_title(mbox, "Success");
+    lv_msgbox_add_text(mbox, msg);
+    lv_msgbox_add_close_button(mbox);
+    lv_obj_center(mbox);
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    screen_manager_pop();
+}
 
-    uint32_t color_value = (uint32_t)(uintptr_t)lv_event_get_user_data(e);
-    ESP_LOGI(TAG, "Text color selected: 0x%06lX", color_value);
-
-    // Load current settings
+/**
+ * @brief Load settings, set text_color field, and save back to NVS.
+ *
+ * Called while LVGL lock is NOT held.
+ *
+ * @param color_value  RGB888 color to persist.
+ * @return ESP_OK on success.
+ */
+static esp_err_t color_update_settings(uint32_t color_value) {
     clock_settings_t cfg;
-    if (settings_load(&cfg) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to load settings");
+    esp_err_t err = settings_load(&cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to load settings for color update");
+        return err;
+    }
+    cfg.text_color = color_value;
+    return settings_save(&cfg);
+}
+
+/**
+ * @brief Persist a color selection, refresh the UI, and navigate back.
+ *
+ * Releases the LVGL lock around NVS operations.
+ *
+ * @param color_value  RGB888 color to apply.
+ */
+static void color_select_save(uint32_t color_value) {
+    lvgl_port_unlock();
+    esp_err_t err = color_update_settings(color_value);
+    lvgl_port_lock(0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Color save failed: %d", (int)err);
         return;
     }
+    ESP_LOGI(TAG, "Text color saved: 0x%06lX", color_value);
+    ui_refresh_text_color();
+    sm_show_success_and_pop("Text color updated!");
+}
 
-    // Update text color
-    cfg.text_color = color_value;
+/** @brief Clicked callback for a color preset button. */
+static void color_select_cb(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    uint32_t color_value = (uint32_t)(uintptr_t)lv_event_get_user_data(e);
+    ESP_LOGI(TAG, "Text color selected: 0x%06lX", color_value);
+    color_select_save(color_value);
+}
 
-    // Save settings
-    if (settings_save(&cfg) == ESP_OK) {
-        ESP_LOGI(TAG, "Text color saved: 0x%06lX", cfg.text_color);
-
-        // Refresh text color immediately
-        ui_refresh_text_color();
-
-        // Show confirmation message
-        lv_obj_t* mbox = lv_msgbox_create(NULL);
-        lv_msgbox_add_title(mbox, "Success");
-        lv_msgbox_add_text(mbox, "Text color updated!");
-        lv_msgbox_add_close_button(mbox);
-        lv_obj_center(mbox);
-
-        // Go back after a delay
-        vTaskDelay(pdMS_TO_TICKS(1500));
-        screen_manager_pop();
-    } else {
-        ESP_LOGE(TAG, "Failed to save settings");
+/**
+ * @brief Add a single color preset entry to the color list.
+ * @param list          LVGL list object.
+ * @param preset        Preset descriptor.
+ * @param current_color Currently saved color (highlighted if matching).
+ */
+static void tc_add_color_preset(lv_obj_t* list, const color_preset_t* preset,
+                                 uint32_t current_color) {
+    lv_obj_t* btn = lv_list_add_btn(list, LV_SYMBOL_BULLET, preset->name);
+    lv_obj_add_event_cb(btn, color_select_cb, LV_EVENT_CLICKED,
+                        (void*)(uintptr_t)preset->color);
+    if (preset->color == current_color) {
+        lv_obj_add_state(btn, LV_STATE_FOCUSED);
     }
 }
 
-// Text color settings screen
-static lv_obj_t* create_text_color_settings(void) {
-    lv_obj_t* scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
-
-    // Title
-    lv_obj_t* title = lv_label_create(scr);
-    lv_label_set_text(title, "Text Color");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
-
-    // Back button
-    create_back_button(scr);
-
-    // Create list for color options
+/**
+ * @brief Create the color preset list and populate all entries.
+ * @param scr           Parent screen.
+ * @param current_color Currently saved color (used to highlight the active preset).
+ */
+static void tc_create_preset_list(lv_obj_t* scr, uint32_t current_color) {
     lv_obj_t* list = lv_list_create(scr);
     lv_obj_set_size(list, 700, 450);
     lv_obj_align(list, LV_ALIGN_CENTER, 0, 30);
     lv_obj_set_style_text_font(list, &lv_font_montserrat_20, 0);
+    for (int i = 0; i < (int)NUM_COLOR_PRESETS; i++) {
+        tc_add_color_preset(list, &COLOR_PRESETS[i], current_color);
+    }
+}
 
-    // Load current color from settings
+/**
+ * @brief Create the text color settings screen.
+ * @return New LVGL screen object.
+ */
+static lv_obj_t* create_text_color_settings(void) {
+    lv_obj_t* scr = sm_new_screen("Text Color");
     clock_settings_t cfg;
-    uint32_t current_color = 0xFFFFFF;  // Default white
+    uint32_t current_color = 0xFFFFFF;
     if (settings_load(&cfg) == ESP_OK) {
         current_color = cfg.text_color;
     }
+    tc_create_preset_list(scr, current_color);
+    return scr;
+}
 
-    // Add color presets as buttons
-    for (int i = 0; i < NUM_COLOR_PRESETS; i++) {
-        const char* label = COLOR_PRESETS[i].name;
-        uint32_t color_val = COLOR_PRESETS[i].color;
+// =============================================================================
+// Background selector screen
+// =============================================================================
 
-        // Create button
-        lv_obj_t* btn = lv_list_add_btn(list, LV_SYMBOL_BULLET, label);
-        lv_obj_add_event_cb(btn, color_select_cb, LV_EVENT_CLICKED, (void*)(uintptr_t)color_val);
-
-        // Highlight current color
-        if (color_val == current_color) {
-            lv_obj_add_state(btn, LV_STATE_FOCUSED);
-        }
+/**
+ * @brief Persist background_image path to NVS.
+ *
+ * Releases the LVGL lock around NVS operations.
+ *
+ * @param filename  POSIX-relative path on SD card (e.g. "/bg.gif").
+ * @return ESP_OK on success, or error code.
+ */
+static esp_err_t bg_settings_update(const char* filename) {
+    lvgl_port_unlock();
+    clock_settings_t cfg;
+    esp_err_t err = settings_load(&cfg);
+    if (err == ESP_OK) {
+        snprintf(cfg.background_image, sizeof(cfg.background_image), "A:%s", filename);
+        err = settings_save(&cfg);
     }
-
-    return scr;
+    lvgl_port_lock(0);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Background saved: A:%s", filename);
+    } else {
+        ESP_LOGE(TAG, "bg_settings_update failed: %d", (int)err);
+    }
+    return err;
 }
 
-// Brightness settings screen
-static lv_obj_t* create_brightness_settings(void) {
-    lv_obj_t* scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
-
-    // Title
-    lv_obj_t* title = lv_label_create(scr);
-    lv_label_set_text(title, "Brightness");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
-
-    // Back button
-    create_back_button(scr);
-
-    // Brightness label
-    lv_obj_t* label = lv_label_create(scr);
-    lv_label_set_text(label, "Brightness: 50%");
-    lv_obj_set_style_text_color(label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_24, 0);
-    lv_obj_align(label, LV_ALIGN_CENTER, 0, -100);
-
-    // Brightness slider
-    lv_obj_t* slider = lv_slider_create(scr);
-    lv_obj_set_width(slider, 600);
-    lv_slider_set_range(slider, 10, 100);  // 10% to 100%
-    lv_slider_set_value(slider, 50, LV_ANIM_OFF);  // Default to 50%
-    lv_obj_align(slider, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_add_event_cb(slider, brightness_slider_cb, LV_EVENT_VALUE_CHANGED, label);
-
-    // Instructions
-    lv_obj_t* instr = lv_label_create(scr);
-    lv_label_set_text(instr, "Slide to adjust screen brightness");
-    lv_obj_set_style_text_color(instr, lv_color_white(), 0);
-    lv_obj_align(instr, LV_ALIGN_CENTER, 0, 100);
-
-    return scr;
+/**
+ * @brief Save, refresh, confirm, and navigate back after background selection.
+ * @param filename  POSIX-relative path on SD card.
+ */
+static void background_select_apply(const char* filename) {
+    esp_err_t err = bg_settings_update(filename);
+    if (err != ESP_OK) return;
+    ui_refresh_background();
+    sm_show_success_and_pop("Background updated!");
 }
 
-// Background selector callback
+/** @brief Clicked callback for a background file list item. */
 static void background_select_cb(lv_event_t* e) {
-    lv_event_code_t code = lv_event_get_code(e);
-    if (code != LV_EVENT_CLICKED) return;
-
-    // Get the selected filename from user data
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     const char* filename = (const char*)lv_event_get_user_data(e);
     if (filename == NULL) return;
-
     ESP_LOGI(TAG, "Background selected: %s", filename);
-
-    // Load current settings
-    clock_settings_t cfg;
-    if (settings_load(&cfg) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to load settings");
-        return;
-    }
-
-    // Update background image path
-    snprintf(cfg.background_image, sizeof(cfg.background_image), "A:%s", filename);
-
-    // Save settings
-    if (settings_save(&cfg) == ESP_OK) {
-        ESP_LOGI(TAG, "Background saved to settings: %s", cfg.background_image);
-
-        // Refresh background immediately
-        ui_refresh_background();
-
-        // Show confirmation message
-        lv_obj_t* mbox = lv_msgbox_create(NULL);
-        lv_msgbox_add_title(mbox, "Success");
-        lv_msgbox_add_text(mbox, "Background updated!");
-        lv_msgbox_add_close_button(mbox);
-        lv_obj_center(mbox);
-
-        // Go back after a delay
-        vTaskDelay(pdMS_TO_TICKS(1500));
-        screen_manager_pop();
-    } else {
-        ESP_LOGE(TAG, "Failed to save settings");
-    }
+    background_select_apply(filename);
 }
 
-// Background selector screen
-static lv_obj_t* create_background_selector(void) {
-    lv_obj_t* scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+/**
+ * @brief Return true if the file extension is a supported background format.
+ * @param ext  Extension string including the dot (e.g. ".png").
+ */
+static bool bg_is_image_file(const char* ext) {
+    return (strcasecmp(ext, ".png") == 0 || strcasecmp(ext, ".gif") == 0);
+}
 
-    // Title
-    lv_obj_t* title = lv_label_create(scr);
-    lv_label_set_text(title, "Select Background");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
+/**
+ * @brief Try to add a directory entry to the background file list.
+ *
+ * Skips directories and non-image files.  Duplicates the filepath into heap
+ * so the callback user-data pointer remains valid after the stack frame exits.
+ *
+ * @param list   LVGL list object to append to.
+ * @param entry  Directory entry from readdir.
+ * @return true if the entry was added, false if skipped.
+ */
+static bool bg_scan_add_file(lv_obj_t* list, struct dirent* entry) {
+    if (entry->d_type == DT_DIR) return false;
+    const char* ext = strrchr(entry->d_name, '.');
+    if (!ext || !bg_is_image_file(ext)) return false;
+    bool is_gif = (strcasecmp(ext, ".gif") == 0);
+    const char* icon = is_gif ? LV_SYMBOL_LOOP : LV_SYMBOL_IMAGE;
+    char filepath[256];
+    snprintf(filepath, sizeof(filepath), "/%s", entry->d_name);
+    lv_obj_t* btn = lv_list_add_btn(list, icon, entry->d_name);
+    lv_obj_add_event_cb(btn, background_select_cb, LV_EVENT_CLICKED,
+                        (void*)strdup(filepath));
+    return true;
+}
 
-    // Back button
-    create_back_button(scr);
+/**
+ * @brief Scan /sdcard for image files and add them to the list.
+ * @param list  LVGL list object to populate.
+ * @return Number of files added, or negative value on directory open error.
+ */
+static int bg_scan_directory(lv_obj_t* list) {
+    DIR* dir = opendir("/sdcard");
+    if (dir == NULL) {
+        ESP_LOGE(TAG, "Failed to open /sdcard directory");
+        return -1;
+    }
+    int count = 0;
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (bg_scan_add_file(list, entry)) count++;
+    }
+    closedir(dir);
+    return count;
+}
 
-    // Create list for image files (PNG/GIF)
+/**
+ * @brief Add a non-clickable warning item to a list.
+ * @param list  LVGL list object.
+ * @param msg   Warning message string.
+ */
+static void bg_add_warning_item(lv_obj_t* list, const char* msg) {
+    lv_obj_t* btn = lv_list_add_btn(list, LV_SYMBOL_WARNING, msg);
+    lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+}
+
+/**
+ * @brief Create the background file list widget.
+ * @param scr  Parent screen.
+ * @return LVGL list object.
+ */
+static lv_obj_t* bg_create_file_list(lv_obj_t* scr) {
     lv_obj_t* list = lv_list_create(scr);
     lv_obj_set_size(list, 700, 500);
     lv_obj_align(list, LV_ALIGN_CENTER, 0, 30);
     lv_obj_set_style_text_font(list, &lv_font_montserrat_20, 0);
+    return list;
+}
 
-    // Scan SD card for PNG files
+/**
+ * @brief Create the background selector screen.
+ * @return New LVGL screen object.
+ */
+static lv_obj_t* create_background_selector(void) {
+    lv_obj_t* scr  = sm_new_screen("Select Background");
+    lv_obj_t* list = bg_create_file_list(scr);
     if (!sdcard_is_mounted()) {
-        lv_obj_t* btn = lv_list_add_btn(list, LV_SYMBOL_WARNING, "SD card not mounted");
-        lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+        bg_add_warning_item(list, "SD card not mounted");
         return scr;
     }
-
-    DIR* dir = opendir("/sdcard");
-    if (dir == NULL) {
-        ESP_LOGE(TAG, "Failed to open /sdcard directory");
-        lv_obj_t* btn = lv_list_add_btn(list, LV_SYMBOL_WARNING, "Failed to read SD card");
-        lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
-        return scr;
-    }
-
-    struct dirent* entry;
-    int count = 0;
-    while ((entry = readdir(dir)) != NULL) {
-        // Skip directories
-        if (entry->d_type == DT_DIR) continue;
-
-        const char* ext = strrchr(entry->d_name, '.');
-        if (ext == NULL) continue;
-
-        // Check for PNG or GIF files
-        bool is_png = strcasecmp(ext, ".png") == 0;
-        bool is_gif = strcasecmp(ext, ".gif") == 0;
-        if (!is_png && !is_gif) continue;
-
-        // Create path for LVGL (A: drive maps to /sdcard, so path is just /filename)
-        static char filepath[256];  // Static to keep it alive for callback
-        snprintf(filepath, sizeof(filepath), "/%s", entry->d_name);
-
-        // Add to list with appropriate icon
-        const char* icon = is_gif ? LV_SYMBOL_LOOP : LV_SYMBOL_IMAGE;
-        lv_obj_t* btn = lv_list_add_btn(list, icon, entry->d_name);
-        lv_obj_add_event_cb(btn, background_select_cb, LV_EVENT_CLICKED, (void*)strdup(filepath));
-
-        count++;
-    }
-    closedir(dir);
-
-    if (count == 0) {
-        lv_obj_t* btn = lv_list_add_btn(list, LV_SYMBOL_WARNING, "No PNG/GIF files found");
-        lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+    int count = bg_scan_directory(list);
+    if (count < 0) {
+        bg_add_warning_item(list, "Failed to read SD card");
+    } else if (count == 0) {
+        bg_add_warning_item(list, "No PNG/GIF files found");
     } else {
         ESP_LOGI(TAG, "Found %d background files on SD card", count);
     }
-
     return scr;
 }
 
-// OTA Update screen
+// =============================================================================
+// OTA settings screen
+// =============================================================================
+
 static lv_obj_t* ota_status_label = NULL;
 static lv_obj_t* ota_progress_bar = NULL;
-static lv_obj_t* ota_update_btn = NULL;
+static lv_obj_t* ota_update_btn   = NULL;
 static lv_obj_t* ota_url_textarea = NULL;
-static lv_obj_t* ota_keyboard = NULL;
+static lv_obj_t* ota_keyboard     = NULL;
 
+/** @brief OTA progress callback — updates status label and progress bar. */
 static void ota_progress_callback(const ota_status_t* status, void* user_data) {
-    ESP_LOGI(TAG, "OTA Progress: state=%d, progress=%d%%", status->state, status->progress_percent);
-
+    (void)user_data;
+    ESP_LOGI(TAG, "OTA: state=%d progress=%d%%", status->state, status->progress_percent);
     lvgl_port_lock(0);
-
     if (ota_status_label) {
         switch (status->state) {
             case OTA_STATE_CHECKING:
@@ -851,8 +964,7 @@ static void ota_progress_callback(const ota_status_t* status, void* user_data) {
             case OTA_STATE_DOWNLOADING:
                 lv_label_set_text_fmt(ota_status_label, "Downloading: %d%% (%zu/%zu bytes)",
                                       status->progress_percent,
-                                      status->downloaded_bytes,
-                                      status->total_bytes);
+                                      status->downloaded_bytes, status->total_bytes);
                 break;
             case OTA_STATE_VERIFYING:
                 lv_label_set_text(ota_status_label, "Verifying firmware...");
@@ -867,49 +979,49 @@ static void ota_progress_callback(const ota_status_t* status, void* user_data) {
                 break;
         }
     }
-
     if (ota_progress_bar) {
         lv_bar_set_value(ota_progress_bar, status->progress_percent, LV_ANIM_OFF);
     }
-
     lvgl_port_unlock();
 }
 
-static void ota_save_url_btn_cb(lv_event_t* e) {
-    lv_event_code_t code = lv_event_get_code(e);
-    if (code != LV_EVENT_CLICKED) return;
-
-    if (!ota_url_textarea) return;
-
-    // Get URL from textarea
-    const char* url = lv_textarea_get_text(ota_url_textarea);
-    if (!url || strlen(url) == 0) {
-        ESP_LOGW(TAG, "OTA URL is empty, not saving");
-        return;
-    }
-
-    ESP_LOGI(TAG, "Saving OTA server URL: %s", url);
-
-    // Save to settings
+/**
+ * @brief Persist OTA server URL to NVS.
+ *
+ * Releases the LVGL lock around NVS operations.
+ *
+ * @param url  Server URL string.
+ */
+static void ota_save_url_to_settings(const char* url) {
     lvgl_port_unlock();
     clock_settings_t cfg;
     if (settings_load(&cfg) == ESP_OK) {
         strlcpy(cfg.ota_server_url, url, sizeof(cfg.ota_server_url));
         esp_err_t err = settings_save(&cfg);
         if (err == ESP_OK) {
-            ESP_LOGI(TAG, "OTA server URL saved");
+            ESP_LOGI(TAG, "OTA URL saved: %s", url);
         } else {
             ESP_LOGW(TAG, "Failed to save OTA URL: %s", esp_err_to_name(err));
         }
     }
     lvgl_port_lock(0);
-
-    // Hide keyboard
-    if (ota_keyboard) {
-        lv_obj_add_flag(ota_keyboard, LV_OBJ_FLAG_HIDDEN);
-    }
+    if (ota_keyboard) lv_obj_add_flag(ota_keyboard, LV_OBJ_FLAG_HIDDEN);
 }
 
+/** @brief Save URL button callback — validates and persists the textarea contents. */
+static void ota_save_url_btn_cb(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (!ota_url_textarea) return;
+    const char* url = lv_textarea_get_text(ota_url_textarea);
+    if (!url || strlen(url) == 0) {
+        ESP_LOGW(TAG, "OTA URL is empty, not saving");
+        return;
+    }
+    ESP_LOGI(TAG, "Saving OTA URL: %s", url);
+    ota_save_url_to_settings(url);
+}
+
+/** @brief Show/hide keyboard when URL textarea gains or loses focus. */
 static void ota_url_focused_cb(lv_event_t* e) {
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_FOCUSED && ota_keyboard) {
@@ -919,281 +1031,408 @@ static void ota_url_focused_cb(lv_event_t* e) {
     }
 }
 
-static void ota_update_btn_cb(lv_event_t* e) {
-    lv_event_code_t code = lv_event_get_code(e);
-    if (code != LV_EVENT_CLICKED) return;
-
-    if (!ota_url_textarea) return;
-
-    // Get URL from textarea
-    const char* url = lv_textarea_get_text(ota_url_textarea);
-    if (!url || strlen(url) == 0) {
-        ESP_LOGW(TAG, "OTA URL is empty");
-        if (ota_status_label) {
-            lvgl_port_lock(0);
-            lv_label_set_text(ota_status_label, "Error: Server URL is empty");
-            lvgl_port_unlock();
-        }
-        return;
-    }
-
-    ESP_LOGI(TAG, "OTA update button clicked, using URL: %s", url);
-
-    // Disable button during update
-    if (ota_update_btn) {
-        lv_obj_add_state(ota_update_btn, LV_STATE_DISABLED);
-    }
-
-    // Start OTA update in background (will reboot on success)
+/**
+ * @brief Disable the update button, run OTA, re-enable on failure.
+ *
+ * Releases the LVGL lock around the blocking ota_perform_update call.
+ *
+ * @param url  Firmware server URL.
+ */
+static void ota_start_update(const char* url) {
+    if (ota_update_btn) lv_obj_add_state(ota_update_btn, LV_STATE_DISABLED);
     lvgl_port_unlock();
     esp_err_t err = ota_perform_update(url, ota_progress_callback, NULL);
     lvgl_port_lock(0);
-
     if (err != ESP_OK) {
-        // Re-enable button if update failed
-        if (ota_update_btn) {
-            lv_obj_clear_state(ota_update_btn, LV_STATE_DISABLED);
-        }
+        ESP_LOGE(TAG, "OTA update failed: %s", esp_err_to_name(err));
+        if (ota_update_btn) lv_obj_clear_state(ota_update_btn, LV_STATE_DISABLED);
     }
 }
 
-static lv_obj_t* create_ota_settings(void) {
-    lv_obj_t* scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+/** @brief Update button callback — validates URL and starts OTA. */
+static void ota_update_btn_cb(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (!ota_url_textarea) return;
+    const char* url = lv_textarea_get_text(ota_url_textarea);
+    if (!url || strlen(url) == 0) {
+        ESP_LOGW(TAG, "OTA URL empty when update clicked");
+        if (ota_status_label) lv_label_set_text(ota_status_label, "Error: Server URL is empty");
+        return;
+    }
+    ESP_LOGI(TAG, "OTA update starting with URL: %s", url);
+    ota_start_update(url);
+}
 
-    // Title
-    lv_obj_t* title = lv_label_create(scr);
-    lv_label_set_text(title, "Software Update");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
+/**
+ * @brief Create the current firmware version info label.
+ * @param scr  Parent screen.
+ */
+static void ota_create_version_label(lv_obj_t* scr) {
+    lv_obj_t* lbl = lv_label_create(scr);
+    lv_label_set_text_fmt(lbl, "Current Version: %s\nPartition: %s",
+                          ota_get_current_version(), ota_get_running_partition());
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 80);
+}
 
-    // Back button
-    create_back_button(scr);
+/**
+ * @brief Create the server URL static label.
+ * @param scr  Parent screen.
+ */
+static void ota_create_url_label(lv_obj_t* scr) {
+    lv_obj_t* lbl = lv_label_create(scr);
+    lv_label_set_text(lbl, "Server URL:");
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 160, 160);
+}
 
-    // Current version info
-    lv_obj_t* version_label = lv_label_create(scr);
-    lv_label_set_text_fmt(version_label, "Current Version: %s\nPartition: %s",
-                          ota_get_current_version(),
-                          ota_get_running_partition());
-    lv_obj_set_style_text_color(version_label, lv_color_white(), 0);
-    lv_obj_set_style_text_align(version_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(version_label, LV_ALIGN_TOP_MID, 0, 80);
+/**
+ * @brief Populate ota_url_textarea with saved URL or the default placeholder.
+ *
+ * Must be called after ota_url_textarea has been created.
+ */
+static void ota_load_url_from_settings(void) {
+    clock_settings_t cfg;
+    const char* url = "http://192.168.1.96:8000";
+    if (settings_load(&cfg) == ESP_OK && strlen(cfg.ota_server_url) > 0) {
+        url = cfg.ota_server_url;
+    }
+    lv_textarea_set_text(ota_url_textarea, url);
+}
 
-    // Server URL label
-    lv_obj_t* url_label = lv_label_create(scr);
-    lv_label_set_text(url_label, "Server URL:");
-    lv_obj_set_style_text_color(url_label, lv_color_white(), 0);
-    lv_obj_align(url_label, LV_ALIGN_TOP_LEFT, 160, 160);
-
-    // Server URL text area (editable)
+/**
+ * @brief Create the editable URL text area (sets global ota_url_textarea).
+ *
+ * Pre-populates from NVS settings if a URL has been saved.
+ *
+ * @param scr  Parent screen.
+ */
+static void ota_create_url_input(lv_obj_t* scr) {
     ota_url_textarea = lv_textarea_create(scr);
     lv_obj_set_size(ota_url_textarea, 520, 50);
     lv_obj_align(ota_url_textarea, LV_ALIGN_TOP_MID, 0, 190);
     lv_textarea_set_one_line(ota_url_textarea, true);
     lv_textarea_set_placeholder_text(ota_url_textarea, "http://192.168.1.96:8000");
-
-    // Load URL from settings
-    clock_settings_t cfg;
-    if (settings_load(&cfg) == ESP_OK && strlen(cfg.ota_server_url) > 0) {
-        lv_textarea_set_text(ota_url_textarea, cfg.ota_server_url);
-    } else {
-        lv_textarea_set_text(ota_url_textarea, "http://192.168.1.96:8000");
-    }
-
+    ota_load_url_from_settings();
     lv_obj_add_event_cb(ota_url_textarea, ota_url_focused_cb, LV_EVENT_FOCUSED, NULL);
     lv_obj_add_event_cb(ota_url_textarea, ota_url_focused_cb, LV_EVENT_DEFOCUSED, NULL);
+}
 
-    // Save URL button
-    lv_obj_t* save_url_btn = lv_btn_create(scr);
-    lv_obj_set_size(save_url_btn, 120, 50);
-    lv_obj_align_to(save_url_btn, ota_url_textarea, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
-    lv_obj_add_event_cb(save_url_btn, ota_save_url_btn_cb, LV_EVENT_CLICKED, NULL);
+/**
+ * @brief Create the Save URL button anchored to the right of the text area.
+ * @param scr  Parent screen.
+ */
+static void ota_create_save_url_btn(lv_obj_t* scr) {
+    lv_obj_t* btn = lv_btn_create(scr);
+    lv_obj_set_size(btn, 120, 50);
+    lv_obj_align_to(btn, ota_url_textarea, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
+    lv_obj_add_event_cb(btn, ota_save_url_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* lbl = lv_label_create(btn);
+    lv_label_set_text(lbl, "Save");
+    lv_obj_center(lbl);
+}
 
-    lv_obj_t* save_label = lv_label_create(save_url_btn);
-    lv_label_set_text(save_label, "Save");
-    lv_obj_center(save_label);
-
-    // Keyboard for URL editing (hidden by default)
+/**
+ * @brief Create the hidden keyboard bound to the URL text area (sets ota_keyboard).
+ * @param scr  Parent screen.
+ */
+static void ota_create_keyboard(lv_obj_t* scr) {
     ota_keyboard = lv_keyboard_create(scr);
     lv_keyboard_set_textarea(ota_keyboard, ota_url_textarea);
     lv_obj_set_size(ota_keyboard, 750, 220);
     lv_obj_align(ota_keyboard, LV_ALIGN_BOTTOM_MID, 0, -10);
     lv_obj_add_flag(ota_keyboard, LV_OBJ_FLAG_HIDDEN);
+}
 
-    // Update button
+/**
+ * @brief Group URL label, input, save button and keyboard into one call.
+ * @param scr  Parent screen.
+ */
+static void ota_build_url_row(lv_obj_t* scr) {
+    ota_create_url_label(scr);
+    ota_create_url_input(scr);
+    ota_create_save_url_btn(scr);
+    ota_create_keyboard(scr);
+}
+
+/**
+ * @brief Create the Check for Update button (sets global ota_update_btn).
+ * @param scr  Parent screen.
+ */
+static void ota_create_update_btn(lv_obj_t* scr) {
     ota_update_btn = lv_btn_create(scr);
     lv_obj_set_size(ota_update_btn, 300, 60);
     lv_obj_align(ota_update_btn, LV_ALIGN_CENTER, 0, -50);
     lv_obj_add_event_cb(ota_update_btn, ota_update_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* lbl = lv_label_create(ota_update_btn);
+    lv_label_set_text(lbl, LV_SYMBOL_DOWNLOAD " Check for Update");
+    lv_obj_center(lbl);
+}
 
-    lv_obj_t* btn_label = lv_label_create(ota_update_btn);
-    lv_label_set_text(btn_label, LV_SYMBOL_DOWNLOAD " Check for Update");
-    lv_obj_center(btn_label);
-
-    // Status label
+/**
+ * @brief Create the OTA status label (sets global ota_status_label).
+ * @param scr  Parent screen.
+ */
+static void ota_create_status_label(lv_obj_t* scr) {
     ota_status_label = lv_label_create(scr);
     lv_label_set_text(ota_status_label, "Enter server URL and press update");
     lv_obj_set_style_text_color(ota_status_label, lv_color_white(), 0);
     lv_obj_set_style_text_align(ota_status_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(ota_status_label, 600);
     lv_obj_align(ota_status_label, LV_ALIGN_CENTER, 0, 30);
+}
 
-    // Progress bar
+/**
+ * @brief Create the OTA download progress bar (sets global ota_progress_bar).
+ * @param scr  Parent screen.
+ */
+static void ota_create_progress_bar(lv_obj_t* scr) {
     ota_progress_bar = lv_bar_create(scr);
     lv_obj_set_size(ota_progress_bar, 600, 30);
     lv_obj_align(ota_progress_bar, LV_ALIGN_CENTER, 0, 80);
     lv_bar_set_value(ota_progress_bar, 0, LV_ANIM_OFF);
+}
 
-    // Warning label
-    lv_obj_t* warning = lv_label_create(scr);
-    lv_label_set_text(warning, "Warning: Do not power off during update!");
-    lv_obj_set_style_text_color(warning, lv_color_make(255, 100, 100), 0);
-    lv_obj_set_style_text_align(warning, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(warning, LV_ALIGN_CENTER, 0, 130);
+/**
+ * @brief Create the "do not power off" warning label.
+ * @param scr  Parent screen.
+ */
+static void ota_create_warning_label(lv_obj_t* scr) {
+    lv_obj_t* lbl = lv_label_create(scr);
+    lv_label_set_text(lbl, "Warning: Do not power off during update!");
+    lv_obj_set_style_text_color(lbl, lv_color_make(255, 100, 100), 0);
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 130);
+}
 
+/**
+ * @brief Group update button, status label, progress bar and warning.
+ * @param scr  Parent screen.
+ */
+static void ota_build_update_controls(lv_obj_t* scr) {
+    ota_create_update_btn(scr);
+    ota_create_status_label(scr);
+    ota_create_progress_bar(scr);
+    ota_create_warning_label(scr);
+}
+
+/**
+ * @brief Create the Software Update (OTA) settings screen.
+ * @return New LVGL screen object.
+ */
+static lv_obj_t* create_ota_settings(void) {
+    lv_obj_t* scr = sm_new_screen("Software Update");
+    ota_create_version_label(scr);
+    ota_build_url_row(scr);
+    ota_build_update_controls(scr);
     return scr;
 }
 
-// Animation preview play button callback
+// =============================================================================
+// Animation preview screen
+// =============================================================================
+
+/**
+ * @brief Attempt to remove the current task from the LVGL watchdog.
+ * @return true if the watchdog was successfully disabled.
+ */
+static bool anim_watchdog_disable(void) {
+    esp_err_t err = esp_task_wdt_delete(NULL);
+    if (err == ESP_OK) ESP_LOGI(TAG, "Watchdog disabled for animation load");
+    return (err == ESP_OK);
+}
+
+/**
+ * @brief Re-add the current task to the LVGL watchdog.
+ */
+static void anim_watchdog_enable(void) {
+    esp_task_wdt_add(NULL);
+    ESP_LOGI(TAG, "Watchdog re-enabled after animation load");
+}
+
+/**
+ * @brief Create the Lottie widget, configure its buffer, and load the animation.
+ *
+ * Uses a static ARGB8888 buffer (200×200×4 bytes).
+ *
+ * @param scr  Parent screen.
+ * @return Lottie widget object, or NULL on failure.
+ */
+static lv_obj_t* anim_create_lottie_widget(lv_obj_t* scr) {
+    lv_obj_t* widget = lv_lottie_create(scr);
+    if (!widget) {
+        ESP_LOGE(TAG, "Failed to create Lottie widget");
+        return NULL;
+    }
+    static uint8_t lottie_buf[200 * 200 * 4];  // ARGB8888, fixed size
+    lv_obj_set_size(widget, 200, 200);
+    lv_lottie_set_buffer(widget, 200, 200, lottie_buf);
+    lv_obj_align(widget, LV_ALIGN_CENTER, 0, 0);
+    lv_lottie_set_src_file(widget, "A:/sdcard/hummingbird.json");
+    return widget;
+}
+
+/**
+ * @brief Load the Lottie animation with watchdog management.
+ *
+ * Disables the task watchdog for the duration of the potentially long JSON
+ * parse and re-enables it afterwards regardless of outcome.
+ *
+ * @param scr  Parent screen for the Lottie widget.
+ */
+static void anim_load_with_watchdog(lv_obj_t* scr) {
+    bool wdt_was_disabled = anim_watchdog_disable();
+    lv_obj_t* widget = anim_create_lottie_widget(scr);
+    if (!widget) {
+        ESP_LOGE(TAG, "Lottie widget creation failed");
+    } else {
+        ESP_LOGI(TAG, "Animation loaded successfully");
+    }
+    if (wdt_was_disabled) anim_watchdog_enable();
+}
+
+/**
+ * @brief Play button callback — checks file exists, then loads animation.
+ *
+ * The Lottie JSON parser can take several seconds on a 742 KB file; the
+ * watchdog is disabled for the duration to prevent a spurious reset.
+ */
 static void animation_preview_play_btn_cb(lv_event_t* e) {
     lv_obj_t* scr = lv_obj_get_parent(lv_event_get_target(e));
-
-    // Check file exists (use POSIX path for filesystem access)
     struct stat st;
     if (stat("/sdcard/hummingbird.json", &st) != 0) {
         ESP_LOGE(TAG, "Animation file not found");
         return;
     }
-
-    ESP_LOGI(TAG, "Loading animation from A:/sdcard/hummingbird.json (%ld bytes)...", st.st_size);
-
-    // Temporarily disable watchdog for this task while loading large JSON
-    // (ignore error if task not in watchdog)
-    esp_err_t wdt_err = esp_task_wdt_delete(NULL);
-    if (wdt_err == ESP_OK) {
-        ESP_LOGI(TAG, "Watchdog disabled for animation load");
-    }
-
-    // NOW create the Lottie widget (after button click)
-    lv_obj_t* lottie_anim = lv_lottie_create(scr);
-    if (!lottie_anim) {
-        ESP_LOGE(TAG, "Failed to create Lottie widget");
-        esp_task_wdt_add(NULL);  // Re-add to watchdog
-        return;
-    }
-
-    lv_obj_set_size(lottie_anim, 200, 200);
-
-    // Allocate buffer - MUST be ARGB8888 (4 bytes/pixel) for Lottie
-    static uint8_t lottie_buf[200 * 200 * 4];  // ARGB8888 - Fixed from RGB565
-    lv_lottie_set_buffer(lottie_anim, 200, 200, lottie_buf);
-    lv_obj_align(lottie_anim, LV_ALIGN_CENTER, 0, 0);
-
-    // Load the animation - this blocks while parsing 742KB JSON
-    // Watchdog disabled above to prevent timeout
-    lv_lottie_set_src_file(lottie_anim, "A:/sdcard/hummingbird.json");  // Use LVGL POSIX path
-    ESP_LOGI(TAG, "Animation loaded successfully");
-
-    // Re-add task to watchdog (if it was removed)
-    if (wdt_err == ESP_OK) {
-        esp_task_wdt_add(NULL);
-        ESP_LOGI(TAG, "Watchdog re-enabled");
-    }
+    ESP_LOGI(TAG, "Loading animation (%ld bytes)...", st.st_size);
+    anim_load_with_watchdog(scr);
 }
 
-// Animation Preview screen
+/**
+ * @brief Create a centered red error label.
+ * @param scr  Parent screen.
+ * @param msg  Error message string.
+ * @return Label object.
+ */
+static lv_obj_t* anim_create_error_label(lv_obj_t* scr, const char* msg) {
+    lv_obj_t* lbl = lv_label_create(scr);
+    lv_label_set_text(lbl, msg);
+    lv_obj_set_style_text_color(lbl, lv_color_make(255, 100, 100), 0);
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
+    return lbl;
+}
+
+/**
+ * @brief Create a centered orange warning label.
+ * @param scr  Parent screen.
+ * @param msg  Warning message string.
+ * @return Label object.
+ */
+static lv_obj_t* anim_create_warning_label(lv_obj_t* scr, const char* msg) {
+    lv_obj_t* lbl = lv_label_create(scr);
+    lv_label_set_text(lbl, msg);
+    lv_obj_set_style_text_color(lbl, lv_color_make(255, 200, 100), 0);
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
+    return lbl;
+}
+
+/**
+ * @brief Create the animation info label describing the test file.
+ * @param scr  Parent screen.
+ * @return Label object.
+ */
+static lv_obj_t* anim_create_info_label(lv_obj_t* scr) {
+    lv_obj_t* lbl = lv_label_create(scr);
+    lv_label_set_text(lbl,
+        "Click PLAY to load animation\n\n"
+        "File: /sdcard/hummingbird.json\n"
+        "(~742 KB Lottie JSON)");
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(lbl, 700);
+    lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 100);
+    return lbl;
+}
+
+/**
+ * @brief Create the PLAY button that triggers animation loading.
+ * @param scr  Parent screen.
+ */
+static void anim_create_play_btn(lv_obj_t* scr) {
+    lv_obj_t* btn = lv_btn_create(scr);
+    lv_obj_set_size(btn, 120, 50);
+    lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -40);
+    lv_obj_add_event_cb(btn, animation_preview_play_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* lbl = lv_label_create(btn);
+    lv_label_set_text(lbl, "PLAY");
+    lv_obj_center(lbl);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+}
+
+/**
+ * @brief Create the animation preview screen.
+ * @return New LVGL screen object.
+ */
 static lv_obj_t* create_animation_preview(void) {
-    lv_obj_t* scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
-
-    // Title
-    lv_obj_t* title = lv_label_create(scr);
-    lv_label_set_text(title, "Animation Preview");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
-
-    // Back button
-    create_back_button(scr);
-
+    lv_obj_t* scr = sm_new_screen("Animation Preview");
     size_t free_heap = esp_get_free_heap_size();
-    ESP_LOGI(TAG, "Animation Preview - Free heap: %lu bytes", (unsigned long)free_heap);
-
+    ESP_LOGI(TAG, "Animation preview — free heap: %lu bytes", (unsigned long)free_heap);
 #if LV_USE_LOTTIE
-    // Check memory
     if (free_heap < 500000) {
-        lv_obj_t* info_label = lv_label_create(scr);
-        lv_label_set_text(info_label, "ERROR: Insufficient memory\nRequires 500 KB free heap");
-        lv_obj_set_style_text_color(info_label, lv_color_make(255, 100, 100), 0);
-        lv_obj_set_style_text_align(info_label, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_align(info_label, LV_ALIGN_CENTER, 0, 0);
+        anim_create_error_label(scr,
+            "ERROR: Insufficient memory\nRequires 500 KB free heap");
         return scr;
     }
-
-    // Info label
-    lv_obj_t* info_label = lv_label_create(scr);
-    lv_label_set_text(info_label, "Click PLAY to load animation\n\nFile: /sdcard/hummingbird.json\n(~742 KB Lottie JSON)");
-    lv_obj_set_style_text_color(info_label, lv_color_white(), 0);
-    lv_obj_set_style_text_align(info_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_width(info_label, 700);
-    lv_obj_align(info_label, LV_ALIGN_TOP_MID, 0, 100);
-
-    // Play button
-    lv_obj_t* play_btn = lv_btn_create(scr);
-    lv_obj_set_size(play_btn, 120, 50);
-    lv_obj_align(play_btn, LV_ALIGN_BOTTOM_MID, 0, -40);
-    lv_obj_add_event_cb(play_btn, animation_preview_play_btn_cb, LV_EVENT_CLICKED, NULL);
-    
-    lv_obj_t* play_label = lv_label_create(play_btn);
-    lv_label_set_text(play_label, "PLAY");
-    lv_obj_center(play_label);
-    lv_obj_set_style_text_color(play_label, lv_color_white(), 0);
-
-    ESP_LOGI(TAG, "Animation preview screen created with PLAY button");
+    anim_create_info_label(scr);
+    anim_create_play_btn(scr);
+    ESP_LOGI(TAG, "Animation preview screen ready");
 #else
-    lv_obj_t* info_label = lv_label_create(scr);
-    lv_label_set_text(info_label, "Lottie animations not enabled\nCONFIG_LV_USE_LOTTIE is not set");
-    lv_obj_set_style_text_color(info_label, lv_color_make(255, 200, 100), 0);
-    lv_obj_set_style_text_align(info_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(info_label, LV_ALIGN_CENTER, 0, 0);
+    anim_create_warning_label(scr,
+        "Lottie animations not enabled\nCONFIG_LV_USE_LOTTIE is not set");
 #endif
-
     return scr;
 }
 
+// =============================================================================
 // About screen
-static lv_obj_t* create_about_screen(void) {
-    lv_obj_t* scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+// =============================================================================
 
-    // Title
-    lv_obj_t* title = lv_label_create(scr);
-    lv_label_set_text(title, "About");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
-
-    // Back button
-    create_back_button(scr);
-
-    // Get system information
-    size_t free_heap = esp_get_free_heap_size();
-    size_t min_heap = esp_get_minimum_free_heap_size();
-    uint8_t mac[6] = {0};
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
-
-    // Get IP address
+/**
+ * @brief Resolve the device IP address into a string buffer.
+ *
+ * Falls back to "N/A" if the interface is unavailable or not connected.
+ *
+ * @param buf   Destination buffer.
+ * @param size  Size of buf in bytes.
+ */
+static void about_get_ip_str(char* buf, size_t size) {
     esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     esp_netif_ip_info_t ip_info;
-    char ip_str[16] = "N/A";
+    strlcpy(buf, "N/A", size);
     if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
-        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_info.ip));
+        snprintf(buf, size, IPSTR, IP2STR(&ip_info.ip));
     }
+}
 
-    // Build info string
-    char info[512];
-    snprintf(info, sizeof(info),
+/**
+ * @brief Build the About screen info string.
+ *
+ * Collects MAC, IP, and heap statistics into a single formatted buffer.
+ *
+ * @param buf   Destination buffer.
+ * @param size  Size of buf in bytes.
+ */
+static void about_format_info(char* buf, size_t size) {
+    size_t free_heap = esp_get_free_heap_size();
+    size_t min_heap  = esp_get_minimum_free_heap_size();
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    char ip_str[16];
+    about_get_ip_str(ip_str, sizeof(ip_str));
+    snprintf(buf, size,
         "Greenwood Clock\n"
         "Version: 1.0.0\n\n"
         "Platform: ESP32-P4\n"
@@ -1205,15 +1444,21 @@ static lv_obj_t* create_about_screen(void) {
         mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
         ip_str,
         (unsigned long)(free_heap / 1024),
-        (unsigned long)(min_heap / 1024)
-    );
+        (unsigned long)(min_heap / 1024));
+}
 
-    // Content
-    lv_obj_t* label = lv_label_create(scr);
-    lv_label_set_text(label, info);
-    lv_obj_set_style_text_color(label, lv_color_white(), 0);
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(label, LV_ALIGN_CENTER, 0, 20);
-
+/**
+ * @brief Create the About screen with device information.
+ * @return New LVGL screen object.
+ */
+static lv_obj_t* create_about_screen(void) {
+    lv_obj_t* scr = sm_new_screen("About");
+    char info[512];
+    about_format_info(info, sizeof(info));
+    lv_obj_t* lbl = lv_label_create(scr);
+    lv_label_set_text(lbl, info);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 20);
     return scr;
 }

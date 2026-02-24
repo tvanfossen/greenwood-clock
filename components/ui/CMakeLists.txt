@@ -13,7 +13,6 @@ idf_component_register(
         fonts
         lottie
         weather
-        astronomy
         secrets
         esp_netif
         network

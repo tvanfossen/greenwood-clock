@@ -14,211 +14,442 @@ static const char* TAG = "http_api";
 static httpd_handle_t server = NULL;
 
 // Maximum upload size: 10 MB
-#define MAX_UPLOAD_SIZE (10 * 1024 * 1024)
-#define UPLOAD_BUFFER_SIZE (4 * 1024)
+#define MAX_UPLOAD_SIZE     (10 * 1024 * 1024)
+#define UPLOAD_BUFFER_SIZE  (4 * 1024)
+
+// =============================================================================
+// Upload helpers
+// =============================================================================
 
 /**
- * @brief Upload file to SD card
- * POST /files/[path]
- * Body: raw file data (application/octet-stream)
+ * @brief Verify SD card is mounted and content length is within limits.
+ *
+ * Sends the appropriate HTTP error response on failure.
+ *
+ * @param req  Incoming request.
+ * @return ESP_OK if preconditions pass; ESP_FAIL otherwise.
  */
-static esp_err_t upload_file_handler(httpd_req_t *req) {
-    char filepath[256];
-    size_t buf_len;
-
-    // Get URI path (remove /files/ prefix)
-    const char* uri = req->uri + 7;  // Skip "/files/"
-    snprintf(filepath, sizeof(filepath), "/sdcard/%s", uri);
-
-    ESP_LOGI(TAG, "Upload request: %s -> %s", req->uri, filepath);
-
-    // Check SD card
+static esp_err_t upload_check_preconditions(httpd_req_t* req)
+{
     if (!sdcard_is_mounted()) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "SD card not mounted");
         return ESP_FAIL;
     }
-
-    // Check content length
     if (req->content_len > MAX_UPLOAD_SIZE) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "File too large (max 10 MB)");
         return ESP_FAIL;
     }
+    return ESP_OK;
+}
 
-    // Create directory if needed
+/**
+ * @brief Create the parent directory for @p filepath if it does not exist.
+ *
+ * @param filepath  Full destination path (e.g. /sdcard/foo/bar.bin).
+ */
+static void upload_ensure_dir(const char* filepath)
+{
     char dirpath[256];
     strncpy(dirpath, filepath, sizeof(dirpath));
     char* last_slash = strrchr(dirpath, '/');
     if (last_slash) {
         *last_slash = '\0';
-        mkdir(dirpath, 0755);  // Recursive mkdir not implemented, user must create dirs first
+        mkdir(dirpath, 0755);  // Non-recursive; caller must create parents first
     }
+}
 
-    // Open file for writing
-    FILE* f = fopen(filepath, "wb");
-    if (!f) {
-        ESP_LOGE(TAG, "Failed to open file for writing: %s", filepath);
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to create file");
-        return ESP_FAIL;
-    }
-
-    // Receive and write data
-    char buf[UPLOAD_BUFFER_SIZE];
-    size_t total_received = 0;
-    int received;
-
-    while (total_received < req->content_len) {
-        received = httpd_req_recv(req, buf, MIN(sizeof(buf), req->content_len - total_received));
-        if (received <= 0) {
-            if (received == HTTPD_SOCK_ERR_TIMEOUT) {
-                continue;
-            }
-            fclose(f);
-            unlink(filepath);  // Delete partial file
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Upload interrupted");
-            return ESP_FAIL;
-        }
-
-        fwrite(buf, 1, received, f);
-        total_received += received;
-    }
-
+/**
+ * @brief Perform one receive iteration: read from @p req and write to @p f.
+ *
+ * On a hard error, closes @p f, unlinks @p filepath, and sends the HTTP error.
+ *
+ * @param req       Incoming request.
+ * @param f         Open file handle.
+ * @param filepath  Path used only for unlinking on error.
+ * @param buf       Caller-supplied scratch buffer.
+ * @param buf_size  Size of @p buf.
+ * @param remaining Bytes still expected from the client.
+ * @return Bytes written (>0), 0 on timeout (retry), -1 on error.
+ */
+static int upload_recv_chunk(httpd_req_t* req, FILE* f, const char* filepath,
+                              char* buf, size_t buf_size, size_t remaining)
+{
+    int r = httpd_req_recv(req, buf, MIN(buf_size, remaining));
+    if (r == HTTPD_SOCK_ERR_TIMEOUT) return 0;
+    if (r > 0) { fwrite(buf, 1, r, f); return r; }
     fclose(f);
+    unlink(filepath);
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Upload interrupted");
+    return -1;
+}
 
-    ESP_LOGI(TAG, "File uploaded successfully: %s (%zu bytes)", filepath, total_received);
-
-    // Send response
-    char response[256];
-    snprintf(response, sizeof(response),
-             "{\"status\":\"success\",\"path\":\"%s\",\"size\":%zu}\n",
-             filepath, total_received);
-
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
-
+/**
+ * @brief Receive all body bytes from @p req into @p f.
+ *
+ * On error, @p f has already been closed and @p filepath unlinked.
+ * On success, closes @p f and sets @p total_out to bytes written.
+ *
+ * @param req        Incoming request.
+ * @param f          Open file handle to write into.
+ * @param filepath   Path used only for unlinking on error.
+ * @param total_out  Set to bytes written on success.
+ * @return ESP_OK or ESP_FAIL.
+ */
+static esp_err_t upload_receive_loop(httpd_req_t* req, FILE* f,
+                                      const char* filepath, size_t* total_out)
+{
+    char buf[UPLOAD_BUFFER_SIZE];
+    size_t total = 0;
+    int r;
+    while (total < req->content_len) {
+        r = upload_recv_chunk(req, f, filepath, buf, sizeof(buf), req->content_len - total);
+        if (r < 0) return ESP_FAIL;
+        total += (size_t)r;
+    }
+    fclose(f);
+    *total_out = total;
     return ESP_OK;
 }
 
 /**
- * @brief Download file from SD card or list directory
- * GET /files/[path]
+ * @brief Open @p filepath for writing and receive the full request body.
+ *
+ * @param req        Incoming request.
+ * @param filepath   Destination path.
+ * @param total_out  Set to bytes received on success.
+ * @return ESP_OK or ESP_FAIL.
  */
-static esp_err_t download_file_handler(httpd_req_t *req) {
-    char filepath[256];
-    struct stat st;
-
-    // Get URI path (remove /files/ prefix)
-    const char* uri = req->uri + 7;  // Skip "/files/"
-
-    // If empty path, list root directory
-    if (strlen(uri) == 0) {
-        uri = "";
+static esp_err_t upload_open_and_receive(httpd_req_t* req, const char* filepath,
+                                          size_t* total_out)
+{
+    FILE* f = fopen(filepath, "wb");
+    if (!f) {
+        ESP_LOGE(TAG, "Failed to open for writing: %s", filepath);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to create file");
+        return ESP_FAIL;
     }
+    return upload_receive_loop(req, f, filepath, total_out);
+}
 
-    snprintf(filepath, sizeof(filepath), "/sdcard/%s", uri);
+/**
+ * @brief Send a JSON success response for a completed upload.
+ *
+ * @param req       Incoming request.
+ * @param filepath  Path where the file was written.
+ * @param total     Number of bytes written.
+ */
+static void upload_send_success(httpd_req_t* req, const char* filepath, size_t total)
+{
+    ESP_LOGI(TAG, "File uploaded: %s (%zu bytes)", filepath, total);
+    char response[256];
+    snprintf(response, sizeof(response),
+             "{\"status\":\"success\",\"path\":\"%s\",\"size\":%zu}\n",
+             filepath, total);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
+}
 
-    ESP_LOGI(TAG, "Download/list request: %s -> %s", req->uri, filepath);
+// =============================================================================
+// Download / directory helpers
+// =============================================================================
 
-    // Check SD card
+/**
+ * @brief Check SD card mounted and that @p filepath exists via stat.
+ *
+ * Sends the appropriate HTTP error on failure.
+ *
+ * @param req      Incoming request.
+ * @param filepath Path to check.
+ * @param st_out   Populated with stat result on success.
+ * @return ESP_OK, or an error code with HTTP response already sent.
+ */
+static esp_err_t download_resolve_path(httpd_req_t* req, const char* filepath,
+                                        struct stat* st_out)
+{
     if (!sdcard_is_mounted()) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "SD card not mounted");
-        return ESP_FAIL;
+        return ESP_ERR_INVALID_STATE;
     }
-
-    // Check if path exists
-    if (stat(filepath, &st) != 0) {
+    if (stat(filepath, st_out) != 0) {
         httpd_resp_send_404(req);
+        return ESP_ERR_NOT_FOUND;
+    }
+    return ESP_OK;
+}
+
+/**
+ * @brief Format and stream a single directory entry as a JSON object.
+ *
+ * Skips entries whose stat fails. Prepends a comma separator after the first.
+ *
+ * @param req       Incoming request.
+ * @param dirpath   Parent directory path.
+ * @param entry     Directory entry.
+ * @param first_out Tracks whether a comma separator is needed; updated in place.
+ */
+static void download_send_dir_entry(httpd_req_t* req, const char* dirpath,
+                                     const struct dirent* entry, bool* first_out)
+{
+    char entry_path[512];
+    snprintf(entry_path, sizeof(entry_path), "%s/%s", dirpath, entry->d_name);
+    struct stat st;
+    if (stat(entry_path, &st) != 0) return;
+    if (!*first_out) httpd_resp_sendstr_chunk(req, ",\n");
+    *first_out = false;
+    char json[256];
+    snprintf(json, sizeof(json),
+             "{\"name\":\"%s\",\"size\":%ld,\"type\":\"%s\"}",
+             entry->d_name, st.st_size,
+             S_ISDIR(st.st_mode) ? "dir" : "file");
+    httpd_resp_sendstr_chunk(req, json);
+}
+
+/**
+ * @brief Iterate @p dir and stream each non-dot entry as JSON.
+ *
+ * @param req      Incoming request.
+ * @param dir      Open directory handle.
+ * @param filepath Parent directory path.
+ */
+static void download_scan_dir(httpd_req_t* req, DIR* dir, const char* filepath)
+{
+    struct dirent* entry;
+    bool first = true;
+    while ((entry = readdir(dir)) != NULL) {
+        bool is_dot = (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0);
+        if (!is_dot) download_send_dir_entry(req, filepath, entry, &first);
+    }
+}
+
+/**
+ * @brief Open @p filepath as a directory and stream its contents as JSON.
+ *
+ * Response format: {"files":[{"name":…,"size":…,"type":…},…]}
+ *
+ * @param req       Incoming request.
+ * @param filepath  Directory path.
+ * @return ESP_OK or ESP_FAIL.
+ */
+static esp_err_t download_list_directory(httpd_req_t* req, const char* filepath)
+{
+    DIR* dir = opendir(filepath);
+    if (!dir) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to open directory");
         return ESP_FAIL;
     }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr_chunk(req, "{\"files\":[\n");
+    download_scan_dir(req, dir, filepath);
+    closedir(dir);
+    httpd_resp_sendstr_chunk(req, "\n]}\n");
+    httpd_resp_send_chunk(req, NULL, 0);
+    return ESP_OK;
+}
 
-    // If directory, list contents
-    if (S_ISDIR(st.st_mode)) {
-        DIR* dir = opendir(filepath);
-        if (!dir) {
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to open directory");
-            return ESP_FAIL;
-        }
+/**
+ * @brief Set Content-Type and Content-Disposition headers for a file download.
+ *
+ * @param req       Incoming request.
+ * @param filepath  Path used to derive the filename.
+ */
+static void download_set_file_headers(httpd_req_t* req, const char* filepath)
+{
+    httpd_resp_set_type(req, "application/octet-stream");
+    const char* fname = strrchr(filepath, '/');
+    fname = fname ? fname + 1 : filepath;
+    char content_disp[256];
+    snprintf(content_disp, sizeof(content_disp), "attachment; filename=\"%s\"", fname);
+    httpd_resp_set_hdr(req, "Content-Disposition", content_disp);
+}
 
-        // Send JSON list
-        httpd_resp_set_type(req, "application/json");
-        httpd_resp_sendstr_chunk(req, "{\"files\":[\n");
-
-        struct dirent* entry;
-        bool first = true;
-        while ((entry = readdir(dir)) != NULL) {
-            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
-                continue;
-            }
-
-            char entry_path[512];
-            snprintf(entry_path, sizeof(entry_path), "%s/%s", filepath, entry->d_name);
-
-            struct stat entry_st;
-            if (stat(entry_path, &entry_st) == 0) {
-                if (!first) httpd_resp_sendstr_chunk(req, ",\n");
-                first = false;
-
-                char json_entry[256];
-                snprintf(json_entry, sizeof(json_entry),
-                         "{\"name\":\"%s\",\"size\":%ld,\"type\":\"%s\"}",
-                         entry->d_name,
-                         entry_st.st_size,
-                         S_ISDIR(entry_st.st_mode) ? "dir" : "file");
-                httpd_resp_sendstr_chunk(req, json_entry);
-            }
-        }
-
-        closedir(dir);
-        httpd_resp_sendstr_chunk(req, "\n]}\n");
-        httpd_resp_send_chunk(req, NULL, 0);  // End of chunks
-
-        return ESP_OK;
+/**
+ * @brief Stream the contents of @p f to the HTTP client in 4 KB chunks.
+ *
+ * Sends the terminal NULL chunk on success. The caller is responsible for
+ * closing @p f regardless of the return value.
+ *
+ * @param req  Incoming request.
+ * @param f    Open file handle positioned at start.
+ * @return ESP_OK or ESP_FAIL if a chunk send fails.
+ */
+static esp_err_t download_pump_file(httpd_req_t* req, FILE* f)
+{
+    char buf[UPLOAD_BUFFER_SIZE];
+    size_t len;
+    while ((len = fread(buf, 1, sizeof(buf), f)) > 0) {
+        if (httpd_resp_send_chunk(req, buf, len) != ESP_OK) return ESP_FAIL;
     }
+    httpd_resp_send_chunk(req, NULL, 0);
+    return ESP_OK;
+}
 
-    // If file, download it
+/**
+ * @brief Open @p filepath as a file and stream it to the HTTP client.
+ *
+ * @param req       Incoming request.
+ * @param filepath  Path to the file to send.
+ * @return ESP_OK or ESP_FAIL.
+ */
+static esp_err_t download_stream_file(httpd_req_t* req, const char* filepath)
+{
     FILE* f = fopen(filepath, "rb");
     if (!f) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to open file");
         return ESP_FAIL;
     }
-
-    // Set headers
-    httpd_resp_set_type(req, "application/octet-stream");
-
-    // Extract filename for Content-Disposition
-    const char* filename = strrchr(filepath, '/');
-    filename = filename ? filename + 1 : filepath;
-    char content_disp[256];
-    snprintf(content_disp, sizeof(content_disp), "attachment; filename=\"%s\"", filename);
-    httpd_resp_set_hdr(req, "Content-Disposition", content_disp);
-
-    // Stream file
-    char buf[UPLOAD_BUFFER_SIZE];
-    size_t len;
-    while ((len = fread(buf, 1, sizeof(buf), f)) > 0) {
-        if (httpd_resp_send_chunk(req, buf, len) != ESP_OK) {
-            fclose(f);
-            return ESP_FAIL;
-        }
-    }
-
+    download_set_file_headers(req, filepath);
+    esp_err_t err = download_pump_file(req, f);
     fclose(f);
-    httpd_resp_send_chunk(req, NULL, 0);  // End of chunks
+    if (err == ESP_OK) ESP_LOGI(TAG, "File downloaded: %s", filepath);
+    return err;
+}
 
-    ESP_LOGI(TAG, "File downloaded: %s", filepath);
+// =============================================================================
+// Log download helpers
+// =============================================================================
 
-    return ESP_OK;
+/**
+ * @brief Set HTTP headers appropriate for a debug log download.
+ *
+ * @param req  Incoming request.
+ */
+static void logs_set_response_headers(httpd_req_t* req)
+{
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"debug.log\"");
 }
 
 /**
- * @brief Get basic status
+ * @brief Open @p log_path, set headers, and stream the log to the client.
+ *
+ * @param req       Incoming request.
+ * @param log_path  Path to the log file.
+ * @return ESP_OK or ESP_FAIL.
+ */
+static esp_err_t logs_open_and_send(httpd_req_t* req, const char* log_path)
+{
+    FILE* f = fopen(log_path, "rb");
+    if (!f) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to open log file");
+        return ESP_FAIL;
+    }
+    logs_set_response_headers(req);
+    esp_err_t err = download_pump_file(req, f);
+    fclose(f);
+    if (err == ESP_OK) ESP_LOGI(TAG, "Log file downloaded: %s", log_path);
+    return err;
+}
+
+// =============================================================================
+// HTTP API server helpers
+// =============================================================================
+
+// Forward declarations for handlers referenced by http_api_register_handlers
+static esp_err_t upload_file_handler(httpd_req_t *req);
+static esp_err_t download_file_handler(httpd_req_t *req);
+static esp_err_t status_handler(httpd_req_t *req);
+static esp_err_t logs_test_handler(httpd_req_t *req);
+static esp_err_t logs_download_handler(httpd_req_t *req);
+
+/**
+ * @brief Apply non-default httpd configuration values.
+ *
+ * @param config  Configuration struct to populate.
+ */
+static void http_api_configure_server(httpd_config_t* config)
+{
+    config->server_port     = 80;
+    config->max_uri_handlers = 16;
+    config->stack_size      = 8192;
+    config->uri_match_fn    = httpd_uri_match_wildcard;
+}
+
+/**
+ * @brief Register all URI handlers with the running server.
+ *
+ * @param srv  Running httpd server handle.
+ */
+static void http_api_register_handlers(httpd_handle_t srv)
+{
+    static const httpd_uri_t uri_status = {
+        .uri     = "/api/status",
+        .method  = HTTP_GET,
+        .handler = status_handler,
+    };
+    static const httpd_uri_t uri_logs = {
+        .uri     = "/api/logs/download",
+        .method  = HTTP_GET,
+        .handler = logs_download_handler,
+    };
+    static const httpd_uri_t uri_logs_test = {
+        .uri     = "/api/logs/test",
+        .method  = HTTP_GET,
+        .handler = logs_test_handler,
+    };
+    static const httpd_uri_t uri_upload = {
+        .uri     = "/files/*",
+        .method  = HTTP_POST,
+        .handler = upload_file_handler,
+    };
+    static const httpd_uri_t uri_download = {
+        .uri     = "/files/*",
+        .method  = HTTP_GET,
+        .handler = download_file_handler,
+    };
+    httpd_register_uri_handler(srv, &uri_status);
+    httpd_register_uri_handler(srv, &uri_logs);
+    httpd_register_uri_handler(srv, &uri_logs_test);
+    httpd_register_uri_handler(srv, &uri_upload);
+    httpd_register_uri_handler(srv, &uri_download);
+}
+
+// =============================================================================
+// Request handlers
+// =============================================================================
+
+/**
+ * @brief Upload file to SD card.
+ * POST /files/[path] — body is raw file data (application/octet-stream).
+ */
+static esp_err_t upload_file_handler(httpd_req_t *req)
+{
+    char filepath[256];
+    snprintf(filepath, sizeof(filepath), "/sdcard/%s", req->uri + 7);
+    ESP_LOGI(TAG, "Upload: %s -> %s", req->uri, filepath);
+    esp_err_t err = upload_check_preconditions(req);
+    if (err != ESP_OK) return err;
+    upload_ensure_dir(filepath);
+    size_t total = 0;
+    err = upload_open_and_receive(req, filepath, &total);
+    if (err == ESP_OK) upload_send_success(req, filepath, total);
+    return err;
+}
+
+/**
+ * @brief Download a file or list directory contents.
+ * GET /files/[path]
+ */
+static esp_err_t download_file_handler(httpd_req_t *req)
+{
+    char filepath[256];
+    snprintf(filepath, sizeof(filepath), "/sdcard/%s", req->uri + 7);
+    ESP_LOGI(TAG, "Download/list: %s -> %s", req->uri, filepath);
+    struct stat st;
+    esp_err_t err = download_resolve_path(req, filepath, &st);
+    if (err != ESP_OK) return err;
+    if (S_ISDIR(st.st_mode)) return download_list_directory(req, filepath);
+    return download_stream_file(req, filepath);
+}
+
+/**
+ * @brief Return basic device status as JSON.
  * GET /api/status
  */
-static esp_err_t status_handler(httpd_req_t *req) {
+static esp_err_t status_handler(httpd_req_t *req)
+{
     char response[512];
-
     const char* log_path = debug_log_get_path();
     bool logging_active = debug_log_is_active();
-
     snprintf(response, sizeof(response),
              "{\n"
              "  \"status\": \"ok\",\n"
@@ -233,20 +464,18 @@ static esp_err_t status_handler(httpd_req_t *req) {
              sdcard_is_mounted() ? "true" : "false",
              logging_active ? "true" : "false",
              log_path ? log_path : "null");
-
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
-
     return ESP_OK;
 }
 
 /**
- * @brief Test debug log writing
+ * @brief Trigger a test write to the debug log.
  * GET /api/logs/test
  */
-static esp_err_t logs_test_handler(httpd_req_t *req) {
+static esp_err_t logs_test_handler(httpd_req_t *req)
+{
     esp_err_t ret = debug_log_test_write();
-
     char response[128];
     if (ret == ESP_OK) {
         snprintf(response, sizeof(response),
@@ -257,131 +486,60 @@ static esp_err_t logs_test_handler(httpd_req_t *req) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
                             "Debug logging not active or test write failed");
     }
-
     return ret;
 }
 
 /**
- * @brief Download debug log file
+ * @brief Download the debug log file.
  * GET /api/logs/download
  */
-static esp_err_t logs_download_handler(httpd_req_t *req) {
-    // Flush log buffer before sending
+static esp_err_t logs_download_handler(httpd_req_t *req)
+{
     debug_log_flush();
-
     const char* log_path = debug_log_get_path();
-    if (log_path == NULL) {
+    if (!log_path) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Debug logging not active");
         return ESP_FAIL;
     }
-
-    // Open log file
-    FILE* f = fopen(log_path, "rb");
-    if (!f) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to open log file");
-        return ESP_FAIL;
-    }
-
-    // Set headers
-    httpd_resp_set_type(req, "text/plain");
-    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"debug.log\"");
-
-    // Stream file
-    char buf[UPLOAD_BUFFER_SIZE];
-    size_t len;
-    while ((len = fread(buf, 1, sizeof(buf), f)) > 0) {
-        if (httpd_resp_send_chunk(req, buf, len) != ESP_OK) {
-            fclose(f);
-            return ESP_FAIL;
-        }
-    }
-
-    fclose(f);
-    httpd_resp_send_chunk(req, NULL, 0);  // End of chunks
-
-    ESP_LOGI(TAG, "Log file downloaded: %s", log_path);
-    return ESP_OK;
+    return logs_open_and_send(req, log_path);
 }
 
-// URI handlers
-static const httpd_uri_t uri_upload = {
-    .uri       = "/files/*",
-    .method    = HTTP_POST,
-    .handler   = upload_file_handler,
-    .user_ctx  = NULL
-};
+// =============================================================================
+// Public API
+// =============================================================================
 
-static const httpd_uri_t uri_download = {
-    .uri       = "/files/*",
-    .method    = HTTP_GET,
-    .handler   = download_file_handler,
-    .user_ctx  = NULL
-};
-
-static const httpd_uri_t uri_status = {
-    .uri       = "/api/status",
-    .method    = HTTP_GET,
-    .handler   = status_handler,
-    .user_ctx  = NULL
-};
-
-static const httpd_uri_t uri_logs = {
-    .uri       = "/api/logs/download",
-    .method    = HTTP_GET,
-    .handler   = logs_download_handler,
-    .user_ctx  = NULL
-};
-
-static const httpd_uri_t uri_logs_test = {
-    .uri       = "/api/logs/test",
-    .method    = HTTP_GET,
-    .handler   = logs_test_handler,
-    .user_ctx  = NULL
-};
-
-esp_err_t http_api_start(void) {
+esp_err_t http_api_start(void)
+{
     if (server != NULL) {
         ESP_LOGW(TAG, "HTTP server already running");
         return ESP_OK;
     }
-
     ESP_LOGI(TAG, "Starting HTTP API server on port 80");
-
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.server_port = 80;
-    config.max_uri_handlers = 16;
-    config.stack_size = 8192;
-    config.uri_match_fn = httpd_uri_match_wildcard;  // Enable wildcard matching
-
+    http_api_configure_server(&config);
     esp_err_t ret = httpd_start(&server, &config);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start HTTP server: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to start HTTP server: %d", (int)ret);
         return ret;
     }
-
-    // Register URI handlers
-    httpd_register_uri_handler(server, &uri_status);
-    httpd_register_uri_handler(server, &uri_logs);
-    httpd_register_uri_handler(server, &uri_logs_test);
-    httpd_register_uri_handler(server, &uri_upload);
-    httpd_register_uri_handler(server, &uri_download);
-
+    http_api_register_handlers(server);
     ESP_LOGI(TAG, "HTTP API server started successfully");
     return ESP_OK;
 }
 
-esp_err_t http_api_stop(void) {
+esp_err_t http_api_stop(void)
+{
     if (server == NULL) {
         ESP_LOGW(TAG, "HTTP server not running");
         return ESP_OK;
     }
-
     ESP_LOGI(TAG, "Stopping HTTP API server");
     esp_err_t ret = httpd_stop(server);
     server = NULL;
     return ret;
 }
 
-bool http_api_is_running(void) {
+bool http_api_is_running(void)
+{
     return (server != NULL);
 }

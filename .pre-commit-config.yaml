@@ -1,0 +1,15 @@
+repos:
+  - repo: https://github.com/brandon-arrendondo/knots
+    rev: 1.0.0
+    hooks:
+      - id: knots
+        args:
+          - --cognitive-threshold=15
+        exclude: ^(managed_components/|components/lvgl/|components/cjson/)
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format

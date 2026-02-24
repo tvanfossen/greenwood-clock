@@ -12,57 +12,85 @@
 
 static const char* TAG = "ota";
 
-// OTA configuration
-#define OTA_FIRMWARE_PATH "/greenwood-clock.bin"
-#define OTA_CONNECT_TIMEOUT_MS 10000
-#define OTA_READ_TIMEOUT_MS 30000
-#define OTA_BUFFER_SIZE 4096
+#define OTA_FIRMWARE_PATH        "/greenwood-clock.bin"
+#define OTA_CONNECT_TIMEOUT_MS   10000
+#define OTA_READ_TIMEOUT_MS      30000
+#define OTA_BUFFER_SIZE          4096
 
-// Static error message buffer
-static char s_last_error[128] = {0};
+static char                  s_last_error[128]     = {0};
+static const esp_partition_t* s_running_partition   = NULL;
+static esp_app_desc_t         s_running_app_info;
 
-// Running partition info
-static const esp_partition_t* s_running_partition = NULL;
-static esp_app_desc_t s_running_app_info;
+// =============================================================================
+// Private: error reporting
+// =============================================================================
+
+/** @brief Format and store an error message; also emit it at ESP_LOGE level. */
+static void set_error(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(s_last_error, sizeof(s_last_error), fmt, args);
+    va_end(args);
+    ESP_LOGE(TAG, "%s", s_last_error);
+}
+
+// =============================================================================
+// Private: OTA init helpers
+// =============================================================================
+
+/**
+ * @brief Log the current firmware version and compilation date.
+ *
+ * @param err  Return code from esp_ota_get_partition_description().
+ */
+static void ota_log_app_description(esp_err_t err) {
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to get app description: %d", (int)err);
+        return;
+    }
+    ESP_LOGI(TAG, "Current firmware version: %s", s_running_app_info.version);
+    ESP_LOGI(TAG, "Compiled: %s %s", s_running_app_info.date, s_running_app_info.time);
+}
+
+/**
+ * @brief Log the OTA state of the running partition (pending, valid, invalid).
+ *
+ * Emits a warning if the image is pending verification so the operator is
+ * reminded to call ota_mark_app_valid().
+ */
+static void ota_log_partition_state(void) {
+    esp_ota_img_states_t ota_state;
+    esp_err_t err = esp_ota_get_state_partition(s_running_partition, &ota_state);
+    if (err != ESP_OK) return;
+    if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+        ESP_LOGW(TAG, "New OTA image pending verification!");
+        ESP_LOGW(TAG, "Call ota_mark_app_valid() after verifying firmware");
+    } else if (ota_state == ESP_OTA_IMG_VALID) {
+        ESP_LOGI(TAG, "OTA image marked as valid");
+    } else if (ota_state == ESP_OTA_IMG_INVALID) {
+        ESP_LOGW(TAG, "OTA image marked as invalid");
+    }
+}
+
+// =============================================================================
+// Public: OTA init / info
+// =============================================================================
 
 esp_err_t ota_init(void) {
-    // Get running partition
     s_running_partition = esp_ota_get_running_partition();
     if (s_running_partition == NULL) {
         ESP_LOGE(TAG, "Failed to get running partition");
         return ESP_FAIL;
     }
-
-    ESP_LOGI(TAG, "Running partition: %s (type=%d, subtype=%d, offset=0x%lx, size=0x%lx)",
+    ESP_LOGI(TAG, "Running partition: %s (type=%d subtype=%d offset=0x%lx size=0x%lx)",
              s_running_partition->label,
              s_running_partition->type,
              s_running_partition->subtype,
              (unsigned long)s_running_partition->address,
              (unsigned long)s_running_partition->size);
-
-    // Get app info
     esp_err_t err = esp_ota_get_partition_description(s_running_partition, &s_running_app_info);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to get app description: %s", esp_err_to_name(err));
-    } else {
-        ESP_LOGI(TAG, "Current firmware version: %s", s_running_app_info.version);
-        ESP_LOGI(TAG, "Compiled: %s %s", s_running_app_info.date, s_running_app_info.time);
-    }
-
-    // Check for pending verification (new OTA image)
-    esp_ota_img_states_t ota_state;
-    err = esp_ota_get_state_partition(s_running_partition, &ota_state);
-    if (err == ESP_OK) {
-        if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
-            ESP_LOGW(TAG, "New OTA image pending verification!");
-            ESP_LOGW(TAG, "Call ota_mark_app_valid() after verifying firmware");
-        } else if (ota_state == ESP_OTA_IMG_VALID) {
-            ESP_LOGI(TAG, "OTA image marked as valid");
-        } else if (ota_state == ESP_OTA_IMG_INVALID) {
-            ESP_LOGW(TAG, "OTA image marked as invalid");
-        }
-    }
-
+    ota_log_app_description(err);
+    ota_log_partition_state();
     return ESP_OK;
 }
 
@@ -78,56 +106,234 @@ const char* ota_get_last_error(void) {
     return s_last_error;
 }
 
-static void set_error(const char* fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(s_last_error, sizeof(s_last_error), fmt, args);
-    va_end(args);
-    ESP_LOGE(TAG, "%s", s_last_error);
+// =============================================================================
+// Private: ota_check_update helpers
+// =============================================================================
+
+/**
+ * @brief Interpret a completed HEAD request and return the OTA availability.
+ *
+ * @param perform_err  Return code from esp_http_client_perform().
+ * @param status_code  HTTP status code from the server.
+ * @return ESP_OK if firmware is available; ESP_ERR_NOT_FOUND otherwise.
+ */
+static esp_err_t ota_evaluate_head_response(esp_err_t perform_err, int status_code) {
+    if (perform_err != ESP_OK) {
+        set_error("HTTP HEAD request failed: %d", (int)perform_err);
+        return perform_err;
+    }
+    if (status_code == 200) {
+        ESP_LOGI(TAG, "Firmware available on server (HTTP 200)");
+        return ESP_OK;
+    }
+    set_error("Server returned HTTP %d", status_code);
+    return ESP_ERR_NOT_FOUND;
 }
+
+// =============================================================================
+// Public: ota_check_update
+// =============================================================================
 
 esp_err_t ota_check_update(const char* server_url) {
     if (server_url == NULL) {
         set_error("Server URL is NULL");
         return ESP_ERR_INVALID_ARG;
     }
-
-    // Build firmware URL
     char url[256];
     snprintf(url, sizeof(url), "%s%s", server_url, OTA_FIRMWARE_PATH);
-
     ESP_LOGI(TAG, "Checking for update at: %s", url);
-
-    // Create HTTP client to check if firmware exists
     esp_http_client_config_t config = {
-        .url = url,
+        .url        = url,
         .timeout_ms = OTA_CONNECT_TIMEOUT_MS,
-        .method = HTTP_METHOD_HEAD,  // Just check if file exists
+        .method     = HTTP_METHOD_HEAD,
     };
-
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (client == NULL) {
         set_error("Failed to initialize HTTP client");
         return ESP_FAIL;
     }
-
-    esp_err_t err = esp_http_client_perform(client);
-    int status_code = esp_http_client_get_status_code(client);
+    esp_err_t err       = esp_http_client_perform(client);
+    int       status    = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
+    return ota_evaluate_head_response(err, status);
+}
 
+// =============================================================================
+// Private: ota_perform_update helpers
+// =============================================================================
+
+/**
+ * @brief Invoke the progress callback if it is set.
+ *
+ * Constructs an ota_status_t on the stack and passes it to the callback.
+ *
+ * @param cb     Progress callback; may be NULL.
+ * @param ud     User-data pointer forwarded to the callback.
+ * @param state  OTA lifecycle state.
+ * @param pct    Download percentage (0–100).
+ * @param done   Bytes downloaded so far.
+ * @param total  Total firmware bytes expected.
+ */
+static void ota_notify(ota_progress_cb_t cb, void* ud, ota_state_t state,
+                        int pct, size_t done, size_t total) {
+    if (!cb) return;
+    ota_status_t s = {
+        .state            = state,
+        .progress_percent = pct,
+        .downloaded_bytes = done,
+        .total_bytes      = total,
+    };
+    cb(&s, ud);
+}
+
+/**
+ * @brief Invoke the progress callback with OTA_STATE_SUCCESS and a reboot message.
+ *
+ * @param cb         Progress callback; may be NULL.
+ * @param ud         User-data pointer.
+ * @param image_size Total firmware size in bytes.
+ */
+static void ota_notify_success(ota_progress_cb_t cb, void* ud, int image_size) {
+    if (!cb) return;
+    ota_status_t s = {
+        .state            = OTA_STATE_SUCCESS,
+        .progress_percent = 100,
+        .downloaded_bytes = (size_t)image_size,
+        .total_bytes      = (size_t)image_size,
+    };
+    snprintf(s.error_msg, sizeof(s.error_msg), "Update successful, rebooting...");
+    cb(&s, ud);
+}
+
+/**
+ * @brief Invoke the progress callback with OTA_STATE_ERROR and the last error message.
+ *
+ * @param cb  Progress callback; may be NULL.
+ * @param ud  User-data pointer.
+ */
+static void ota_notify_error(ota_progress_cb_t cb, void* ud) {
+    if (!cb) return;
+    ota_status_t s = {
+        .state            = OTA_STATE_ERROR,
+        .progress_percent = 0,
+        .downloaded_bytes = 0,
+        .total_bytes      = 0,
+    };
+    snprintf(s.error_msg, sizeof(s.error_msg), "%s", s_last_error);
+    cb(&s, ud);
+}
+
+/**
+ * @brief Initialise the esp_https_ota handle for the given firmware URL.
+ *
+ * Configures plain HTTP transport with TLS certificate bundle attached
+ * (required by ESP-IDF v5.5 validation) but skips CN verification.
+ *
+ * @param url     Full firmware URL.
+ * @param handle  Output: initialised OTA handle.
+ * @return ESP_OK on success.
+ */
+static esp_err_t ota_begin_ota(const char* url, esp_https_ota_handle_t* handle) {
+    esp_http_client_config_t http_config = {
+        .url                        = url,
+        .timeout_ms                 = OTA_READ_TIMEOUT_MS,
+        .keep_alive_enable          = true,
+        .buffer_size                = OTA_BUFFER_SIZE,
+        .transport_type             = HTTP_TRANSPORT_OVER_TCP,
+        .crt_bundle_attach          = esp_crt_bundle_attach,
+        .skip_cert_common_name_check= true,
+    };
+    esp_https_ota_config_t ota_config = { .http_config = &http_config };
+    esp_err_t err = esp_https_ota_begin(&ota_config, handle);
+    if (err != ESP_OK) set_error("OTA begin failed: %d", (int)err);
+    return err;
+}
+
+/**
+ * @brief Begin OTA, query image size, and notify the callback of download start.
+ *
+ * @param url         Full firmware URL.
+ * @param cb          Progress callback.
+ * @param ud          User-data pointer.
+ * @param handle      Output: initialised OTA handle.
+ * @param image_size  Output: firmware image size in bytes.
+ * @return ESP_OK on success.
+ */
+static esp_err_t ota_begin_and_start(const char* url, ota_progress_cb_t cb, void* ud,
+                                      esp_https_ota_handle_t* handle, int* image_size) {
+    ota_notify(cb, ud, OTA_STATE_CHECKING, 0, 0, 0);
+    esp_err_t err = ota_begin_ota(url, handle);
+    if (err != ESP_OK) return err;
+    *image_size = esp_https_ota_get_image_size(*handle);
+    ESP_LOGI(TAG, "OTA image size: %d bytes", *image_size);
+    ota_notify(cb, ud, OTA_STATE_DOWNLOADING, 0, 0, (size_t)*image_size);
+    return ESP_OK;
+}
+
+/**
+ * @brief Stream firmware chunks until complete; report progress each iteration.
+ *
+ * @param handle      Active OTA handle.
+ * @param cb          Progress callback; may be NULL.
+ * @param ud          User-data pointer.
+ * @param image_size  Expected total firmware size (used for percentage).
+ * @return ESP_OK on completion; error code on failure.
+ */
+static esp_err_t ota_download_loop(esp_https_ota_handle_t handle,
+                                    ota_progress_cb_t cb, void* ud, int image_size) {
+    esp_err_t err;
+    while ((err = esp_https_ota_perform(handle)) == ESP_ERR_HTTPS_OTA_IN_PROGRESS) {
+        if (cb && image_size > 0) {
+            int downloaded = esp_https_ota_get_image_len_read(handle);
+            ota_notify(cb, ud, OTA_STATE_DOWNLOADING,
+                       (downloaded * 100) / image_size,
+                       (size_t)downloaded, (size_t)image_size);
+        }
+    }
+    return err;
+}
+
+/**
+ * @brief Verify and finalise the downloaded firmware, then reboot.
+ *
+ * If esp_https_ota_finish() fails the error is recorded in s_last_error and
+ * the function returns without rebooting.  On success the device restarts.
+ *
+ * @param handle      Active OTA handle.
+ * @param cb          Progress callback; may be NULL.
+ * @param ud          User-data pointer.
+ * @param image_size  Total firmware size for status reporting.
+ * @return Error code (only on failure; success path reboots).
+ */
+static esp_err_t ota_finish_update(esp_https_ota_handle_t handle,
+                                    ota_progress_cb_t cb, void* ud, int image_size) {
+    ota_notify(cb, ud, OTA_STATE_VERIFYING, 100, (size_t)image_size, (size_t)image_size);
+    esp_err_t err = esp_https_ota_finish(handle);
     if (err != ESP_OK) {
-        set_error("HTTP request failed: %s", esp_err_to_name(err));
+        set_error("OTA finish failed: %d", (int)err);
         return err;
     }
-
-    if (status_code == 200) {
-        ESP_LOGI(TAG, "Firmware available on server");
-        return ESP_OK;
-    } else {
-        set_error("Server returned HTTP %d", status_code);
-        return ESP_ERR_NOT_FOUND;
-    }
+    ESP_LOGI(TAG, "OTA update successful! Rebooting in 2 seconds...");
+    ota_notify_success(cb, ud, image_size);
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    esp_restart();
+    return ESP_OK;  // unreachable
 }
+
+/**
+ * @brief Abort a failed download and record the error.
+ *
+ * @param handle  Active OTA handle to abort.
+ * @param err     Error code from the failed ota_download_loop.
+ */
+static void ota_abort_update(esp_https_ota_handle_t handle, esp_err_t err) {
+    set_error("OTA download failed: %d", (int)err);
+    esp_https_ota_abort(handle);
+}
+
+// =============================================================================
+// Public: ota_perform_update
+// =============================================================================
 
 esp_err_t ota_perform_update(const char* server_url,
                               ota_progress_cb_t progress_cb,
@@ -136,185 +342,101 @@ esp_err_t ota_perform_update(const char* server_url,
         set_error("Server URL is NULL");
         return ESP_ERR_INVALID_ARG;
     }
-
-    // Build firmware URL
     char url[256];
     snprintf(url, sizeof(url), "%s%s", server_url, OTA_FIRMWARE_PATH);
-
     ESP_LOGI(TAG, "Starting OTA update from: %s", url);
 
-    // Report checking state
-    if (progress_cb) {
-        ota_status_t status = {
-            .state = OTA_STATE_CHECKING,
-            .progress_percent = 0,
-            .downloaded_bytes = 0,
-            .total_bytes = 0,
-        };
-        progress_cb(&status, user_data);
-    }
-
-    // Configure HTTP client (for plain HTTP, not HTTPS)
-    // ESP-IDF v5.5 requires at least one verification method to be "configured"
-    // even for HTTP. We attach the cert bundle but skip all verification.
-    esp_http_client_config_t http_config = {
-        .url = url,
-        .timeout_ms = OTA_READ_TIMEOUT_MS,
-        .keep_alive_enable = true,
-        .buffer_size = OTA_BUFFER_SIZE,
-        .transport_type = HTTP_TRANSPORT_OVER_TCP,
-        .crt_bundle_attach = esp_crt_bundle_attach,  // Required by ESP-IDF v5.5 validation
-        .skip_cert_common_name_check = true,         // But skip actual verification for HTTP
-    };
-
-    // Configure OTA
-    esp_https_ota_config_t ota_config = {
-        .http_config = &http_config,
-    };
-
     esp_https_ota_handle_t ota_handle = NULL;
-    esp_err_t err = esp_https_ota_begin(&ota_config, &ota_handle);
-    if (err != ESP_OK) {
-        set_error("OTA begin failed: %s", esp_err_to_name(err));
-        return err;
-    }
+    int image_size = 0;
+    esp_err_t err = ota_begin_and_start(url, progress_cb, user_data, &ota_handle, &image_size);
+    if (err != ESP_OK) return err;
 
-    // Get image size
-    int image_size = esp_https_ota_get_image_size(ota_handle);
-    ESP_LOGI(TAG, "OTA image size: %d bytes", image_size);
-
-    // Report downloading state
-    if (progress_cb) {
-        ota_status_t status = {
-            .state = OTA_STATE_DOWNLOADING,
-            .progress_percent = 0,
-            .downloaded_bytes = 0,
-            .total_bytes = (size_t)image_size,
-        };
-        progress_cb(&status, user_data);
-    }
-
-    // Download and flash in chunks
-    while (1) {
-        err = esp_https_ota_perform(ota_handle);
-
-        if (err != ESP_ERR_HTTPS_OTA_IN_PROGRESS) {
-            break;
-        }
-
-        // Report progress
-        if (progress_cb && image_size > 0) {
-            int downloaded = esp_https_ota_get_image_len_read(ota_handle);
-            ota_status_t status = {
-                .state = OTA_STATE_DOWNLOADING,
-                .progress_percent = (downloaded * 100) / image_size,
-                .downloaded_bytes = (size_t)downloaded,
-                .total_bytes = (size_t)image_size,
-            };
-            progress_cb(&status, user_data);
-        }
-    }
-
-    // Check final result
+    err = ota_download_loop(ota_handle, progress_cb, user_data, image_size);
     if (err == ESP_OK) {
-        // Verify image
-        if (progress_cb) {
-            ota_status_t status = {
-                .state = OTA_STATE_VERIFYING,
-                .progress_percent = 100,
-                .downloaded_bytes = (size_t)image_size,
-                .total_bytes = (size_t)image_size,
-            };
-            progress_cb(&status, user_data);
-        }
-
-        err = esp_https_ota_finish(ota_handle);
-        if (err == ESP_OK) {
-            ESP_LOGI(TAG, "OTA update successful!");
-
-            if (progress_cb) {
-                ota_status_t status = {
-                    .state = OTA_STATE_SUCCESS,
-                    .progress_percent = 100,
-                    .downloaded_bytes = (size_t)image_size,
-                    .total_bytes = (size_t)image_size,
-                };
-                snprintf(status.error_msg, sizeof(status.error_msg), "Update successful, rebooting...");
-                progress_cb(&status, user_data);
-            }
-
-            ESP_LOGI(TAG, "Rebooting in 2 seconds...");
-            vTaskDelay(pdMS_TO_TICKS(2000));
-            esp_restart();
-        } else {
-            set_error("OTA finish failed: %s", esp_err_to_name(err));
-        }
+        err = ota_finish_update(ota_handle, progress_cb, user_data, image_size);
     } else {
-        set_error("OTA download failed: %s", esp_err_to_name(err));
-        esp_https_ota_abort(ota_handle);
+        ota_abort_update(ota_handle, err);
     }
 
-    // Report error state
-    if (err != ESP_OK && progress_cb) {
-        ota_status_t status = {
-            .state = OTA_STATE_ERROR,
-            .progress_percent = 0,
-            .downloaded_bytes = 0,
-            .total_bytes = 0,
-        };
-        snprintf(status.error_msg, sizeof(status.error_msg), "%s", s_last_error);
-        progress_cb(&status, user_data);
-    }
-
+    if (err != ESP_OK) ota_notify_error(progress_cb, user_data);
     return err;
 }
+
+// =============================================================================
+// Private: ota_mark_app_valid helpers
+// =============================================================================
+
+/**
+ * @brief Mark the running OTA image as valid and cancel automatic rollback.
+ * @return ESP_OK on success.
+ */
+static esp_err_t ota_confirm_pending(void) {
+    esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "OTA image marked as valid, rollback cancelled");
+    } else {
+        ESP_LOGE(TAG, "Failed to mark app valid: %d", (int)err);
+    }
+    return err;
+}
+
+// =============================================================================
+// Public: ota_mark_app_valid
+// =============================================================================
 
 esp_err_t ota_mark_app_valid(void) {
     esp_ota_img_states_t ota_state;
     esp_err_t err = esp_ota_get_state_partition(s_running_partition, &ota_state);
-
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to get OTA state: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "Failed to get OTA state: %d", (int)err);
         return err;
     }
-
     if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
-        err = esp_ota_mark_app_valid_cancel_rollback();
-        if (err == ESP_OK) {
-            ESP_LOGI(TAG, "OTA image marked as valid, rollback cancelled");
-        } else {
-            ESP_LOGE(TAG, "Failed to mark app valid: %s", esp_err_to_name(err));
-        }
-        return err;
-    } else if (ota_state == ESP_OTA_IMG_VALID) {
-        ESP_LOGI(TAG, "OTA image already marked as valid");
-        return ESP_OK;
-    } else {
-        ESP_LOGW(TAG, "Unexpected OTA state: %d", ota_state);
-        return ESP_FAIL;
+        return ota_confirm_pending();
     }
+    if (ota_state != ESP_OTA_IMG_VALID) {
+        ESP_LOGW(TAG, "Unexpected OTA state: %d", ota_state);
+    } else {
+        ESP_LOGI(TAG, "OTA image already marked as valid");
+    }
+    return (ota_state == ESP_OTA_IMG_VALID) ? ESP_OK : ESP_FAIL;
 }
+
+// =============================================================================
+// Private: ota_rollback helpers
+// =============================================================================
+
+/**
+ * @brief Set a partition as the next boot target and restart the device.
+ *
+ * Only returns on failure; a successful set triggers esp_restart().
+ *
+ * @param partition  Target partition for rollback.
+ * @return Error code on failure.
+ */
+static esp_err_t ota_set_boot_and_reboot(const esp_partition_t* partition) {
+    ESP_LOGI(TAG, "Rolling back to partition: %s", partition->label);
+    esp_err_t err = esp_ota_set_boot_partition(partition);
+    if (err != ESP_OK) {
+        set_error("Failed to set boot partition: %d", (int)err);
+        return err;
+    }
+    ESP_LOGI(TAG, "Rollback configured, rebooting...");
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    esp_restart();
+    return ESP_OK;  // unreachable
+}
+
+// =============================================================================
+// Public: ota_rollback
+// =============================================================================
 
 esp_err_t ota_rollback(void) {
     ESP_LOGW(TAG, "Manual rollback requested");
-
-    const esp_partition_t* last_invalid_partition = esp_ota_get_last_invalid_partition();
-    if (last_invalid_partition != NULL) {
-        ESP_LOGI(TAG, "Rolling back to partition: %s", last_invalid_partition->label);
-
-        esp_err_t err = esp_ota_set_boot_partition(last_invalid_partition);
-        if (err != ESP_OK) {
-            set_error("Failed to set boot partition: %s", esp_err_to_name(err));
-            return err;
-        }
-
-        ESP_LOGI(TAG, "Rollback configured, rebooting...");
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        esp_restart();
-    } else {
+    const esp_partition_t* partition = esp_ota_get_last_invalid_partition();
+    if (partition == NULL) {
         set_error("No previous partition available for rollback");
         return ESP_FAIL;
     }
-
-    return ESP_OK;  // Never reached (reboots)
+    return ota_set_boot_and_reboot(partition);
 }
