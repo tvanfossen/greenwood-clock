@@ -11,7 +11,6 @@
 #include "esp_netif.h"    // For IP address
 #include "network.h"      // For WiFi scanning
 #include "settings.h"     // For persistent settings
-#include "ota.h"          // For OTA updates
 #include "sdcard.h"       // For SD card access
 #include "freertos/FreeRTOS.h"  // For vTaskDelay and pdMS_TO_TICKS
 #include "freertos/task.h"
@@ -33,7 +32,6 @@ static lv_obj_t* create_wifi_settings(void);
 static lv_obj_t* create_brightness_settings(void);
 static lv_obj_t* create_background_selector(void);
 static lv_obj_t* create_text_color_settings(void);
-static lv_obj_t* create_ota_settings(void);
 static lv_obj_t* create_animation_preview(void);
 static lv_obj_t* create_about_screen(void);
 
@@ -90,7 +88,6 @@ static const screen_creator_fn_t SCREEN_CREATORS[SCREEN_MAX] = {
     [SCREEN_BRIGHTNESS_SETTINGS]= create_brightness_settings,
     [SCREEN_BACKGROUND_SELECTOR]= create_background_selector,
     [SCREEN_TEXT_COLOR_SETTINGS]= create_text_color_settings,
-    [SCREEN_OTA_SETTINGS]       = create_ota_settings,
     [SCREEN_ANIMATION_PREVIEW]  = create_animation_preview,
     [SCREEN_ABOUT]              = create_about_screen,
 };
@@ -236,7 +233,6 @@ static screen_id_t wifi_screen_id             = SCREEN_WIFI_SETTINGS;
 static screen_id_t brightness_screen_id       = SCREEN_BRIGHTNESS_SETTINGS;
 static screen_id_t background_selector_id     = SCREEN_BACKGROUND_SELECTOR;
 static screen_id_t text_color_settings_id     = SCREEN_TEXT_COLOR_SETTINGS;
-static screen_id_t ota_screen_id              = SCREEN_OTA_SETTINGS;
 static screen_id_t animation_preview_id       = SCREEN_ANIMATION_PREVIEW;
 static screen_id_t about_screen_id            = SCREEN_ABOUT;
 
@@ -283,7 +279,6 @@ static void sm_populate_settings_menu(lv_obj_t* list) {
     sm_add_menu_item(list, LV_SYMBOL_IMAGE,    "Brightness",       &brightness_screen_id);
     sm_add_menu_item(list, LV_SYMBOL_IMAGE,    "Background Image", &background_selector_id);
     sm_add_menu_item(list, LV_SYMBOL_EDIT,     "Text Color",       &text_color_settings_id);
-    sm_add_menu_item(list, LV_SYMBOL_DOWNLOAD, "Software Update",  &ota_screen_id);
     sm_add_menu_item(list, LV_SYMBOL_PLAY,     "Animation Preview",&animation_preview_id);
     sm_add_menu_item(list, LV_SYMBOL_SETTINGS, "About",            &about_screen_id);
     lv_obj_t* btn_reboot = lv_list_add_btn(list, LV_SYMBOL_POWER, "Reboot Device");
@@ -938,294 +933,6 @@ static lv_obj_t* create_background_selector(void) {
     } else {
         ESP_LOGI(TAG, "Found %d background files on SD card", count);
     }
-    return scr;
-}
-
-// =============================================================================
-// OTA settings screen
-// =============================================================================
-
-static lv_obj_t* ota_status_label = NULL;
-static lv_obj_t* ota_progress_bar = NULL;
-static lv_obj_t* ota_update_btn   = NULL;
-static lv_obj_t* ota_url_textarea = NULL;
-static lv_obj_t* ota_keyboard     = NULL;
-
-/** @brief OTA progress callback — updates status label and progress bar. */
-static void ota_progress_callback(const ota_status_t* status, void* user_data) {
-    (void)user_data;
-    ESP_LOGI(TAG, "OTA: state=%d progress=%d%%", status->state, status->progress_percent);
-    lvgl_port_lock(0);
-    if (ota_status_label) {
-        switch (status->state) {
-            case OTA_STATE_CHECKING:
-                lv_label_set_text(ota_status_label, "Checking for updates...");
-                break;
-            case OTA_STATE_DOWNLOADING:
-                lv_label_set_text_fmt(ota_status_label, "Downloading: %d%% (%zu/%zu bytes)",
-                                      status->progress_percent,
-                                      status->downloaded_bytes, status->total_bytes);
-                break;
-            case OTA_STATE_VERIFYING:
-                lv_label_set_text(ota_status_label, "Verifying firmware...");
-                break;
-            case OTA_STATE_SUCCESS:
-                lv_label_set_text(ota_status_label, "Update successful! Rebooting...");
-                break;
-            case OTA_STATE_ERROR:
-                lv_label_set_text_fmt(ota_status_label, "Error: %s", status->error_msg);
-                break;
-            default:
-                break;
-        }
-    }
-    if (ota_progress_bar) {
-        lv_bar_set_value(ota_progress_bar, status->progress_percent, LV_ANIM_OFF);
-    }
-    lvgl_port_unlock();
-}
-
-/**
- * @brief Persist OTA server URL to NVS.
- *
- * Releases the LVGL lock around NVS operations.
- *
- * @param url  Server URL string.
- */
-static void ota_save_url_to_settings(const char* url) {
-    lvgl_port_unlock();
-    clock_settings_t cfg;
-    if (settings_load(&cfg) == ESP_OK) {
-        strlcpy(cfg.ota_server_url, url, sizeof(cfg.ota_server_url));
-        esp_err_t err = settings_save(&cfg);
-        if (err == ESP_OK) {
-            ESP_LOGI(TAG, "OTA URL saved: %s", url);
-        } else {
-            ESP_LOGW(TAG, "Failed to save OTA URL: %s", esp_err_to_name(err));
-        }
-    }
-    lvgl_port_lock(0);
-    if (ota_keyboard) lv_obj_add_flag(ota_keyboard, LV_OBJ_FLAG_HIDDEN);
-}
-
-/** @brief Save URL button callback — validates and persists the textarea contents. */
-static void ota_save_url_btn_cb(lv_event_t* e) {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    if (!ota_url_textarea) return;
-    const char* url = lv_textarea_get_text(ota_url_textarea);
-    if (!url || strlen(url) == 0) {
-        ESP_LOGW(TAG, "OTA URL is empty, not saving");
-        return;
-    }
-    ESP_LOGI(TAG, "Saving OTA URL: %s", url);
-    ota_save_url_to_settings(url);
-}
-
-/** @brief Show/hide keyboard when URL textarea gains or loses focus. */
-static void ota_url_focused_cb(lv_event_t* e) {
-    lv_event_code_t code = lv_event_get_code(e);
-    if (code == LV_EVENT_FOCUSED && ota_keyboard) {
-        lv_obj_clear_flag(ota_keyboard, LV_OBJ_FLAG_HIDDEN);
-    } else if (code == LV_EVENT_DEFOCUSED && ota_keyboard) {
-        lv_obj_add_flag(ota_keyboard, LV_OBJ_FLAG_HIDDEN);
-    }
-}
-
-/**
- * @brief Disable the update button, run OTA, re-enable on failure.
- *
- * Releases the LVGL lock around the blocking ota_perform_update call.
- *
- * @param url  Firmware server URL.
- */
-static void ota_start_update(const char* url) {
-    if (ota_update_btn) lv_obj_add_state(ota_update_btn, LV_STATE_DISABLED);
-    lvgl_port_unlock();
-    esp_err_t err = ota_perform_update(url, ota_progress_callback, NULL);
-    lvgl_port_lock(0);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "OTA update failed: %s", esp_err_to_name(err));
-        if (ota_update_btn) lv_obj_clear_state(ota_update_btn, LV_STATE_DISABLED);
-    }
-}
-
-/** @brief Update button callback — validates URL and starts OTA. */
-static void ota_update_btn_cb(lv_event_t* e) {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    if (!ota_url_textarea) return;
-    const char* url = lv_textarea_get_text(ota_url_textarea);
-    if (!url || strlen(url) == 0) {
-        ESP_LOGW(TAG, "OTA URL empty when update clicked");
-        if (ota_status_label) lv_label_set_text(ota_status_label, "Error: Server URL is empty");
-        return;
-    }
-    ESP_LOGI(TAG, "OTA update starting with URL: %s", url);
-    ota_start_update(url);
-}
-
-/**
- * @brief Create the current firmware version info label.
- * @param scr  Parent screen.
- */
-static void ota_create_version_label(lv_obj_t* scr) {
-    lv_obj_t* lbl = lv_label_create(scr);
-    lv_label_set_text_fmt(lbl, "Current Version: %s\nPartition: %s",
-                          ota_get_current_version(), ota_get_running_partition());
-    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 80);
-}
-
-/**
- * @brief Create the server URL static label.
- * @param scr  Parent screen.
- */
-static void ota_create_url_label(lv_obj_t* scr) {
-    lv_obj_t* lbl = lv_label_create(scr);
-    lv_label_set_text(lbl, "Server URL:");
-    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-    lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 160, 160);
-}
-
-/**
- * @brief Populate ota_url_textarea with saved URL or the default placeholder.
- *
- * Must be called after ota_url_textarea has been created.
- */
-static void ota_load_url_from_settings(void) {
-    clock_settings_t cfg;
-    const char* url = "http://192.168.1.96:8000";
-    if (settings_load(&cfg) == ESP_OK && strlen(cfg.ota_server_url) > 0) {
-        url = cfg.ota_server_url;
-    }
-    lv_textarea_set_text(ota_url_textarea, url);
-}
-
-/**
- * @brief Create the editable URL text area (sets global ota_url_textarea).
- *
- * Pre-populates from NVS settings if a URL has been saved.
- *
- * @param scr  Parent screen.
- */
-static void ota_create_url_input(lv_obj_t* scr) {
-    ota_url_textarea = lv_textarea_create(scr);
-    lv_obj_set_size(ota_url_textarea, 520, 50);
-    lv_obj_align(ota_url_textarea, LV_ALIGN_TOP_MID, 0, 190);
-    lv_textarea_set_one_line(ota_url_textarea, true);
-    lv_textarea_set_placeholder_text(ota_url_textarea, "http://192.168.1.96:8000");
-    ota_load_url_from_settings();
-    lv_obj_add_event_cb(ota_url_textarea, ota_url_focused_cb, LV_EVENT_FOCUSED, NULL);
-    lv_obj_add_event_cb(ota_url_textarea, ota_url_focused_cb, LV_EVENT_DEFOCUSED, NULL);
-}
-
-/**
- * @brief Create the Save URL button anchored to the right of the text area.
- * @param scr  Parent screen.
- */
-static void ota_create_save_url_btn(lv_obj_t* scr) {
-    lv_obj_t* btn = lv_btn_create(scr);
-    lv_obj_set_size(btn, 120, 50);
-    lv_obj_align_to(btn, ota_url_textarea, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
-    lv_obj_add_event_cb(btn, ota_save_url_btn_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t* lbl = lv_label_create(btn);
-    lv_label_set_text(lbl, "Save");
-    lv_obj_center(lbl);
-}
-
-/**
- * @brief Create the hidden keyboard bound to the URL text area (sets ota_keyboard).
- * @param scr  Parent screen.
- */
-static void ota_create_keyboard(lv_obj_t* scr) {
-    ota_keyboard = lv_keyboard_create(scr);
-    lv_keyboard_set_textarea(ota_keyboard, ota_url_textarea);
-    lv_obj_set_size(ota_keyboard, 750, 220);
-    lv_obj_align(ota_keyboard, LV_ALIGN_BOTTOM_MID, 0, -10);
-    lv_obj_add_flag(ota_keyboard, LV_OBJ_FLAG_HIDDEN);
-}
-
-/**
- * @brief Group URL label, input, save button and keyboard into one call.
- * @param scr  Parent screen.
- */
-static void ota_build_url_row(lv_obj_t* scr) {
-    ota_create_url_label(scr);
-    ota_create_url_input(scr);
-    ota_create_save_url_btn(scr);
-    ota_create_keyboard(scr);
-}
-
-/**
- * @brief Create the Check for Update button (sets global ota_update_btn).
- * @param scr  Parent screen.
- */
-static void ota_create_update_btn(lv_obj_t* scr) {
-    ota_update_btn = lv_btn_create(scr);
-    lv_obj_set_size(ota_update_btn, 300, 60);
-    lv_obj_align(ota_update_btn, LV_ALIGN_CENTER, 0, -50);
-    lv_obj_add_event_cb(ota_update_btn, ota_update_btn_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t* lbl = lv_label_create(ota_update_btn);
-    lv_label_set_text(lbl, LV_SYMBOL_DOWNLOAD " Check for Update");
-    lv_obj_center(lbl);
-}
-
-/**
- * @brief Create the OTA status label (sets global ota_status_label).
- * @param scr  Parent screen.
- */
-static void ota_create_status_label(lv_obj_t* scr) {
-    ota_status_label = lv_label_create(scr);
-    lv_label_set_text(ota_status_label, "Enter server URL and press update");
-    lv_obj_set_style_text_color(ota_status_label, lv_color_white(), 0);
-    lv_obj_set_style_text_align(ota_status_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_width(ota_status_label, 600);
-    lv_obj_align(ota_status_label, LV_ALIGN_CENTER, 0, 30);
-}
-
-/**
- * @brief Create the OTA download progress bar (sets global ota_progress_bar).
- * @param scr  Parent screen.
- */
-static void ota_create_progress_bar(lv_obj_t* scr) {
-    ota_progress_bar = lv_bar_create(scr);
-    lv_obj_set_size(ota_progress_bar, 600, 30);
-    lv_obj_align(ota_progress_bar, LV_ALIGN_CENTER, 0, 80);
-    lv_bar_set_value(ota_progress_bar, 0, LV_ANIM_OFF);
-}
-
-/**
- * @brief Create the "do not power off" warning label.
- * @param scr  Parent screen.
- */
-static void ota_create_warning_label(lv_obj_t* scr) {
-    lv_obj_t* lbl = lv_label_create(scr);
-    lv_label_set_text(lbl, "Warning: Do not power off during update!");
-    lv_obj_set_style_text_color(lbl, lv_color_make(255, 100, 100), 0);
-    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 130);
-}
-
-/**
- * @brief Group update button, status label, progress bar and warning.
- * @param scr  Parent screen.
- */
-static void ota_build_update_controls(lv_obj_t* scr) {
-    ota_create_update_btn(scr);
-    ota_create_status_label(scr);
-    ota_create_progress_bar(scr);
-    ota_create_warning_label(scr);
-}
-
-/**
- * @brief Create the Software Update (OTA) settings screen.
- * @return New LVGL screen object.
- */
-static lv_obj_t* create_ota_settings(void) {
-    lv_obj_t* scr = sm_new_screen("Software Update");
-    ota_create_version_label(scr);
-    ota_build_url_row(scr);
-    ota_build_update_controls(scr);
     return scr;
 }
 

@@ -53,6 +53,27 @@ void debug_log_flush(void);
  */
 esp_err_t debug_log_test_write(void);
 
+/**
+ * @brief Flush and close the log write handle to allow a concurrent read.
+ *
+ * FAT32 does not support multiple file handles on the same file.  Call this
+ * before opening the log for reading (e.g. to serve it over HTTP), then call
+ * debug_log_reopen() when the read is complete.
+ *
+ * Any ESP_LOG* calls between pause and reopen are forwarded to the console
+ * only (file write is skipped while the handle is closed).
+ *
+ * @return Path to the log file, or NULL if debug logging is not active.
+ */
+const char* debug_log_pause_for_read(void);
+
+/**
+ * @brief Reopen the log write handle after debug_log_pause_for_read().
+ *
+ * No-op if logging is not active or the handle is already open.
+ */
+void debug_log_reopen(void);
+
 #ifdef __cplusplus
 }
 #endif
