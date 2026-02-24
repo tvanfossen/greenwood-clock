@@ -6,4 +6,6 @@ idf_component_register(
         sdcard
         esp_timer
         debug_log
+        ota
+        secrets
 )

@@ -1036,7 +1036,11 @@ static lv_obj_t* anim_create_error_label(lv_obj_t* scr, const char* msg) {
  * @param scr  Parent screen.
  * @param msg  Warning message string.
  * @return Label object.
+ *
+ * Only compiled when LV_USE_LOTTIE is disabled (used in the #else branch
+ * of create_animation_preview to report the missing feature).
  */
+#if !LV_USE_LOTTIE
 static lv_obj_t* anim_create_warning_label(lv_obj_t* scr, const char* msg) {
     lv_obj_t* lbl = lv_label_create(scr);
     lv_label_set_text(lbl, msg);
@@ -1045,6 +1049,7 @@ static lv_obj_t* anim_create_warning_label(lv_obj_t* scr, const char* msg) {
     lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
     return lbl;
 }
+#endif
 
 /**
  * @brief Create the animation info label describing the test file.
