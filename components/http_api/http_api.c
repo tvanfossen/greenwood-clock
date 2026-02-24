@@ -1,6 +1,8 @@
 // components/http_api/http_api.c
 
 #include "http_api.h"
+#include "ota.h"
+#include "secrets.h"
 #include "esp_log.h"
 #include "esp_http_server.h"
 #include "sdcard.h"
@@ -341,6 +343,158 @@ static esp_err_t logs_open_and_send(httpd_req_t* req, const char* log_path)
 }
 
 // =============================================================================
+// OTA push helpers
+// =============================================================================
+
+/**
+ * @brief Send a 401 Unauthorized response (HTTP server API has no 401 code).
+ *
+ * @param req  Incoming request.
+ */
+static void ota_send_unauthorized(httpd_req_t* req)
+{
+    httpd_resp_set_status(req, "401 Unauthorized");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"error\":\"Unauthorized\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+/**
+ * @brief Verify the Authorization: Bearer header matches OTA_API_TOKEN.
+ *
+ * Sends a 401 response on failure.
+ *
+ * @param req  Incoming request.
+ * @return ESP_OK on success; ESP_FAIL on auth failure.
+ */
+static esp_err_t ota_push_check_auth(httpd_req_t* req)
+{
+    char auth[160];
+    if (httpd_req_get_hdr_value_str(req, "Authorization", auth, sizeof(auth)) != ESP_OK) {
+        ESP_LOGW(TAG, "OTA push: missing Authorization header");
+        ota_send_unauthorized(req);
+        return ESP_FAIL;
+    }
+    char expected[160];
+    snprintf(expected, sizeof(expected), "Bearer %s", OTA_API_TOKEN);
+    if (strcmp(auth, expected) != 0) {
+        ESP_LOGW(TAG, "OTA push: invalid token");
+        ota_send_unauthorized(req);
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+/**
+ * @brief Verify the request carries a non-zero Content-Length.
+ *
+ * Sends a 400 response on failure.
+ *
+ * @param req  Incoming request.
+ * @return ESP_OK on success; ESP_FAIL if content_len is 0.
+ */
+static esp_err_t ota_push_check_size(httpd_req_t* req)
+{
+    if (req->content_len == 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing firmware data");
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+/**
+ * @brief Receive all firmware body bytes and write them via ota_push_write().
+ *
+ * @param req        Incoming request.
+ * @param total_size Expected firmware size (from Content-Length).
+ * @return ESP_OK on success; ESP_FAIL on receive or write error.
+ */
+static esp_err_t ota_push_receive_loop(httpd_req_t* req, size_t total_size)
+{
+    char buf[UPLOAD_BUFFER_SIZE];
+    size_t received = 0;
+    while (received < total_size) {
+        int r = httpd_req_recv(req, buf, MIN(sizeof(buf), total_size - received));
+        if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (r <= 0) return ESP_FAIL;
+        esp_err_t err = ota_push_write(buf, (size_t)r);
+        if (err != ESP_OK) return err;
+        received += (size_t)r;
+    }
+    return ESP_OK;
+}
+
+/**
+ * @brief Call ota_push_begin() and send HTTP error on failure.
+ *
+ * @param req  Incoming request.
+ * @return ESP_OK on success.
+ */
+static esp_err_t ota_push_start(httpd_req_t* req)
+{
+    ESP_LOGI(TAG, "OTA push: receiving %zu bytes", (size_t)req->content_len);
+    esp_err_t err = ota_push_begin((size_t)req->content_len);
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, ota_get_last_error());
+    }
+    return err;
+}
+
+/**
+ * @brief Run the firmware receive loop; abort OTA and send HTTP error on failure.
+ *
+ * @param req  Incoming request.
+ * @return ESP_OK on success.
+ */
+static esp_err_t ota_push_download(httpd_req_t* req)
+{
+    esp_err_t err = ota_push_receive_loop(req, (size_t)req->content_len);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "OTA push: receive failed, aborting");
+        ota_push_abort();
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Firmware receive failed");
+    }
+    return err;
+}
+
+/**
+ * @brief Validate and commit the OTA image; send HTTP response before rebooting.
+ *
+ * Calls ota_push_finish() to validate and set the boot partition, sends a
+ * JSON success response, then calls ota_push_commit() which reboots the device.
+ * Only returns (with an error code) if finish fails.
+ *
+ * @param req  Incoming request.
+ * @return Error code on failure; does not return on success (device reboots).
+ */
+static esp_err_t ota_push_complete(httpd_req_t* req)
+{
+    esp_err_t err = ota_push_finish();
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, ota_get_last_error());
+        return err;
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"status\":\"rebooting\"}\n");
+    ota_push_commit();  // does not return
+    return ESP_OK;
+}
+
+/**
+ * @brief Orchestrate start → download → finish for an authenticated OTA request.
+ *
+ * @param req  Incoming request (auth and size already verified).
+ * @return Error code on failure; does not return on success (device reboots).
+ */
+static esp_err_t ota_push_execute(httpd_req_t* req)
+{
+    esp_err_t err = ota_push_start(req);
+    if (err != ESP_OK) return err;
+    err = ota_push_download(req);
+    if (err != ESP_OK) return err;
+    return ota_push_complete(req);
+}
+
+// =============================================================================
 // HTTP API server helpers
 // =============================================================================
 
@@ -350,6 +504,8 @@ static esp_err_t download_file_handler(httpd_req_t *req);
 static esp_err_t status_handler(httpd_req_t *req);
 static esp_err_t logs_test_handler(httpd_req_t *req);
 static esp_err_t logs_download_handler(httpd_req_t *req);
+static esp_err_t ota_push_handler(httpd_req_t *req);
+static esp_err_t ota_status_handler(httpd_req_t *req);
 
 /**
  * @brief Apply non-default httpd configuration values.
@@ -365,11 +521,11 @@ static void http_api_configure_server(httpd_config_t* config)
 }
 
 /**
- * @brief Register all URI handlers with the running server.
+ * @brief Register file, status, and log URI handlers.
  *
  * @param srv  Running httpd server handle.
  */
-static void http_api_register_handlers(httpd_handle_t srv)
+static void http_api_register_file_handlers(httpd_handle_t srv)
 {
     static const httpd_uri_t uri_status = {
         .uri     = "/api/status",
@@ -401,6 +557,38 @@ static void http_api_register_handlers(httpd_handle_t srv)
     httpd_register_uri_handler(srv, &uri_logs_test);
     httpd_register_uri_handler(srv, &uri_upload);
     httpd_register_uri_handler(srv, &uri_download);
+}
+
+/**
+ * @brief Register OTA push and status URI handlers.
+ *
+ * @param srv  Running httpd server handle.
+ */
+static void http_api_register_ota_handlers(httpd_handle_t srv)
+{
+    static const httpd_uri_t uri_ota_push = {
+        .uri     = "/ota",
+        .method  = HTTP_POST,
+        .handler = ota_push_handler,
+    };
+    static const httpd_uri_t uri_ota_status = {
+        .uri     = "/ota/status",
+        .method  = HTTP_GET,
+        .handler = ota_status_handler,
+    };
+    httpd_register_uri_handler(srv, &uri_ota_push);
+    httpd_register_uri_handler(srv, &uri_ota_status);
+}
+
+/**
+ * @brief Register all URI handlers with the running server.
+ *
+ * @param srv  Running httpd server handle.
+ */
+static void http_api_register_handlers(httpd_handle_t srv)
+{
+    http_api_register_file_handlers(srv);
+    http_api_register_ota_handlers(srv);
 }
 
 // =============================================================================
@@ -492,16 +680,61 @@ static esp_err_t logs_test_handler(httpd_req_t *req)
 /**
  * @brief Download the debug log file.
  * GET /api/logs/download
+ *
+ * Temporarily closes the debug log write handle before reading because FAT32
+ * does not support concurrent file handles on the same path.  The handle is
+ * reopened immediately after the transfer completes.
  */
 static esp_err_t logs_download_handler(httpd_req_t *req)
 {
-    debug_log_flush();
-    const char* log_path = debug_log_get_path();
+    const char* log_path = debug_log_pause_for_read();
     if (!log_path) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Debug logging not active");
         return ESP_FAIL;
     }
-    return logs_open_and_send(req, log_path);
+    esp_err_t err = logs_open_and_send(req, log_path);
+    debug_log_reopen();
+    return err;
+}
+
+/**
+ * @brief Receive a firmware image via HTTP POST and flash it to the OTA partition.
+ * POST /ota — body is raw firmware binary.
+ *
+ * Requires Authorization: Bearer <OTA_API_TOKEN>.
+ * Reboots the device on success; returns error code on failure.
+ */
+static esp_err_t ota_push_handler(httpd_req_t *req)
+{
+    esp_err_t err = ota_push_check_auth(req);
+    if (err != ESP_OK) return err;
+    err = ota_push_check_size(req);
+    if (err != ESP_OK) return err;
+    return ota_push_execute(req);
+}
+
+/**
+ * @brief Return the current OTA push state as JSON.
+ * GET /ota/status
+ *
+ * Response: {"state":"idle"|"receiving"|"validating"|"rebooting"|"error",
+ *            "bytes_written":N,"total_bytes":N,"error":"..."}
+ */
+static esp_err_t ota_status_handler(httpd_req_t *req)
+{
+    static const char* const state_str[] = {
+        "idle", "receiving", "validating", "rebooting", "error"
+    };
+    ota_status_t st = ota_get_status();
+    char response[256];
+    snprintf(response, sizeof(response),
+             "{\"state\":\"%s\",\"bytes_written\":%zu,"
+             "\"total_bytes\":%zu,\"error\":\"%s\"}\n",
+             state_str[st.state], st.bytes_written,
+             st.total_bytes, st.error_msg);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
 }
 
 // =============================================================================

@@ -188,6 +188,44 @@ void debug_log_flush(void)
 }
 
 /**
+ * @brief Flush and close the log write handle to allow a concurrent read.
+ *
+ * FAT32 prohibits multiple open handles on the same file.  Closes the write
+ * handle so a reader (e.g. the HTTP log download handler) can open the file.
+ * Any log output produced between this call and debug_log_reopen() is
+ * forwarded to the console only.
+ *
+ * @return Path to the log file, or NULL if logging is not active.
+ */
+const char* debug_log_pause_for_read(void)
+{
+    if (!is_active || !log_file) return NULL;
+    fflush(log_file);
+    fsync(fileno(log_file));
+    fclose(log_file);
+    log_file = NULL;
+    ESP_LOGI(TAG, "Log write handle closed for read — console only until reopen");
+    return log_path;
+}
+
+/**
+ * @brief Reopen the log write handle after debug_log_pause_for_read().
+ *
+ * No-op if logging is not active or the handle is already open.
+ */
+void debug_log_reopen(void)
+{
+    if (!is_active || log_file != NULL) return;
+    log_file = fopen(log_path, "a");
+    if (!log_file) {
+        ESP_LOGE(TAG, "Failed to reopen log file: %s — disabling logging", log_path);
+        is_active = false;
+        return;
+    }
+    ESP_LOGI(TAG, "Log write handle reopened: %s", log_path);
+}
+
+/**
  * @brief Close and reopen the log file, then write a test diagnostic block.
  *
  * Forces the file to be flushed to SD card storage and verifies that file
