@@ -348,6 +348,25 @@ extern "C" void app_main()
     bsp_display_brightness_set(cfg.brightness);
     ESP_LOGI(TAG, "[2] Brightness set to %d%%", cfg.brightness);
 
+    // Log PPA hardware acceleration status
+    #if defined(CONFIG_LV_USE_PPA) && CONFIG_LV_USE_PPA
+        ESP_LOGI(TAG, "[2] ✓ PPA hardware acceleration: ENABLED");
+        #if defined(CONFIG_LV_USE_PPA_IMG) && CONFIG_LV_USE_PPA_IMG
+            ESP_LOGI(TAG, "[2] ✓ PPA image operations: ENABLED");
+        #else
+            ESP_LOGW(TAG, "[2] ✗ PPA image operations: DISABLED");
+        #endif
+        #if defined(CONFIG_LVGL_PORT_ENABLE_PPA) && CONFIG_LVGL_PORT_ENABLE_PPA
+            ESP_LOGI(TAG, "[2] ✓ PPA in BSP display driver: ENABLED");
+        #else
+            ESP_LOGW(TAG, "[2] ✗ PPA in BSP display driver: DISABLED (critical!)");
+        #endif
+    #else
+        ESP_LOGW(TAG, "[2] ✗ PPA hardware acceleration: DISABLED");
+    #endif
+    ESP_LOGI(TAG, "[2] Buffer alignment: %d bytes (cache line size)", CONFIG_LV_DRAW_BUF_ALIGN);
+    ESP_LOGI(TAG, "[2] Stride alignment: %d bytes", CONFIG_LV_DRAW_BUF_STRIDE_ALIGN);
+
     // Initialize LVGL POSIX filesystem driver for SD card access (A: drive)
     ESP_LOGI(TAG, "[2] Initializing LVGL POSIX filesystem driver for SD card (A:)");
     lv_fs_posix_init();

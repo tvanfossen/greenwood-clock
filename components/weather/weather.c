@@ -1,10 +1,10 @@
 // components/weather/weather.c
 
 #include "weather.h"
-#include "secrets.h"            // defines WEATHER_API_KEY
+#include "http_client_utils.h"
+#include "secrets.h"
 #include "esp_log.h"
-#include "esp_crt_bundle.h"     // for esp_crt_bundle_attach()
-#include "esp_http_client.h"
+#include "esp_crt_bundle.h"
 #include "cJSON.h"
 #include <string.h>
 #include <stdlib.h>
@@ -12,20 +12,104 @@
 
 static const char *TAG = "weather";
 
-// HTTP client configuration
-#define HTTP_CONNECT_TIMEOUT_MS 5000
-#define HTTP_READ_TIMEOUT_MS    10000
-#define HTTP_MAX_RETRIES        3
-#define HTTP_RETRY_DELAY_MS     2000
-#define HTTP_RATE_LIMIT_DELAY_MS 60000
+#define HTTP_CONNECT_TIMEOUT_MS   5000
+#define HTTP_READ_TIMEOUT_MS      10000
+#define HTTP_MAX_RETRIES          3
+#define HTTP_RETRY_DELAY_MS       2000
+#define HTTP_RATE_LIMIT_DELAY_MS  60000
 
-esp_err_t weather_init(void)
+// ─── Private: weather_fetch helpers ──────────────────────────────────────────
+
+/**
+ * @brief Validate arguments and API key before a weather fetch.
+ *
+ * @param out_data  Output pointer to validate (must be non-NULL).
+ * @return ESP_OK if preconditions are met.
+ *         ESP_ERR_INVALID_ARG if out_data is NULL.
+ *         ESP_ERR_INVALID_STATE if no API key is configured.
+ */
+static esp_err_t weather_check_preconditions(const weather_data_t *out_data)
 {
-    ESP_LOGI(TAG, "weather_init: API key = %s…", WEATHER_API_KEY[0] ? "[redacted]" : "[none]");
+    if (!out_data) {
+        ESP_LOGE(TAG, "weather_check_preconditions: out_data is NULL");
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!WEATHER_API_KEY[0]) {
+        ESP_LOGE(TAG, "weather_check_preconditions: no API key configured in secrets.h");
+        return ESP_ERR_INVALID_STATE;
+    }
     return ESP_OK;
 }
 
-static bool copy_json_string(cJSON *item, char *dst, size_t dstlen) {
+/**
+ * @brief Build the Weatherbit current-conditions API URL.
+ *
+ * @param buf     Destination buffer.
+ * @param buflen  Size of destination buffer.
+ * @param lat     Latitude in decimal degrees.
+ * @param lon     Longitude in decimal degrees.
+ */
+static void weather_build_url(char *buf, size_t buflen, float lat, float lon)
+{
+    snprintf(buf, buflen,
+             "https://api.weatherbit.io/v2.0/current?lat=%.3f&lon=%.3f&key=%s",
+             lat, lon, WEATHER_API_KEY);
+}
+
+/**
+ * @brief Fetch the weather API URL with retry and exponential back-off.
+ *
+ * Handles HTTP 429 rate-limit delays. On success returns a heap buffer
+ * containing the null-terminated JSON response body; caller must free.
+ *
+ * @param url  Fully-formed API URL.
+ * @return Heap buffer on success, NULL if all attempts fail.
+ */
+static char *weather_http_fetch_json(const char *url)
+{
+    esp_http_client_config_t cfg = {
+        .url               = url,
+        .transport_type    = HTTP_TRANSPORT_OVER_SSL,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .timeout_ms        = HTTP_READ_TIMEOUT_MS,
+    };
+
+    for (int retry = 0; retry < HTTP_MAX_RETRIES; retry++) {
+        if (retry > 0)
+            ESP_LOGW(TAG, "weather_http_fetch_json: attempt %d/%d",
+                     retry + 1, HTTP_MAX_RETRIES);
+
+        size_t len = 0;
+        http_attempt_result_t result;
+        char *buf = http_request_execute(&cfg, &result, &len);
+
+        if (result == HTTP_ATTEMPT_OK)         return buf;
+        if (result == HTTP_ATTEMPT_ABORT)      break;
+        if (result == HTTP_ATTEMPT_RATE_LIMIT) {
+            ESP_LOGW(TAG, "weather_http_fetch_json: rate limited, waiting %dms",
+                     HTTP_RATE_LIMIT_DELAY_MS);
+            vTaskDelay(pdMS_TO_TICKS(HTTP_RATE_LIMIT_DELAY_MS));
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(HTTP_RETRY_DELAY_MS * retry));
+        }
+    }
+
+    ESP_LOGE(TAG, "weather_http_fetch_json: all %d attempts failed", HTTP_MAX_RETRIES);
+    return NULL;
+}
+
+// ─── Private: JSON field parsers ─────────────────────────────────────────────
+
+/**
+ * @brief Copy a cJSON string value into a fixed C buffer.
+ *
+ * @param item    cJSON item (may be NULL or a non-string type).
+ * @param dst     Destination buffer.
+ * @param dstlen  Size of destination buffer.
+ * @return true if a non-empty string was copied, false otherwise.
+ */
+static bool copy_json_string(cJSON *item, char *dst, size_t dstlen)
+{
     if (cJSON_IsString(item) && item->valuestring) {
         strncpy(dst, item->valuestring, dstlen - 1);
         dst[dstlen - 1] = '\0';
@@ -35,237 +119,387 @@ static bool copy_json_string(cJSON *item, char *dst, size_t dstlen) {
     return false;
 }
 
-esp_err_t weather_fetch(float latitude,
-                        float longitude,
-                        weather_data_t *out_data)
+/**
+ * @brief Macro: assign a numeric cJSON field to a struct member with a type cast.
+ *
+ * Requires a local `cJSON *tmp` to be declared in the calling scope.
+ */
+#define PARSE_NUM(field, key, cast) \
+    tmp = cJSON_GetObjectItemCaseSensitive(item, key); \
+    out->field = cJSON_IsNumber(tmp) ? (cast)tmp->valuedouble : 0;
+
+/**
+ * @brief Parse atmospheric measurement fields: temperature, humidity, precipitation.
+ *
+ * Fills: temp_c, feels_like_c, dew_point_c, humidity, precip_mm, pressure_mb.
+ *
+ * @param item cJSON data object (index 0 of the "data" array).
+ * @param out  Destination weather_data_t.
+ */
+static void weather_parse_atmospheric(cJSON *item, weather_data_t *out)
 {
-    if (!out_data) return ESP_ERR_INVALID_ARG;
-    if (!WEATHER_API_KEY[0]) {
-        ESP_LOGE(TAG, "weather_fetch: no API key");
-        return ESP_ERR_INVALID_STATE;
+    cJSON *tmp;
+    PARSE_NUM(temp_c,       "temp",     float)
+    PARSE_NUM(feels_like_c, "app_temp", float)
+    PARSE_NUM(dew_point_c,  "dewpt",    float)
+    PARSE_NUM(humidity,     "rh",       int)
+    PARSE_NUM(precip_mm,    "precip",   float)
+    PARSE_NUM(pressure_mb,  "pres",     float)
+}
+
+/**
+ * @brief Parse sky and visibility fields.
+ *
+ * Fills: clouds, visibility_km, uv_index, aqi.
+ *
+ * @param item cJSON data object.
+ * @param out  Destination weather_data_t.
+ */
+static void weather_parse_sky(cJSON *item, weather_data_t *out)
+{
+    cJSON *tmp;
+    PARSE_NUM(clouds,        "clouds", int)
+    PARSE_NUM(visibility_km, "vis",    float)
+    PARSE_NUM(uv_index,      "uv",     float)
+    PARSE_NUM(aqi,           "aqi",    int)
+}
+
+/**
+ * @brief Parse wind numeric fields.
+ *
+ * Fills: wind_spd_m_s, wind_gust_m_s, wind_dir_deg.
+ *
+ * @param item cJSON data object.
+ * @param out  Destination weather_data_t.
+ */
+static void weather_parse_wind(cJSON *item, weather_data_t *out)
+{
+    cJSON *tmp;
+    PARSE_NUM(wind_spd_m_s,  "wind_spd", float)
+    PARSE_NUM(wind_gust_m_s, "gust",     float)
+    PARSE_NUM(wind_dir_deg,  "wind_dir", int)
+}
+
+/**
+ * @brief Parse solar radiation numeric fields.
+ *
+ * Fills: solar_ghi, solar_dhi, solar_dni, solar_rad, elev_angle, h_angle.
+ *
+ * @param item cJSON data object.
+ * @param out  Destination weather_data_t.
+ */
+static void weather_parse_solar(cJSON *item, weather_data_t *out)
+{
+    cJSON *tmp;
+    PARSE_NUM(solar_ghi,  "ghi",        float)
+    PARSE_NUM(solar_dhi,  "dhi",        float)
+    PARSE_NUM(solar_dni,  "dni",        float)
+    PARSE_NUM(solar_rad,  "solar_rad",  float)
+    PARSE_NUM(elev_angle, "elev_angle", float)
+    PARSE_NUM(h_angle,    "h_angle",    float)
+}
+
+#undef PARSE_NUM
+
+/**
+ * @brief Parse location identity string fields.
+ *
+ * Fills: city_name, state_code, country_code, timezone.
+ *
+ * @param item cJSON data object.
+ * @param out  Destination weather_data_t.
+ */
+static void weather_parse_place_strings(cJSON *item, weather_data_t *out)
+{
+    copy_json_string(cJSON_GetObjectItem(item, "city_name"),
+                     out->city_name,    sizeof(out->city_name));
+    copy_json_string(cJSON_GetObjectItem(item, "state_code"),
+                     out->state_code,   sizeof(out->state_code));
+    copy_json_string(cJSON_GetObjectItem(item, "country_code"),
+                     out->country_code, sizeof(out->country_code));
+    copy_json_string(cJSON_GetObjectItem(item, "timezone"),
+                     out->timezone,     sizeof(out->timezone));
+}
+
+/**
+ * @brief Parse primary observation time string fields.
+ *
+ * Fills: datetime, ob_time, station.
+ *
+ * @param item cJSON data object.
+ * @param out  Destination weather_data_t.
+ */
+static void weather_parse_time_dates(cJSON *item, weather_data_t *out)
+{
+    copy_json_string(cJSON_GetObjectItem(item, "datetime"),
+                     out->datetime, sizeof(out->datetime));
+    copy_json_string(cJSON_GetObjectItem(item, "ob_time"),
+                     out->ob_time,  sizeof(out->ob_time));
+    copy_json_string(cJSON_GetObjectItem(item, "station"),
+                     out->station,  sizeof(out->station));
+}
+
+/**
+ * @brief Parse secondary time fields: sun events and Unix timestamp.
+ *
+ * Fills: sunrise, sunset, timestamp.
+ *
+ * @param item cJSON data object.
+ * @param out  Destination weather_data_t.
+ */
+static void weather_parse_time_extras(cJSON *item, weather_data_t *out)
+{
+    copy_json_string(cJSON_GetObjectItem(item, "sunrise"),
+                     out->sunrise, sizeof(out->sunrise));
+    copy_json_string(cJSON_GetObjectItem(item, "sunset"),
+                     out->sunset,  sizeof(out->sunset));
+    cJSON *ts = cJSON_GetObjectItemCaseSensitive(item, "ts");
+    out->timestamp = cJSON_IsNumber(ts) ? ts->valueint : 0;
+}
+
+/**
+ * @brief Parse all observation time string fields and the Unix timestamp.
+ *
+ * Fills: datetime, ob_time, station, sunrise, sunset, timestamp.
+ *
+ * @param item cJSON data object.
+ * @param out  Destination weather_data_t.
+ */
+static void weather_parse_time_strings(cJSON *item, weather_data_t *out)
+{
+    weather_parse_time_dates(item, out);
+    weather_parse_time_extras(item, out);
+}
+
+/**
+ * @brief Parse the nested "weather" object for description and icon URL.
+ *
+ * Fills: description, icon_url.
+ *
+ * @param item cJSON data object.
+ * @param out  Destination weather_data_t.
+ */
+static void weather_parse_conditions(cJSON *item, weather_data_t *out)
+{
+    cJSON *w = cJSON_GetObjectItemCaseSensitive(item, "weather");
+    if (!cJSON_IsObject(w)) {
+        ESP_LOGW(TAG, "weather_parse_conditions: 'weather' object missing");
+        out->description[0] = '\0';
+        out->icon_url[0]    = '\0';
+        return;
     }
-
-    // 1) Build URL
-    char url[128];
-    snprintf(url, sizeof(url),
-            "https://api.weatherbit.io/v2.0/current?"
-            "lat=%.3f&lon=%.3f&key=%s",
-            latitude, longitude,
-            WEATHER_API_KEY);
-    ESP_LOGI(TAG, "weather_fetch: URL=%s", url);
-
-    // 2) HTTPS client config with timeouts
-    esp_http_client_config_t cfg = {
-        .url               = url,
-        .transport_type    = HTTP_TRANSPORT_OVER_SSL,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .timeout_ms        = HTTP_READ_TIMEOUT_MS,
-    };
-
-    esp_err_t err = ESP_FAIL;
-    int status_code = 0;
-    char *buf = NULL;
-    int retry = 0;
-
-    // Retry loop with exponential backoff
-    for (retry = 0; retry < HTTP_MAX_RETRIES; retry++) {
-        if (retry > 0) {
-            ESP_LOGW(TAG, "Retry attempt %d/%d", retry+1, HTTP_MAX_RETRIES);
-            vTaskDelay(pdMS_TO_TICKS(HTTP_RETRY_DELAY_MS * retry));
-        }
-
-        esp_http_client_handle_t client = esp_http_client_init(&cfg);
-        if (!client) {
-            ESP_LOGE(TAG, "http_client_init failed");
-            continue;  // Retry
-        }
-
-        // 3) Open + fetch headers
-        err = esp_http_client_open(client, 0);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "http_client_open: %s", esp_err_to_name(err));
-            esp_http_client_cleanup(client);
-            continue;  // Retry
-        }
-
-        int clen = esp_http_client_fetch_headers(client);
-        status_code = esp_http_client_get_status_code(client);
-        ESP_LOGI(TAG, "HTTP Status: %d, Content-Length: %d", status_code, clen);
-
-        // Check HTTP status code
-        if (status_code == 429) {
-            // Rate limited - wait longer before retry
-            ESP_LOGW(TAG, "Rate limited (HTTP 429), waiting %dms", HTTP_RATE_LIMIT_DELAY_MS);
-            esp_http_client_close(client);
-            esp_http_client_cleanup(client);
-            vTaskDelay(pdMS_TO_TICKS(HTTP_RATE_LIMIT_DELAY_MS));
-            continue;
-        } else if (status_code >= 500) {
-            // Server error - retry
-            ESP_LOGW(TAG, "Server error (HTTP %d), retrying", status_code);
-            esp_http_client_close(client);
-            esp_http_client_cleanup(client);
-            continue;
-        } else if (status_code >= 400) {
-            // Client error - don't retry
-            ESP_LOGE(TAG, "Client error (HTTP %d), not retrying", status_code);
-            esp_http_client_close(client);
-            esp_http_client_cleanup(client);
-            return ESP_FAIL;
-        } else if (status_code != 200) {
-            // Unexpected status code
-            ESP_LOGW(TAG, "Unexpected HTTP status: %d", status_code);
-            esp_http_client_close(client);
-            esp_http_client_cleanup(client);
-            continue;
-        }
-
-        // 4) Success! Read body into dynamically growing buffer
-        size_t cap   = (clen > 0 && clen < 32*1024) ? clen + 1 : 4096;
-        size_t total = 0;
-        buf = malloc(cap);
-        if (!buf) {
-            ESP_LOGE(TAG, "malloc(%zu) failed", cap);
-            esp_http_client_close(client);
-            esp_http_client_cleanup(client);
-            return ESP_ERR_NO_MEM;
-        }
-
-        while (true) {
-            int r = esp_http_client_read(client, buf + total, cap - total - 1);
-            if (r <= 0) break;
-            total += r;
-            if (total >= cap - 1) {
-                size_t newcap = cap * 2;
-                char *tmp = realloc(buf, newcap);
-                if (!tmp) {
-                    ESP_LOGE(TAG, "realloc failed, truncating response");
-                    break;
-                }
-                buf = tmp;
-                cap = newcap;
-            }
-        }
-        buf[total] = '\0';
-        esp_http_client_close(client);
-        esp_http_client_cleanup(client);
-
-        ESP_LOGI(TAG, "weather_fetch: received %zu bytes JSON", total);
-        ESP_LOGI(TAG, "weather_fetch: payload:\n%s", buf);
-
-        // Break out of retry loop on success
-        err = ESP_OK;
-        break;
+    copy_json_string(cJSON_GetObjectItem(w, "description"),
+                     out->description, sizeof(out->description));
+    cJSON *icon = cJSON_GetObjectItemCaseSensitive(w, "icon");
+    if (cJSON_IsString(icon) && icon->valuestring) {
+        snprintf(out->icon_url, sizeof(out->icon_url),
+                 "https://www.weatherbit.io/static/img/icons/%s.png",
+                 icon->valuestring);
+    } else {
+        out->icon_url[0] = '\0';
     }
+}
 
-    // Check if all retries failed
-    if (err != ESP_OK || buf == NULL) {
-        ESP_LOGE(TAG, "Failed to fetch weather data after %d attempts", HTTP_MAX_RETRIES);
-        if (buf) free(buf);
-        return ESP_FAIL;
+/**
+ * @brief Populate all fields of a weather_data_t from a cJSON data item.
+ *
+ * Orchestrates all typed field parsers. Does not touch the cJSON tree after return.
+ *
+ * @param item cJSON data object (index 0 of the "data" array).
+ * @param out  Destination weather_data_t.
+ */
+static void weather_populate_fields(cJSON *item, weather_data_t *out)
+{
+    weather_parse_atmospheric(item, out);
+    weather_parse_sky(item, out);
+    weather_parse_wind(item, out);
+    weather_parse_solar(item, out);
+    weather_parse_place_strings(item, out);
+    weather_parse_time_strings(item, out);
+    weather_parse_conditions(item, out);
+}
+
+/**
+ * @brief Extract the first element of the "data" array from a Weatherbit JSON root.
+ *
+ * @param root  Parsed cJSON root object.
+ * @return Pointer to the first data item, or NULL if the array is missing or empty.
+ */
+static cJSON *weather_extract_data_item(cJSON *root)
+{
+    cJSON *arr = cJSON_GetObjectItem(root, "data");
+    if (!cJSON_IsArray(arr) || cJSON_GetArraySize(arr) < 1) {
+        ESP_LOGE(TAG, "weather_extract_data_item: 'data' array missing or empty");
+        return NULL;
     }
+    return cJSON_GetArrayItem(arr, 0);
+}
 
+/**
+ * @brief Parse a complete Weatherbit API JSON response into a weather_data_t.
+ *
+ * @param buf      Null-terminated JSON response body.
+ * @param out_data Destination structure to populate.
+ * @return ESP_OK on success.
+ *         ESP_ERR_INVALID_ARG if JSON cannot be parsed or schema is unexpected.
+ */
+static esp_err_t weather_parse_response(const char *buf, weather_data_t *out_data)
+{
     cJSON *root = cJSON_Parse(buf);
     if (!root) {
-        ESP_LOGE(TAG, "JSON parse error");
-        free(buf);
+        ESP_LOGE(TAG, "weather_parse_response: cJSON_Parse failed");
         return ESP_ERR_INVALID_ARG;
     }
 
-    // 6) Drill into data[0]
-    cJSON *data_arr = cJSON_GetObjectItem(root, "data");
-    if (!cJSON_IsArray(data_arr) || cJSON_GetArraySize(data_arr) < 1) {
-        ESP_LOGE(TAG, "Missing 'data' array");
+    cJSON *item = weather_extract_data_item(root);
+    if (!item) {
         cJSON_Delete(root);
         return ESP_ERR_INVALID_ARG;
     }
-    cJSON *item = cJSON_GetArrayItem(data_arr, 0);
 
-    // Numeric fields
-    cJSON *tmp;
-    #define PARSE_NUM(field, ckey, cast) \
-        tmp = cJSON_GetObjectItemCaseSensitive(item, ckey); \
-        out_data->field = cJSON_IsNumber(tmp) ? (cast)tmp->valuedouble : 0;
-
-    PARSE_NUM(temp_c,     "temp",      float)
-    PARSE_NUM(feels_like_c,"app_temp",  float)
-    PARSE_NUM(dew_point_c,"dewpt",     float)
-    PARSE_NUM(humidity,   "rh",        int)
-    PARSE_NUM(precip_mm,  "precip",    float)
-    PARSE_NUM(pressure_mb,"pres",      float)
-    PARSE_NUM(clouds,     "clouds",    int)
-    PARSE_NUM(visibility_km,"vis",     float)
-    PARSE_NUM(uv_index,   "uv",        float)
-    PARSE_NUM(aqi,        "aqi",       int)
-    PARSE_NUM(wind_spd_m_s,"wind_spd",  float)
-    PARSE_NUM(wind_gust_m_s,"gust",     float)
-    PARSE_NUM(wind_dir_deg,"wind_dir",  int)
-    PARSE_NUM(solar_ghi,  "ghi",       float)
-    PARSE_NUM(solar_dhi,  "dhi",       float)
-    PARSE_NUM(solar_dni,  "dni",       float)
-    PARSE_NUM(solar_rad,  "solar_rad", float)
-    PARSE_NUM(elev_angle, "elev_angle",float)
-    PARSE_NUM(h_angle,    "h_angle",   float)
-
-    // String fields
-    copy_json_string(cJSON_GetObjectItem(item, "city_name"),
-                     out_data->city_name, sizeof(out_data->city_name));
-    copy_json_string(cJSON_GetObjectItem(item, "state_code"),
-                     out_data->state_code, sizeof(out_data->state_code));
-    copy_json_string(cJSON_GetObjectItem(item, "country_code"),
-                     out_data->country_code, sizeof(out_data->country_code));
-    copy_json_string(cJSON_GetObjectItem(item, "timezone"),
-                     out_data->timezone, sizeof(out_data->timezone));
-    copy_json_string(cJSON_GetObjectItem(item, "datetime"),
-                     out_data->datetime, sizeof(out_data->datetime));
-    copy_json_string(cJSON_GetObjectItem(item, "ob_time"),
-                     out_data->ob_time, sizeof(out_data->ob_time));
-    copy_json_string(cJSON_GetObjectItem(item, "station"),
-                     out_data->station, sizeof(out_data->station));
-    copy_json_string(cJSON_GetObjectItem(item, "sunrise"),
-                     out_data->sunrise, sizeof(out_data->sunrise));
-    copy_json_string(cJSON_GetObjectItem(item, "sunset"),
-                     out_data->sunset, sizeof(out_data->sunset));
-
-    // Unix timestamp
-    tmp = cJSON_GetObjectItemCaseSensitive(item, "ts");
-    out_data->timestamp = cJSON_IsNumber(tmp) ? tmp->valueint : 0;
-
-    // Weather nested object
-    cJSON *w = cJSON_GetObjectItemCaseSensitive(item, "weather");
-    copy_json_string(cJSON_GetObjectItem(w, "description"),
-                     out_data->description, sizeof(out_data->description));
-    if (cJSON_IsObject(w)) {
-        cJSON *icon = cJSON_GetObjectItemCaseSensitive(w, "icon");
-        if (cJSON_IsString(icon) && icon->valuestring) {
-            snprintf(out_data->icon_url,
-                     sizeof(out_data->icon_url),
-                     "https://www.weatherbit.io/static/img/icons/%s.png",
-                     icon->valuestring);
-        } else {
-            out_data->icon_url[0] = '\0';
-        }
-    }
-
+    weather_populate_fields(item, out_data);
     cJSON_Delete(root);
-    ESP_LOGI(TAG, "weather_fetch: parsed city=%s temp=%.1f°C feels=%.1f°C desc=\"%s\"",
-             out_data->city_name,
-             out_data->temp_c,
-             out_data->feels_like_c,
-             out_data->description);
 
+    ESP_LOGI(TAG, "weather_parse_response: %s %.1f°C (feels %.1f°C) — %s",
+             out_data->city_name, out_data->temp_c,
+             out_data->feels_like_c, out_data->description);
     return ESP_OK;
 }
 
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * @brief Initialize the weather component.
+ *
+ * Validates compile-time API key configuration. The key is sourced from
+ * secrets.h (WEATHER_API_KEY) and is never stored at runtime.
+ *
+ * @return ESP_OK always. Key absence is logged but not fatal at init time.
+ */
+esp_err_t weather_init(void)
+{
+    ESP_LOGI(TAG, "weather_init: API key %s",
+             WEATHER_API_KEY[0] ? "present" : "NOT configured — fetches will fail");
+    return ESP_OK;
+}
+
+/**
+ * @brief Fetch current weather conditions for a given location.
+ *
+ * Performs an HTTPS GET to the Weatherbit v2.0 current-conditions endpoint.
+ * Retries up to HTTP_MAX_RETRIES times with exponential back-off.
+ * HTTP 429 triggers an extended rate-limit delay before the next attempt.
+ *
+ * @param latitude   Decimal degrees latitude.
+ * @param longitude  Decimal degrees longitude.
+ * @param out_data   Pointer to weather_data_t to populate on success.
+ * @return ESP_OK on success.
+ *         ESP_ERR_INVALID_ARG if out_data is NULL or JSON parse fails.
+ *         ESP_ERR_INVALID_STATE if no API key is configured.
+ *         ESP_FAIL if all HTTP attempts fail.
+ */
+esp_err_t weather_fetch(float latitude, float longitude, weather_data_t *out_data)
+{
+    esp_err_t err = weather_check_preconditions(out_data);
+    if (err != ESP_OK) return err;
+
+    char url[128];
+    weather_build_url(url, sizeof(url), latitude, longitude);
+    ESP_LOGI(TAG, "weather_fetch: starting fetch");
+
+    char *buf = weather_http_fetch_json(url);
+    if (!buf) {
+        ESP_LOGE(TAG, "weather_fetch: all HTTP attempts failed");
+        return ESP_FAIL;
+    }
+
+    err = weather_parse_response(buf, out_data);
+    free(buf);
+    return err;
+}
+
+/**
+ * @brief Execute one icon download attempt and store the result on success.
+ *
+ * On HTTP_ATTEMPT_OK the heap buffer is transferred to *out_buf / *out_len.
+ * All other results leave *out_buf / *out_len unchanged.
+ *
+ * @param cfg      HTTP client configuration for this attempt.
+ * @param out_buf  Set to the raw PNG heap buffer on success.
+ * @param out_len  Set to the PNG byte count on success.
+ * @return Attempt disposition (HTTP_ATTEMPT_OK, HTTP_ATTEMPT_RETRY, etc.).
+ */
+static http_attempt_result_t icon_attempt_one(const esp_http_client_config_t *cfg,
+                                               uint8_t **out_buf,
+                                               size_t   *out_len)
+{
+    size_t len = 0;
+    http_attempt_result_t result;
+    char *buf = http_request_execute(cfg, &result, &len);
+    if (result == HTTP_ATTEMPT_OK) {
+        ESP_LOGI(TAG, "weather_fetch_icon: downloaded %zu bytes", len);
+        *out_buf = (uint8_t *)buf;
+        *out_len = len;
+    }
+    return result;
+}
+
+/**
+ * @brief Retry loop for icon download: attempt up to HTTP_MAX_RETRIES times.
+ *
+ * Applies standard back-off delay between retries. Aborts immediately on a
+ * permanent client error (HTTP 4xx). Returns ESP_OK only when icon data was
+ * successfully received and stored in *out_buf / *out_len.
+ *
+ * @param cfg      HTTP client configuration shared across all attempts.
+ * @param out_buf  Set to the raw PNG heap buffer on success.
+ * @param out_len  Set to the PNG byte count on success.
+ * @return ESP_OK on success; ESP_FAIL if all attempts fail or a client error occurs.
+ */
+static esp_err_t weather_fetch_icon_loop(const esp_http_client_config_t *cfg,
+                                          uint8_t **out_buf,
+                                          size_t   *out_len)
+{
+    for (int retry = 0; retry < HTTP_MAX_RETRIES; retry++) {
+        if (retry > 0) {
+            ESP_LOGW(TAG, "weather_fetch_icon: attempt %d/%d", retry + 1, HTTP_MAX_RETRIES);
+            vTaskDelay(pdMS_TO_TICKS(HTTP_RETRY_DELAY_MS * retry));
+        }
+        http_attempt_result_t result = icon_attempt_one(cfg, out_buf, out_len);
+        if (result == HTTP_ATTEMPT_OK)    return ESP_OK;
+        if (result == HTTP_ATTEMPT_ABORT) {
+            ESP_LOGE(TAG, "weather_fetch_icon: client error, not retrying");
+            return ESP_FAIL;
+        }
+    }
+    ESP_LOGE(TAG, "weather_fetch_icon: all %d attempts failed", HTTP_MAX_RETRIES);
+    return ESP_FAIL;
+}
+
+/**
+ * @brief Download the PNG weather condition icon for the given weather data.
+ *
+ * The icon URL is populated by weather_fetch() via the Weatherbit icon field.
+ * Retries up to HTTP_MAX_RETRIES times with exponential back-off.
+ * The caller is responsible for freeing *out_buf.
+ *
+ * @param wd       Populated weather_data_t containing a non-empty icon_url.
+ * @param out_buf  Set to a heap-allocated buffer containing the raw PNG bytes.
+ * @param out_len  Set to the byte count of *out_buf.
+ * @return ESP_OK on success.
+ *         ESP_ERR_INVALID_ARG if any argument is invalid.
+ *         ESP_FAIL if all HTTP attempts fail.
+ */
 esp_err_t weather_fetch_icon(const weather_data_t *wd,
                              uint8_t **out_buf,
-                             size_t  *out_len)
+                             size_t   *out_len)
 {
     if (!wd || !wd->icon_url[0] || !out_buf || !out_len) {
+        ESP_LOGE(TAG, "weather_fetch_icon: invalid arguments");
         return ESP_ERR_INVALID_ARG;
     }
 
-    ESP_LOGI(TAG, "weather icon url: %s", wd->icon_url);
+    ESP_LOGI(TAG, "weather_fetch_icon: url=%s", wd->icon_url);
 
     esp_http_client_config_t cfg = {
         .url               = wd->icon_url,
@@ -274,87 +508,5 @@ esp_err_t weather_fetch_icon(const weather_data_t *wd,
         .timeout_ms        = HTTP_READ_TIMEOUT_MS,
     };
 
-    esp_err_t err = ESP_FAIL;
-    uint8_t *buf = NULL;
-    int retry = 0;
-
-    // Retry loop
-    for (retry = 0; retry < HTTP_MAX_RETRIES; retry++) {
-        if (retry > 0) {
-            ESP_LOGW(TAG, "Icon fetch retry %d/%d", retry+1, HTTP_MAX_RETRIES);
-            vTaskDelay(pdMS_TO_TICKS(HTTP_RETRY_DELAY_MS * retry));
-        }
-
-        esp_http_client_handle_t client = esp_http_client_init(&cfg);
-        if (!client) {
-            ESP_LOGE(TAG, "http_client_init failed");
-            continue;
-        }
-
-        err = esp_http_client_open(client, 0);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "http_client_open: %s", esp_err_to_name(err));
-            esp_http_client_cleanup(client);
-            continue;
-        }
-
-        esp_http_client_fetch_headers(client);
-        int status_code = esp_http_client_get_status_code(client);
-
-        // Check HTTP status
-        if (status_code != 200) {
-            ESP_LOGW(TAG, "Icon fetch HTTP status: %d", status_code);
-            esp_http_client_close(client);
-            esp_http_client_cleanup(client);
-            if (status_code >= 400 && status_code < 500) {
-                return ESP_FAIL;  // Don't retry client errors
-            }
-            continue;
-        }
-
-        // Start with a reasonable chunk; grow as needed
-        size_t cap   = 4096;
-        size_t total = 0;
-        buf = malloc(cap);
-        if (!buf) {
-            ESP_LOGE(TAG, "malloc failed for icon buffer");
-            esp_http_client_close(client);
-            esp_http_client_cleanup(client);
-            return ESP_ERR_NO_MEM;
-        }
-
-        // Read until EOF
-        int r;
-        while ((r = esp_http_client_read(client, (char*)buf + total, cap - total)) > 0) {
-            total += r;
-            if (total >= cap) {
-                size_t newcap = cap * 2;
-                uint8_t *tmp = realloc(buf, newcap);
-                if (!tmp) {
-                    ESP_LOGW(TAG, "realloc failed, truncating icon");
-                    break;   // out of memory: we'll use what we have
-                }
-                buf = tmp;
-                cap = newcap;
-            }
-        }
-        esp_http_client_close(client);
-        esp_http_client_cleanup(client);
-
-        *out_buf = buf;
-        *out_len = total;
-        ESP_LOGI(TAG, "weather_fetch_icon: downloaded %zu bytes", total);
-
-        err = ESP_OK;
-        break;  // Success - break out of retry loop
-    }
-
-    // Check if all retries failed
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to fetch icon after %d attempts", HTTP_MAX_RETRIES);
-        if (buf) free(buf);
-        return ESP_FAIL;
-    }
-
-    return ESP_OK;
+    return weather_fetch_icon_loop(&cfg, out_buf, out_len);
 }

@@ -61,8 +61,8 @@ class OTAHandler(http.server.SimpleHTTPRequestHandler):
         if self.path == SERVE_PATH:
             if os.path.exists(self.firmware_path):
                 self.send_response(200)
-                self.send_header('Content-type', 'application/octet-stream')
-                self.send_header('Content-Length', os.path.getsize(self.firmware_path))
+                self.send_header("Content-type", "application/octet-stream")
+                self.send_header("Content-Length", os.path.getsize(self.firmware_path))
                 self.end_headers()
             else:
                 self.send_error(404, "Firmware not found")
@@ -75,12 +75,14 @@ class OTAHandler(http.server.SimpleHTTPRequestHandler):
             file_size = os.path.getsize(self.firmware_path)
 
             self.send_response(200)
-            self.send_header('Content-type', 'application/octet-stream')
-            self.send_header('Content-Length', file_size)
-            self.send_header('Content-Disposition', f'attachment; filename="greenwood-clock.bin"')
+            self.send_header("Content-type", "application/octet-stream")
+            self.send_header("Content-Length", file_size)
+            self.send_header(
+                "Content-Disposition", 'attachment; filename="greenwood-clock.bin"'
+            )
             self.end_headers()
 
-            with open(self.firmware_path, 'rb') as f:
+            with open(self.firmware_path, "rb") as f:
                 chunk_size = 4096
                 while True:
                     chunk = f.read(chunk_size)
@@ -123,38 +125,38 @@ def push_file(device_ip, local_path, device_path):
     file_size_mb = file_size / (1024 * 1024)
 
     # Remove leading /sdcard/ if present (API adds it automatically)
-    if device_path.startswith('/sdcard/'):
+    if device_path.startswith("/sdcard/"):
         device_path = device_path[8:]
-    elif device_path.startswith('/'):
+    elif device_path.startswith("/"):
         device_path = device_path[1:]
 
     url = f"http://{device_ip}:{DEVICE_API_PORT}/files/{device_path}"
 
-    print(f"[INFO] Uploading file...")
+    print("[INFO] Uploading file...")
     print(f"  Local:  {local_path} ({file_size:,} bytes, {file_size_mb:.2f} MB)")
     print(f"  Device: /sdcard/{device_path}")
     print(f"  URL:    {url}")
 
     try:
-        with open(local_path, 'rb') as f:
+        with open(local_path, "rb") as f:
             data = f.read()
 
-        req = urllib.request.Request(url, data=data, method='POST')
-        req.add_header('Content-Type', 'application/octet-stream')
-        req.add_header('Content-Length', str(len(data)))
+        req = urllib.request.Request(url, data=data, method="POST")
+        req.add_header("Content-Type", "application/octet-stream")
+        req.add_header("Content-Length", str(len(data)))
 
         with urllib.request.urlopen(req, timeout=30) as response:
-            result = response.read().decode('utf-8')
-            print(f"[SUCCESS] File uploaded successfully")
+            result = response.read().decode("utf-8")
+            print("[SUCCESS] File uploaded successfully")
             print(f"  Response: {result.strip()}")
             return True
 
     except urllib.error.HTTPError as e:
         print(f"[ERROR] HTTP {e.code}: {e.reason}")
         try:
-            error_msg = e.read().decode('utf-8')
+            error_msg = e.read().decode("utf-8")
             print(f"  Details: {error_msg}")
-        except:
+        except Exception:
             pass
         return False
     except urllib.error.URLError as e:
@@ -169,20 +171,20 @@ def push_file(device_ip, local_path, device_path):
 def pull_file(device_ip, device_path, local_path):
     """Download a file from the device SD card via HTTP GET"""
     # Remove leading /sdcard/ if present (API adds it automatically)
-    if device_path.startswith('/sdcard/'):
+    if device_path.startswith("/sdcard/"):
         device_path = device_path[8:]
-    elif device_path.startswith('/'):
+    elif device_path.startswith("/"):
         device_path = device_path[1:]
 
     url = f"http://{device_ip}:{DEVICE_API_PORT}/files/{device_path}"
 
-    print(f"[INFO] Downloading file...")
+    print("[INFO] Downloading file...")
     print(f"  Device: /sdcard/{device_path}")
     print(f"  Local:  {local_path}")
     print(f"  URL:    {url}")
 
     try:
-        req = urllib.request.Request(url, method='GET')
+        req = urllib.request.Request(url, method="GET")
 
         with urllib.request.urlopen(req, timeout=30) as response:
             data = response.read()
@@ -192,12 +194,12 @@ def pull_file(device_ip, device_path, local_path):
             if local_dir and not os.path.exists(local_dir):
                 os.makedirs(local_dir)
 
-            with open(local_path, 'wb') as f:
+            with open(local_path, "wb") as f:
                 f.write(data)
 
             file_size = len(data)
             file_size_mb = file_size / (1024 * 1024)
-            print(f"[SUCCESS] File downloaded successfully")
+            print("[SUCCESS] File downloaded successfully")
             print(f"  Size: {file_size:,} bytes ({file_size_mb:.2f} MB)")
             return True
 
@@ -218,9 +220,9 @@ def pull_file(device_ip, device_path, local_path):
 def list_files(device_ip, device_path):
     """List directory contents on the device SD card via HTTP GET"""
     # Remove leading /sdcard/ if present (API adds it automatically)
-    if device_path.startswith('/sdcard/'):
+    if device_path.startswith("/sdcard/"):
         device_path = device_path[8:]
-    elif device_path.startswith('/'):
+    elif device_path.startswith("/"):
         device_path = device_path[1:]
 
     # If empty, list root
@@ -229,32 +231,34 @@ def list_files(device_ip, device_path):
 
     url = f"http://{device_ip}:{DEVICE_API_PORT}/files/{device_path}"
 
-    print(f"[INFO] Listing directory: /sdcard/{device_path if device_path else '(root)'}")
+    print(
+        f"[INFO] Listing directory: /sdcard/{device_path if device_path else '(root)'}"
+    )
     print(f"  URL: {url}")
     print()
 
     try:
-        req = urllib.request.Request(url, method='GET')
+        req = urllib.request.Request(url, method="GET")
 
         with urllib.request.urlopen(req, timeout=10) as response:
-            content_type = response.headers.get('Content-Type', '')
+            content_type = response.headers.get("Content-Type", "")
 
-            if 'application/json' in content_type:
+            if "application/json" in content_type:
                 # Directory listing
-                data = response.read().decode('utf-8')
+                data = response.read().decode("utf-8")
                 listing = json.loads(data)
 
-                if 'files' in listing and len(listing['files']) > 0:
+                if "files" in listing and len(listing["files"]) > 0:
                     print(f"{'Name':<40} {'Type':<10} {'Size':<15}")
                     print("-" * 70)
 
-                    for entry in listing['files']:
-                        name = entry.get('name', '')
-                        entry_type = entry.get('type', 'file')
-                        size = entry.get('size', 0)
+                    for entry in listing["files"]:
+                        name = entry.get("name", "")
+                        entry_type = entry.get("type", "file")
+                        size = entry.get("size", 0)
 
-                        if entry_type == 'dir':
-                            size_str = '<DIR>'
+                        if entry_type == "dir":
+                            size_str = "<DIR>"
                         else:
                             if size < 1024:
                                 size_str = f"{size} B"
@@ -273,8 +277,8 @@ def list_files(device_ip, device_path):
                 return True
             else:
                 # It's a file, not a directory
-                print(f"[ERROR] Path is a file, not a directory")
-                print(f"  Use --pull to download this file")
+                print("[ERROR] Path is a file, not a directory")
+                print("  Use --pull to download this file")
                 return False
 
     except urllib.error.HTTPError as e:
@@ -314,50 +318,53 @@ Examples:
 
   # List SD card root directory
   python tools/ota_server.py --list / --device 192.168.1.100
-        """
+        """,
     )
 
     # OTA Server mode arguments
     parser.add_argument(
-        '--port', '-p',
+        "--port",
+        "-p",
         type=int,
         default=DEFAULT_PORT,
-        help=f'OTA server port (default: {DEFAULT_PORT})'
+        help=f"OTA server port (default: {DEFAULT_PORT})",
     )
 
     parser.add_argument(
-        '--firmware', '-f',
+        "--firmware",
+        "-f",
         type=str,
         default=DEFAULT_FIRMWARE_PATH,
-        help=f'Path to firmware binary (default: {DEFAULT_FIRMWARE_PATH})'
+        help=f"Path to firmware binary (default: {DEFAULT_FIRMWARE_PATH})",
     )
 
     # File management mode arguments
     parser.add_argument(
-        '--device', '-d',
+        "--device",
+        "-d",
         type=str,
-        help='Device IP address for file management commands'
+        help="Device IP address for file management commands",
     )
 
     parser.add_argument(
-        '--push',
+        "--push",
         nargs=2,
-        metavar=('LOCAL_FILE', 'DEVICE_PATH'),
-        help='Upload file to device SD card (requires --device)'
+        metavar=("LOCAL_FILE", "DEVICE_PATH"),
+        help="Upload file to device SD card (requires --device)",
     )
 
     parser.add_argument(
-        '--pull',
+        "--pull",
         nargs=2,
-        metavar=('DEVICE_PATH', 'LOCAL_FILE'),
-        help='Download file from device SD card (requires --device)'
+        metavar=("DEVICE_PATH", "LOCAL_FILE"),
+        help="Download file from device SD card (requires --device)",
     )
 
     parser.add_argument(
-        '--list',
+        "--list",
         type=str,
-        metavar='DEVICE_PATH',
-        help='List directory on device SD card (requires --device)'
+        metavar="DEVICE_PATH",
+        help="List directory on device SD card (requires --device)",
     )
 
     args = parser.parse_args()
@@ -370,7 +377,9 @@ Examples:
         if not args.device:
             print("[ERROR] --device is required for file management commands")
             print("\nExample:")
-            print("  python tools/ota_server.py --push splash.png /splash.png --device 192.168.1.100")
+            print(
+                "  python tools/ota_server.py --push splash.png /splash.png --device 192.168.1.100"
+            )
             sys.exit(1)
 
         print("=" * 70)
@@ -406,8 +415,8 @@ Examples:
         # Check if firmware exists
         if not os.path.exists(firmware_path):
             print(f"[ERROR] Firmware file not found: {firmware_path}")
-            print(f"\nPlease build the firmware first:")
-            print(f"  idf.py build")
+            print("\nPlease build the firmware first:")
+            print("  idf.py build")
             sys.exit(1)
 
         # Get firmware size
@@ -447,7 +456,7 @@ Examples:
         except OSError as e:
             if e.errno == 98:  # Address already in use
                 print(f"\n[ERROR] Port {args.port} is already in use")
-                print(f"Try a different port with --port option")
+                print("Try a different port with --port option")
             else:
                 print(f"\n[ERROR] {e}")
             sys.exit(1)

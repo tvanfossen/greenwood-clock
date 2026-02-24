@@ -1,367 +1,148 @@
 # Greenwood Clock
 
-ESP32-based smart clock with weather integration and LVGL UI.
-
-## Overview
-
-The Greenwood Clock is an embedded IoT device built on the ESP32-P4 platform that displays time, date, weather information, and other environmental data on a touchscreen display. The project uses the ESP-IDF framework with LVGL for graphics rendering.
+ESP32-P4 smart clock with touchscreen UI, weather integration, and OTA firmware updates.
 
 ## Hardware
 
-- **Platform**: ESP32-P4 Function EV Development Kit
-- **Display**: MIPI DSI touchscreen (exact resolution varies)
-- **Connectivity**: Wi-Fi 802.11 b/g/n
-- **Storage**: SPIFFS partition (4MB)
+| Item | Spec |
+|---|---|
+| Platform | ESP32-P4 Function EV Board |
+| Display | 1024×600 MIPI DSI |
+| Touch | GT911 (I2C, requires hardware jumper — see `docs/HARDWARE.md`) |
+| Storage | SPIFFS (built-in assets) + SD card (user content) |
+| Connectivity | Wi-Fi 802.11 b/g/n |
 
-## Features
-
-### ✅ Implemented
-- **Time Display**: 12-hour format with AM/PM indicator
-- **Date Display**: Full date with day of week
-- **Weather Integration**: Current temperature, UV index via OpenWeatherMap API
-- **Weather Icons**: Dynamic weather condition icons
-- **Network Sync**: SNTP time synchronization
-- **Timezone Support**: Configurable timezone (currently hardcoded)
-- **UI Framework**: Responsive LVGL-based layout
-- **Splash Screen**: Boot-time splash image
-
-### 🚧 In Development
-- **Astronomy Module**: Moon phase display (currently disabled due to stack issues)
-- **Settings UI**: Configuration menu
-- **Location Selection**: User-configurable location/timezone
-- **Persistent Storage**: NVS-based settings persistence
-
-## Architecture
-
-### Project Structure
-
-```
-greenwood-clock/
-├── components/              # Reusable ESP-IDF components
-│   ├── astronomy/           # AstronomyAPI client (disabled)
-│   ├── fonts/               # LVGL font definitions
-│   ├── images/              # Image assets and converters
-│   ├── lottie/              # Lottie animation support
-│   ├── lvgl/                # LVGL graphics library
-│   ├── network/             # Wi-Fi and SNTP client
-│   ├── secrets/             # Centralized API key management
-│   ├── time_sync/           # Timezone and time utilities
-│   ├── ui/                  # Main UI rendering logic
-│   └── weather/             # OpenWeatherMap API client
-├── main/                    # Application entry point
-│   └── main.cpp             # Initialization and main loop
-├── spiffs/                  # SPIFFS filesystem content
-├── CMakeLists.txt           # Top-level build configuration
-├── sdkconfig                # ESP-IDF configuration
-└── partitions.csv           # Flash partition table
-```
-
-### Component Descriptions
-
-#### UI Component (`components/ui/`)
-- LVGL-based responsive user interface
-- Top section: Large time display (12-hour) with date
-- Bottom section: Grid layout with weather icon, temperature, and UV index
-- Update intervals: Clock (60s), Weather (30min)
-- Custom fonts: Nunito (48pt, 128pt, 256pt, 512pt)
-
-#### Weather Component (`components/weather/`)
-- OpenWeatherMap API integration
-- Fetches current conditions for configured lat/long
-- Downloads and caches weather icons (PNG)
-- Parses JSON responses with cJSON library
-- Data includes: temperature, humidity, UV index, wind, pressure
-
-#### Network Component (`components/network/`)
-- Wi-Fi station mode initialization
-- SNTP client for time synchronization
-- Blocking wait for time sync on boot
-- SNTP servers: pool.ntp.org
-
-#### Time Sync Component (`components/time_sync/`)
-- Timezone configuration via POSIX TZ strings
-- Local time conversion utilities
-- Currently configured for EST5EDT (Eastern Time)
-
-#### Astronomy Component (`components/astronomy/`) - DISABLED
-- AstronomyAPI integration for moon phase data
-- Currently causes stack protection faults
-- Requires memory optimization before re-enabling
-
-#### Secrets Component (`components/secrets/`)
-- Centralized API key and credential management
-- Contains:
-  - WEATHER_API_KEY (OpenWeatherMap)
-  - ASTRONOMY_API_KEY and ASTRONOMY_APP_ID
-  - GREENWOOD_LAT and GREENWOOD_LONG (location)
-- Note: This file is gitignored in production
-
-## Build Instructions
-
-### Prerequisites
-
-1. **ESP-IDF v5.5+**
-   ```bash
-   # If not installed, follow: https://docs.espressif.com/projects/esp-idf/en/latest/get-started/
-
-   # Source ESP-IDF environment (adjust path as needed)
-   source ~/esp/esp-idf/export.sh
-   ```
-
-2. **Python 3.10+** with ESP-IDF dependencies
-
-### Building
+## Quick Start
 
 ```bash
-# Configure project (first time only)
-idf.py set-target esp32p4
+# Source ESP-IDF v5.5+
+source ~/esp/esp-idf/export.sh
 
-# Build the project
+# Target and build
+idf.py set-target esp32p4
 idf.py build
 
-# Flash to device
-idf.py -p /dev/ttyUSB0 flash
+# Flash (first time — also flashes partition table)
+idf.py -p /dev/ttyUSB0 erase-flash flash
 
-# Monitor serial output
+# Monitor
 idf.py -p /dev/ttyUSB0 monitor
 ```
 
-### Build Output
-
-- Binary: `build/greenwood-clock.bin` (approx 3.6MB)
-- Bootloader: `build/bootloader/bootloader.bin`
-- Partition table: `build/partition_table/partition-table.bin`
-- SPIFFS image: `build/storage.bin`
-
-### Current Build Status
-
-✅ **Build Status**: Passing (as of 2025-12-01)
-- No compilation errors
-- No warnings
-- All components compile successfully
+Subsequent updates can be done via OTA (see [OTA Updates](#ota-updates)).
 
 ## Configuration
 
-### Wi-Fi Credentials
+All runtime configuration (Wi-Fi, brightness, timezone) is stored in NVS and set via the
+touchscreen settings menu. No recompile required for runtime settings.
 
-Edit `main/main.cpp` line 110 to set your Wi-Fi credentials:
-```cpp
-network_init("YOUR_SSID", "YOUR_PASSWORD");
+**Compile-time secrets** are stored in `components/secrets/secrets.h` (not committed to git).
+Copy `components/secrets/secrets.h.example` and fill in your values before building.
+
+Default timezone: `EST5EDT,M3.2.0/2,M11.1.0/2` (Eastern). Overridable via NVS settings.
+
+## Boot Sequence
+
+```
+[0]   Settings init (NVS)
+[1]   SPIFFS mount
+[1.5] SD card mount + debug log start
+[2]   Display init + LVGL filesystem drivers (A: SD, B: SPIFFS)
+[2]   Touch enable (from settings)
+[3]   Splash screen
+[4]   Wi-Fi connect + SNTP sync (if configured)
+[5]   Timezone setup
+[5.5] OTA init + mark firmware valid
+[6]   Weather init + HTTP API server (port 80)
+[7]   Start screen (tap to launch clock)
+→     Idle loop: heap health check every 60s
 ```
 
-### Location
+## Components
 
-Edit `components/secrets/secrets.h` to set your location:
-```c
-#define GREENWOOD_LAT 43.366   // Your latitude
-#define GREENWOOD_LONG -85.851 // Your longitude
+| Component | Purpose | Status |
+|---|---|---|
+| `ui` | LVGL screens, screen manager, navigation | ✅ Working |
+| `network` | Wi-Fi STA, SNTP with retry/fallback | ✅ Working |
+| `settings` | NVS-based persistent config | ✅ Working |
+| `weather` | OpenWeatherMap API client | ✅ Working |
+| `ota` | OTA firmware update (HTTP, port 8000) | ✅ Working |
+| `sdcard` | SD card mount via BSP, graceful fallback | ✅ Working |
+| `debug_log` | Mirrors ESP logs to `/sdcard/logs/debug.log` | ✅ Working |
+| `http_api` | Local HTTP REST server on port 80 | ✅ Working |
+| `time_sync` | POSIX TZ string timezone handling | ✅ Working |
+| `lvgl_mem_esp` | Custom 64-byte aligned allocator (PPA prep) | ✅ Working |
+| `secrets` | Compile-time API keys (not in git) | ✅ Working |
+| `fonts` | Nunito font at 48/128/256/512pt | ✅ Working |
+| `images` | Splash and UI assets | ✅ Working |
+| `lottie` | Lottie animation support | ⚠️ Unverified |
+
+## Filesystem Layout
+
+```
+LVGL A: → /sdcard/          (SD card — user content)
+LVGL B: → /spiffs/          (SPIFFS — built-in assets)
+
+/sdcard/
+├── backgrounds/             # User background images/GIFs
+├── logs/                    # debug.log written here on boot
+├── settings/                # Settings backups (future)
+├── screenshots/             # (future)
+└── firmware/                # OTA staging (future)
+
+/spiffs/
+└── splash.png               # Boot splash image
 ```
 
-### Timezone
+## OTA Updates
 
-Edit `main/main.cpp` line 119 to set your timezone:
-```cpp
-const char *tz = "EST5EDT,M3.2.0/2,M11.1.0/2";  // POSIX TZ string
+```bash
+# 1. Build
+idf.py build
+
+# 2. Start server on dev machine
+python tools/ota_server.py
+
+# 3. On device: Settings → Software Update → Check for Update
 ```
 
-### API Keys
+Partition layout: factory (4 MB) + ota_0 (4 MB) + ota_1 (4 MB) + storage/SPIFFS (3 MB).
+Automatic rollback if new firmware fails to boot.
 
-Edit `components/secrets/secrets.h` to add your API keys:
-```c
-#define WEATHER_API_KEY "your_openweathermap_api_key"
-#define ASTRONOMY_API_KEY "your_astronomyapi_key"  // Optional
-#define ASTRONOMY_APP_ID "your_astronomyapi_app_id"  // Optional
-```
+## Observability
 
-Get API keys from:
-- Weather: https://openweathermap.org/api
-- Astronomy: https://astronomyapi.com/
+- **Serial health log** — heap free/min/delta every 60s tagged `[HEALTH]`
+- **SD card log** — full ESP log output mirrored to `/sdcard/logs/debug.log`
+- **HTTP API** — REST endpoint on port 80 for file/log access over network
+- **LVGL assert handler** — logs heap state, resets device instead of hanging
+- **Panic handler** — logs task list and heap on any crash
 
 ## Known Issues
 
-### Critical
-1. **Astronomy Module Stack Faults**
-   - Status: Disabled in code
-   - Cause: Excessive stack usage causes protection faults
-   - Impact: Moon phase display unavailable
-   - Fix: Requires memory profiling and optimization
+| Issue | Severity | Status |
+|---|---|---|
+| PPA hardware acceleration alignment errors | High | ⚠️ Configured ON, unverified on hardware |
+| OTA uses HTTP (no cert verification) | Medium | Acceptable for local dev network |
+| Lottie animation integration | Low | ⚠️ Unverified |
 
-### Medium
-2. **SNTP Sync Reliability**
-   - Status: Active investigation
-   - Symptoms: Intermittent failures, occasional fallback to epoch (1970)
-   - Workaround: Retry on boot
-   - Fix: Add fallback NTP servers, implement retry logic
-
-3. **Hardcoded Configuration**
-   - Wi-Fi credentials in source code
-   - Location hardcoded
-   - No runtime configuration UI
-   - Fix: Implement NVS-based settings + configuration menu
-
-### Low
-4. **HTTP Error Handling**
-   - Some edge cases in weather API response parsing not handled
-   - Missing timeout configuration
-   - Fix: Add comprehensive error handling and retries
-
-5. **No Unit Tests**
-   - No automated testing framework
-   - Manual testing only
-   - Fix: Integrate Unity test framework
-
-## Dependencies
-
-### ESP-IDF Components
-- `esp_http_client` - HTTP/HTTPS client with TLS
-- `esp_wifi` - Wi-Fi driver
-- `lwip` - TCP/IP stack with SNTP
-- `mbedtls` - TLS/SSL library
-- `nvs_flash` - Non-volatile storage
-- `spiffs` - SPI Flash File System
-
-### External Libraries
-- **LVGL v8.x**: Graphics library
-- **cJSON**: JSON parser
-- **Unity**: Unit testing framework (planned)
-
-### Build Dependencies
-- CMake 3.5+
-- Ninja build system
-- Python 3.10+ with pip packages:
-  - `esptool`
-  - `esp-idf` requirements
+**PPA is the primary outstanding performance issue.** See `docs/PPA_STATUS.md`.
 
 ## Development Guidelines
 
-### Code Style
-- C99 for C files, C++11 for C++ files
-- 4-space indentation (no tabs)
-- ESP-IDF naming conventions: `component_function_name()`
-- Use ESP_LOGx macros for logging
+- ESP-IDF naming: `component_function_name()`
+- All logging via `ESP_LOGx(TAG, ...)` — never truncate log content
+- All LVGL operations must be wrapped with `lvgl_port_lock(0)` / `lvgl_port_unlock()`
+- Network operations must NOT be called while holding the LVGL lock
+- Heap allocations >4 KB prefer SPIRAM via `lvgl_mem_esp` custom allocator
 
-### Logging
-```c
-static const char* TAG = "component_name";
-ESP_LOGI(TAG, "Informational message");
-ESP_LOGW(TAG, "Warning message");
-ESP_LOGE(TAG, "Error message");
-```
+## Docs
 
-### Memory Management
-- Always check malloc() return values
-- Free allocated memory in error paths
-- Profile heap usage for new features
-- Avoid stack allocations >2KB
-
-### Commit Messages
-Format: `component: Brief description`
-```
-ui: Add moon phase display widget
-
-- Created moon_widget.c with LVGL container
-- Integrated with astronomy API
-- Update every 24 hours
-
-Related: #issue-number
-```
-
-## Performance Metrics
-
-### Memory Usage (ESP32-P4)
-- Heap: ~280KB used / ~512KB available (55%)
-- Stack: Per-task, monitored via `uxTaskGetStackHighWaterMark()`
-- Flash: 3.6MB / 9MB partition (40%)
-
-### Update Intervals
-- Clock: Every 60 seconds
-- Weather: Every 30 minutes
-- Moon phase: Every 24 hours (when enabled)
-
-### Network Performance
-- Wi-Fi connect: ~2-5 seconds
-- SNTP sync: ~1-3 seconds
-- Weather API call: ~2-4 seconds
-- Icon download: ~1-2 seconds (varies by icon size)
-
-## Maintenance
-
-### Updating ESP-IDF
-```bash
-cd ~/esp/esp-idf
-git pull
-git submodule update --init --recursive
-./install.sh
-```
-
-### Cleaning Build
-```bash
-idf.py fullclean
-rm -rf build/
-idf.py build
-```
-
-### Monitoring Heap
-```bash
-idf.py monitor
-# Press Ctrl+] to exit monitor
-```
-
-In code:
-```c
-ESP_LOGI(TAG, "Free heap: %lu bytes", esp_get_free_heap_size());
-```
-
-## Troubleshooting
-
-### Build Fails
-1. Ensure ESP-IDF environment is sourced: `source ~/esp/esp-idf/export.sh`
-2. Clean build: `idf.py fullclean && idf.py build`
-3. Check ESP-IDF version: `idf.py --version` (should be v5.5+)
-
-### Device Won't Connect to Wi-Fi
-1. Verify SSID and password in `main/main.cpp`
-2. Check router supports 2.4GHz (ESP32 doesn't support 5GHz)
-3. Monitor output: `idf.py monitor` and look for Wi-Fi error messages
-
-### Time Shows 1970
-1. SNTP sync failed - check internet connectivity
-2. Verify NTP servers are reachable
-3. Check firewall isn't blocking UDP port 123
-
-### Weather Not Updating
-1. Verify API key is valid at https://openweathermap.org/
-2. Check API rate limits (free tier: 60 calls/minute)
-3. Monitor HTTP response codes in serial output
-
-## License
-
-See [LICENSE](LICENSE) file for details.
-
-## Contributing
-
-This project is maintained by Claude AI agents. For bugs or feature requests:
-1. Check existing issues and proposals in `.claude/AGENTS/PROPOSALS/`
-2. Create detailed bug reports with serial monitor output
-3. For features, describe the use case and acceptance criteria
-
-## Roadmap
-
-See `.claude/AGENTS/PROPOSALS/ACTIVE_WORK/` for current development priorities.
-
-### Upcoming Features
-- [ ] Re-enable astronomy module with memory fixes
-- [ ] Settings UI menu
-- [ ] Persistent configuration (NVS)
-- [ ] Air quality index display
-- [ ] Sunrise/sunset times
-- [ ] Multiple timezone support
-- [ ] OTA (Over-The-Air) updates
-- [ ] Comprehensive test suite (>80% coverage)
-- [ ] CI/CD pipeline
+- `docs/ARCHITECTURE.md` — system architecture and component relationships
+- `docs/HARDWARE.md` — board-specific setup, touch jumper mod
+- `docs/PPA_STATUS.md` — PPA hardware acceleration investigation and status
+- `docs/OTA.md` — OTA workflow and security considerations
+- API docs: run `doxygen Doxyfile` → output in `docs/api/`
 
 ---
 
-**Last Updated**: 2025-12-01
-**Maintainer**: Claude AI (greenwood-clock-maintenance-handoff)
-**Status**: Active Development
+**Last verified build**: 2025-12-06 | **ESP-IDF**: v5.5 | **LVGL**: v9.3
