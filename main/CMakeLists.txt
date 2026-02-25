@@ -4,6 +4,7 @@ idf_component_register(
     SRCS        "main.cpp"
     INCLUDE_DIRS "."
     REQUIRES
+        driver                      # gpio_set_direction / gpio_set_level for early RST assert
         esp32_p4_function_ev_board  # board support (LCD, DSI…)
         esp_hosted                  # C6 host driver
         esp_wifi_remote             # esp_wifi over RPC
