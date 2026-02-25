@@ -7,6 +7,7 @@
 #include "esp_task_wdt.h"
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
+#include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -141,24 +142,72 @@ static void lv_fs_spiffs_init(void)
     lv_fs_drv_register(&spiffs_fs_drv);
 }
 
+// LVGL heartbeat watchdog
+// heartbeat_cb runs inside the LVGL task every 1 s.  If the task hangs (blue
+// screen / render deadlock), it stops updating s_lvgl_heartbeat_ms.
+// display_watchdog_task checks from outside and forces a restart after 15 s
+// of silence — recovering the device without requiring a power cycle.
+#define LVGL_WATCHDOG_TIMEOUT_MS  15000
+#define LVGL_WATCHDOG_CHECK_MS     5000
+
+static volatile uint32_t s_lvgl_heartbeat_ms = 0;
+
+static void heartbeat_cb(lv_timer_t *timer)
+{
+    (void)timer;
+    s_lvgl_heartbeat_ms = lv_tick_get();
+}
+
+static void display_watchdog_task(void *arg)
+{
+    (void)arg;
+    // Grace period: give LVGL time to start before watching
+    vTaskDelay(pdMS_TO_TICKS(LVGL_WATCHDOG_TIMEOUT_MS));
+
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(LVGL_WATCHDOG_CHECK_MS));
+        uint32_t elapsed = lv_tick_elaps(s_lvgl_heartbeat_ms);
+        if (elapsed > LVGL_WATCHDOG_TIMEOUT_MS) {
+            ESP_LOGE(TAG, "===== DISPLAY HANG DETECTED ===== (no LVGL heartbeat for %lu ms)",
+                     (unsigned long)elapsed);
+            debug_log_flush();
+            esp_restart();
+        }
+    }
+}
+
+// LVGL log callback — routes LVGL ERROR/WARN/INFO through ESP_LOG so they
+// reach the SD card debug log and UDP stream.
+static void lvgl_log_cb(lv_log_level_t level, const char* buf)
+{
+    switch (level) {
+        case LV_LOG_LEVEL_ERROR: ESP_LOGE("lvgl", "%s", buf); break;
+        case LV_LOG_LEVEL_WARN:  ESP_LOGW("lvgl", "%s", buf); break;
+        default:                 ESP_LOGI("lvgl", "%s", buf); break;
+    }
+}
+
 // LVGL assert handler - reset instead of hanging
 extern "C" void lv_assert_handler(void) {
     ESP_LOGE(TAG, "========== LVGL ASSERT FAILED ==========");
     ESP_LOGE(TAG, "Heap free: %lu bytes", (unsigned long)esp_get_free_heap_size());
     ESP_LOGE(TAG, "LVGL assertion triggered, resetting device...");
-    
+    debug_log_flush();  // commit log before restart so the assert is visible
+
     // Do NOT call vTaskDelay() here - it can cause crashes from interrupt/invalid context
     // Instead, use a direct restart with minimal delay
     for (volatile int i = 0; i < 100000000; i++) {
         // Busy wait to give time for log to flush to console
     }
-    
+
     esp_restart();
 }
 
-// Panic handler to log crash information
+// Shutdown handler — fires for ALL esp_restart() calls (OTA, assert, panic).
+// Actual panic detection uses esp_reset_reason() at [1.5] on the next boot.
 static void panic_handler_hook(void) {
-    ESP_LOGE(TAG, "========== PANIC DETECTED ==========");
+    debug_log_flush();  // commit log before halt/reboot so last bytes are not lost
+    ESP_LOGE(TAG, "========== SHUTDOWN HANDLER ==========");
     ESP_LOGE(TAG, "Heap free: %lu bytes", (unsigned long)esp_get_free_heap_size());
     ESP_LOGE(TAG, "Min heap ever: %lu bytes", (unsigned long)esp_get_minimum_free_heap_size());
 
@@ -227,6 +276,15 @@ extern "C" void app_main()
 
     ESP_LOGI(TAG, "=== app_main starting ===");
 
+    // Assert display panel RESET immediately — holds EK79007 in reset through
+    // the entire boot sequence ([0]–[1.5]) so it never enters a clock-starved
+    // error state after esp_restart().  BSP releases it properly via
+    // esp_lcd_panel_reset() at [2].  Without this, GPIO27 floats for ~5 s
+    // after a SW reset, causing intermittent blue screens on the first post-OTA
+    // boot.
+    gpio_set_direction(BSP_LCD_RST, GPIO_MODE_OUTPUT);
+    gpio_set_level(BSP_LCD_RST, 0);
+
     // Register panic handler
     esp_register_shutdown_handler(panic_handler_hook);
     ESP_LOGI(TAG, "[0] Panic handler registered");
@@ -277,6 +335,22 @@ extern "C" void app_main()
         }
     }
 
+    // 1.5) Check reset reason — annotates the log at the start of each session.
+    esp_reset_reason_t reset_reason = esp_reset_reason();
+    const char* reset_name = "UNKNOWN";
+    bool is_abnormal_reset = false;
+    switch (reset_reason) {
+        case ESP_RST_PANIC:    reset_name = "PANIC";    is_abnormal_reset = true; break;
+        case ESP_RST_INT_WDT:  reset_name = "INT_WDT";  is_abnormal_reset = true; break;
+        case ESP_RST_TASK_WDT: reset_name = "TASK_WDT"; is_abnormal_reset = true; break;
+        case ESP_RST_WDT:      reset_name = "WDT";      is_abnormal_reset = true; break;
+        case ESP_RST_BROWNOUT: reset_name = "BROWNOUT"; is_abnormal_reset = true; break;
+        case ESP_RST_SW:       reset_name = "SW_RESET";  break;
+        case ESP_RST_POWERON:  reset_name = "POWER_ON";  break;
+        default: break;
+    }
+    ESP_LOGI(TAG, "[1.5] Reset reason: %s (%d)", reset_name, (int)reset_reason);
+
     // 1.5) Initialize and mount SD card
     ESP_LOGI(TAG, "[1.5] Initializing SD card...");
     sdcard_init();
@@ -298,6 +372,16 @@ extern "C" void app_main()
             err = debug_log_init();
             if (err == ESP_OK) {
                 ESP_LOGI(TAG, "[1.5] Debug logging started: %s", debug_log_get_path());
+                // Log reset reason into SD log now that debug_log is open.
+                // The earlier ESP_LOGI at [1.5] only reached serial console.
+                ESP_LOGI(TAG, "[1.5] Reset reason (SD): %s (%d)", reset_name, (int)reset_reason);
+                // Emit a clearly searchable crash marker at the start of the log
+                // session so abnormal prior boots are immediately visible.
+                if (is_abnormal_reset) {
+                    ESP_LOGE(TAG,
+                             "===== ABNORMAL RESET: reason=%s ===== (see previous log slot)",
+                             reset_name);
+                }
             } else {
                 ESP_LOGW(TAG, "[1.5] Failed to start debug logging: %s", esp_err_to_name(err));
             }
@@ -344,6 +428,18 @@ extern "C" void app_main()
         .flags = { .buff_dma = true, .buff_spiram = true, .sw_rotate = false }  // Enabled DMA for faster transfers
     };
     bsp_display_start_with_config(&disp_cfg);
+    lv_log_register_print_cb(lvgl_log_cb);
+    ESP_LOGI(TAG, "[2] LVGL log callback registered — errors/warnings routed to debug log + UDP");
+
+    // Start LVGL heartbeat timer (fires inside LVGL task every 1 s)
+    lvgl_port_lock(0);
+    s_lvgl_heartbeat_ms = lv_tick_get();
+    lv_timer_create(heartbeat_cb, 1000, NULL);
+    lvgl_port_unlock();
+    // Start display watchdog task (monitors heartbeat from outside LVGL task)
+    xTaskCreate(display_watchdog_task, "disp_wdog", 2048, NULL, 3, NULL);
+    ESP_LOGI(TAG, "[2] Display watchdog started (timeout %d ms)", LVGL_WATCHDOG_TIMEOUT_MS);
+
     bsp_display_backlight_on();
     bsp_display_brightness_set(cfg.brightness);
     ESP_LOGI(TAG, "[2] Brightness set to %d%%", cfg.brightness);

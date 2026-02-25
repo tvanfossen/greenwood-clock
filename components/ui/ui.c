@@ -787,6 +787,16 @@ static void start_button_cb(lv_event_t *e)
     ui_clock_init(&saved_timeinfo, &saved_settings);
 }
 
+void ui_launch_clock(void)
+{
+    ESP_LOGI(TAG, "ui_launch_clock: launching clock UI (remote)");
+    lvgl_port_lock(0);
+    lv_obj_t *scr = lv_scr_act();
+    lv_obj_clean(scr);
+    lvgl_port_unlock();
+    ui_clock_init(&saved_timeinfo, &saved_settings);
+}
+
 /**
  * @brief Create the "Greenwood Clock" title label on the start screen.
  *

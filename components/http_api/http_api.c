@@ -5,12 +5,19 @@
 #include "secrets.h"
 #include "esp_log.h"
 #include "esp_http_server.h"
+#include "esp_system.h"
 #include "sdcard.h"
 #include "debug_log.h"
+#include "udp_log.h"
+#include "ui.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <sys/stat.h>
 #include <dirent.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
+#include <stdlib.h>
 
 static const char* TAG = "http_api";
 static httpd_handle_t server = NULL;
@@ -501,11 +508,16 @@ static esp_err_t ota_push_execute(httpd_req_t* req)
 // Forward declarations for handlers referenced by http_api_register_handlers
 static esp_err_t upload_file_handler(httpd_req_t *req);
 static esp_err_t download_file_handler(httpd_req_t *req);
+static esp_err_t delete_file_handler(httpd_req_t *req);
 static esp_err_t status_handler(httpd_req_t *req);
 static esp_err_t logs_test_handler(httpd_req_t *req);
 static esp_err_t logs_download_handler(httpd_req_t *req);
 static esp_err_t ota_push_handler(httpd_req_t *req);
 static esp_err_t ota_status_handler(httpd_req_t *req);
+static esp_err_t debug_udp_log_start_handler(httpd_req_t *req);
+static esp_err_t debug_udp_log_stop_handler(httpd_req_t *req);
+static esp_err_t debug_reboot_handler(httpd_req_t *req);
+static esp_err_t debug_launch_handler(httpd_req_t *req);
 
 /**
  * @brief Apply non-default httpd configuration values.
@@ -515,7 +527,7 @@ static esp_err_t ota_status_handler(httpd_req_t *req);
 static void http_api_configure_server(httpd_config_t* config)
 {
     config->server_port     = 80;
-    config->max_uri_handlers = 16;
+    config->max_uri_handlers = 20;
     config->stack_size      = 8192;
     config->uri_match_fn    = httpd_uri_match_wildcard;
 }
@@ -552,11 +564,17 @@ static void http_api_register_file_handlers(httpd_handle_t srv)
         .method  = HTTP_GET,
         .handler = download_file_handler,
     };
+    static const httpd_uri_t uri_delete = {
+        .uri     = "/files/*",
+        .method  = HTTP_DELETE,
+        .handler = delete_file_handler,
+    };
     httpd_register_uri_handler(srv, &uri_status);
     httpd_register_uri_handler(srv, &uri_logs);
     httpd_register_uri_handler(srv, &uri_logs_test);
     httpd_register_uri_handler(srv, &uri_upload);
     httpd_register_uri_handler(srv, &uri_download);
+    httpd_register_uri_handler(srv, &uri_delete);
 }
 
 /**
@@ -581,6 +599,39 @@ static void http_api_register_ota_handlers(httpd_handle_t srv)
 }
 
 /**
+ * @brief Register debug endpoint handlers (UDP log, reboot).
+ *
+ * @param srv  Running httpd server handle.
+ */
+static void http_api_register_debug_handlers(httpd_handle_t srv)
+{
+    static const httpd_uri_t uri_udp_log_start = {
+        .uri     = "/debug/udp_log",
+        .method  = HTTP_POST,
+        .handler = debug_udp_log_start_handler,
+    };
+    static const httpd_uri_t uri_udp_log_stop = {
+        .uri     = "/debug/udp_log",
+        .method  = HTTP_DELETE,
+        .handler = debug_udp_log_stop_handler,
+    };
+    static const httpd_uri_t uri_reboot = {
+        .uri     = "/debug/reboot",
+        .method  = HTTP_POST,
+        .handler = debug_reboot_handler,
+    };
+    static const httpd_uri_t uri_launch = {
+        .uri     = "/debug/launch",
+        .method  = HTTP_POST,
+        .handler = debug_launch_handler,
+    };
+    httpd_register_uri_handler(srv, &uri_udp_log_start);
+    httpd_register_uri_handler(srv, &uri_udp_log_stop);
+    httpd_register_uri_handler(srv, &uri_reboot);
+    httpd_register_uri_handler(srv, &uri_launch);
+}
+
+/**
  * @brief Register all URI handlers with the running server.
  *
  * @param srv  Running httpd server handle.
@@ -589,6 +640,7 @@ static void http_api_register_handlers(httpd_handle_t srv)
 {
     http_api_register_file_handlers(srv);
     http_api_register_ota_handlers(srv);
+    http_api_register_debug_handlers(srv);
 }
 
 // =============================================================================
@@ -695,6 +747,227 @@ static esp_err_t logs_download_handler(httpd_req_t *req)
     esp_err_t err = logs_open_and_send(req, log_path);
     debug_log_reopen();
     return err;
+}
+
+/**
+ * @brief Check SD card mounted and stat @p filepath; send HTTP error on failure.
+ *
+ * @param req       Incoming request.
+ * @param filepath  Path to check.
+ * @param st_out    Populated with stat result on success.
+ * @return ESP_OK, or ESP_FAIL with HTTP response already sent.
+ */
+static esp_err_t delete_resolve_and_stat(httpd_req_t* req, const char* filepath,
+                                          struct stat* st_out)
+{
+    if (!sdcard_is_mounted()) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "SD card not mounted");
+        return ESP_FAIL;
+    }
+    if (stat(filepath, st_out) != 0) {
+        httpd_resp_send_404(req);
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+/**
+ * @brief Remove @p filepath (file or empty directory) and send JSON response.
+ *
+ * @param req       Incoming request.
+ * @param filepath  Path to delete.
+ * @param st        Stat result used to distinguish file from directory.
+ * @return ESP_OK or ESP_FAIL.
+ */
+static esp_err_t delete_perform(httpd_req_t* req, const char* filepath,
+                                 const struct stat* st)
+{
+    int result = S_ISDIR(st->st_mode) ? rmdir(filepath) : unlink(filepath);
+    if (result != 0) {
+        ESP_LOGE(TAG, "Delete failed for %s: errno %d", filepath, errno);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Delete failed");
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "Deleted: %s", filepath);
+    char response[256];
+    snprintf(response, sizeof(response), "{\"deleted\":\"%s\"}\n", filepath);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+/**
+ * @brief Delete a file or empty directory from the SD card.
+ * DELETE /files/[path]
+ */
+static esp_err_t delete_file_handler(httpd_req_t *req)
+{
+    char filepath[256];
+    snprintf(filepath, sizeof(filepath), "/sdcard/%s", req->uri + 7);
+    ESP_LOGI(TAG, "Delete: %s -> %s", req->uri, filepath);
+    struct stat st;
+    esp_err_t err = delete_resolve_and_stat(req, filepath, &st);
+    if (err != ESP_OK) return err;
+    return delete_perform(req, filepath, &st);
+}
+
+// =============================================================================
+// Debug endpoint helpers
+// =============================================================================
+
+/**
+ * @brief Extract a quoted JSON string value for @p key from @p body.
+ *
+ * Searches for @p key (e.g. "\"host\""), then extracts the next quoted value.
+ *
+ * @param body     Null-terminated request body.
+ * @param key      JSON key string to search for (including surrounding quotes).
+ * @param out      Destination buffer.
+ * @param out_len  Size of @p out.
+ * @return ESP_OK on success, ESP_FAIL if key not found or value malformed.
+ */
+static esp_err_t parse_json_string_field(const char* body, const char* key,
+                                          char* out, size_t out_len)
+{
+    const char* p = strstr(body, key);
+    if (p) p = strchr(p + strlen(key), '"');
+    if (p) p++;
+    const char* end = p ? strchr(p, '"') : NULL;
+    if (!p || !end) return ESP_FAIL;
+    size_t len = (size_t)(end - p);
+    if (len == 0 || len >= out_len) return ESP_FAIL;
+    memcpy(out, p, len);
+    out[len] = '\0';
+    return ESP_OK;
+}
+
+/**
+ * @brief Extract the numeric "port" field from a JSON body.
+ *
+ * @param body     Null-terminated request body.
+ * @param port_out Receives the parsed port (1–65535).
+ * @return ESP_OK on success, ESP_FAIL if field is missing or out of range.
+ */
+static esp_err_t parse_json_port_field(const char* body, uint16_t* port_out)
+{
+    const char* p = strstr(body, "\"port\"");
+    if (!p) return ESP_FAIL;
+    p += 6;
+    while (*p == ':' || *p == ' ') p++;
+    int port = atoi(p);
+    if (port <= 0 || port > 65535) return ESP_FAIL;
+    *port_out = (uint16_t)port;
+    return ESP_OK;
+}
+
+/**
+ * @brief Parse {"host":"<ip>","port":<n>} from request body.
+ *
+ * @param req       Incoming request.
+ * @param host_out  Buffer to receive the host string.
+ * @param host_len  Size of host_out.
+ * @param port_out  Receives the parsed port number.
+ * @return ESP_OK on success, ESP_FAIL if body is missing or malformed.
+ */
+static esp_err_t debug_parse_udp_log_body(httpd_req_t* req,
+                                           char* host_out, size_t host_len,
+                                           uint16_t* port_out)
+{
+    char body[160];
+    int received = httpd_req_recv(req, body, (int)(sizeof(body) - 1));
+    if (received <= 0) return ESP_FAIL;
+    body[received] = '\0';
+    if (parse_json_string_field(body, "\"host\"", host_out, host_len) != ESP_OK) return ESP_FAIL;
+    return parse_json_port_field(body, port_out);
+}
+
+/**
+ * @brief Start UDP log streaming.
+ * POST /debug/udp_log — body: {"host":"192.168.1.x","port":5555}
+ */
+static esp_err_t debug_udp_log_start_handler(httpd_req_t *req)
+{
+    char host[64];
+    uint16_t port = 0;
+    if (debug_parse_udp_log_body(req, host, sizeof(host), &port) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                            "Body must be {\"host\":\"<ip>\",\"port\":<n>}");
+        return ESP_FAIL;
+    }
+    esp_err_t err = udp_log_init(host, port);
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                            "Failed to start UDP log streaming");
+        return err;
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"status\":\"ok\"}\n", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+/**
+ * @brief Stop UDP log streaming.
+ * DELETE /debug/udp_log
+ */
+static esp_err_t debug_udp_log_stop_handler(httpd_req_t *req)
+{
+    udp_log_deinit();
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"status\":\"ok\"}\n", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+/**
+ * @brief Reboot task — delays briefly so the HTTP response can flush.
+ */
+static void reboot_task(void* arg)
+{
+    vTaskDelay(pdMS_TO_TICKS(500));
+    debug_log_flush();
+    esp_restart();
+}
+
+/**
+ * @brief Trigger a device reboot via HTTP.
+ * POST /debug/reboot
+ */
+static esp_err_t debug_reboot_handler(httpd_req_t *req)
+{
+    ESP_LOGW(TAG, "Remote reboot requested via HTTP");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"status\":\"rebooting\"}\n", HTTPD_RESP_USE_STRLEN);
+    xTaskCreate(reboot_task, "http_reboot", 2048, NULL, 5, NULL);
+    return ESP_OK;
+}
+
+/**
+ * @brief Launch task — calls ui_launch_clock() outside the HTTP server task.
+ *
+ * ui_clock_init() is heavy (builds the full clock screen) and acquires the
+ * LVGL lock internally.  Running it in a dedicated task keeps the HTTP server
+ * task free and avoids any lock-order issues.
+ */
+static void launch_clock_task(void* arg)
+{
+    ui_launch_clock();
+    vTaskDelete(NULL);
+}
+
+/**
+ * @brief Skip the start screen and launch the clock UI immediately.
+ * POST /debug/launch
+ *
+ * Responds immediately, then launches the clock in a background task.
+ * No-op guard: if the clock is already running this will rebuild the screen,
+ * which is harmless but noisy — intended for dev use only.
+ */
+static esp_err_t debug_launch_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "Remote clock launch requested");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"status\":\"launching\"}\n", HTTPD_RESP_USE_STRLEN);
+    xTaskCreate(launch_clock_task, "http_launch", 4096, NULL, 5, NULL);
+    return ESP_OK;
 }
 
 /**

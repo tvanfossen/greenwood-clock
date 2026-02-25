@@ -11,45 +11,62 @@ extern "C" {
 #endif
 
 /**
- * @brief Initialize debug log system
+ * @brief Initialize debug log system.
  *
- * Redirects ESP log output to both console and SD card file.
- * Creates /sdcard/logs/debug.log
+ * Selects the best available log slot (3×5 MB ring buffer), opens it in
+ * append mode, and redirects ESP_LOG* output to both console and SD card.
  *
- * @return ESP_OK on success
+ * @return ESP_OK on success.
  */
 esp_err_t debug_log_init(void);
 
 /**
- * @brief Stop debug log system and close log file
+ * @brief Stop debug log system and close log file.
  *
- * @return ESP_OK on success
+ * @return ESP_OK on success.
  */
 esp_err_t debug_log_deinit(void);
 
 /**
- * @brief Check if debug logging is active
+ * @brief Check if debug logging is active.
  *
- * @return true if logging to SD card
+ * @return true if logging to SD card.
  */
 bool debug_log_is_active(void);
 
 /**
- * @brief Get current log file path
+ * @brief Get the active log file path.
  *
- * @return Path to current log file, or NULL if not active
+ * @return Path to current log slot, or NULL if not active.
  */
 const char* debug_log_get_path(void);
 
 /**
- * @brief Flush log buffer to SD card
+ * @brief Get the filesystem path for a specific log slot.
+ *
+ * May be called even when logging is inactive (e.g. for HTTP file listing).
+ *
+ * @param slot  Slot index 0–2.
+ * @return Path string, or NULL if slot is out of range.
+ */
+const char* debug_log_get_slot_path(int slot);
+
+/**
+ * @brief Get the currently active log slot index.
+ *
+ * @return Slot index (0–2), or -1 if logging is not active.
+ */
+int debug_log_get_active_slot(void);
+
+/**
+ * @brief Flush log buffer to SD card (fflush + fsync).
  */
 void debug_log_flush(void);
 
 /**
- * @brief Write a test message directly to log file (for debugging)
+ * @brief Write a test message directly to log file (for debugging).
  *
- * @return ESP_OK on success
+ * @return ESP_OK on success.
  */
 esp_err_t debug_log_test_write(void);
 

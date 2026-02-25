@@ -6,6 +6,9 @@ idf_component_register(
         sdcard
         esp_timer
         debug_log
+        udp_log
+        ui
         ota
         secrets
+        freertos
 )
