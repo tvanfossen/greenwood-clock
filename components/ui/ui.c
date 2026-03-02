@@ -16,6 +16,9 @@
 #include "settings.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"
+#include <sys/stat.h>
+#include <errno.h>
 
 static const char *TAG = "ui";
 
@@ -307,6 +310,203 @@ static lv_obj_t *ui_bg_try_load(lv_obj_t *scr, const clock_settings_t *settings)
     return ui_bg_load_locked(scr, path, is_gif);
 }
 
+// ─── Private: clock Lottie animation ─────────────────────────────────────────
+
+#if LV_USE_LOTTIE
+
+#define CLOCK_LOTTIE_W          200
+#define CLOCK_LOTTIE_H          200
+#define CLOCK_LOTTIE_FPS        20
+#define CLOCK_LOTTIE_PATH       "/sdcard/hummingbird.json"
+#define CLOCK_LOTTIE_LOAD_STACK (64 * 1024)  /* DRAM — hummingbird parse is deep recursive */
+
+static lv_obj_t *s_clock_lottie_widget = NULL;
+static void     *s_clock_lottie_buf    = NULL;
+
+typedef struct {
+    lv_obj_t *widget;
+    char      path[256];
+    uint32_t  fps;
+} clock_lottie_arg_t;
+
+/**
+ * @brief Allocate the 64-byte-aligned SPIRAM render buffer for the clock Lottie.
+ * @return true on success; sets s_clock_lottie_buf.
+ */
+static bool clock_lottie_alloc_buf(void)
+{
+    uint32_t stride = lv_draw_buf_width_to_stride(CLOCK_LOTTIE_W,
+                                                   LV_COLOR_FORMAT_ARGB8888_PREMULTIPLIED);
+    size_t buf_sz = (size_t)stride * CLOCK_LOTTIE_H;
+    ESP_LOGI(TAG, "clock_lottie: alloc SPIRAM buf %zu B (stride=%lu)", buf_sz, (unsigned long)stride);
+    s_clock_lottie_buf = heap_caps_aligned_alloc(64, buf_sz, MALLOC_CAP_SPIRAM);
+    if (!s_clock_lottie_buf) {
+        ESP_LOGE(TAG, "clock_lottie: SPIRAM alloc failed");
+        return false;
+    }
+    ESP_LOGI(TAG, "clock_lottie: buf at %p", s_clock_lottie_buf);
+    return true;
+}
+
+/**
+ * @brief Create the lv_lottie widget and verify its render task started.
+ * @return Widget or NULL on failure.
+ */
+static lv_obj_t *clock_lottie_create_obj(lv_obj_t *scr)
+{
+    lv_obj_t *widget = lv_lottie_create(scr);
+    if (!widget) {
+        ESP_LOGE(TAG, "clock_lottie: lv_lottie_create failed");
+        return NULL;
+    }
+    if (lv_lottie_render_failed(widget)) {
+        ESP_LOGE(TAG, "clock_lottie: render task failed (PSRAM exhausted?)");
+        lv_obj_delete(widget);
+        return NULL;
+    }
+    return widget;
+}
+
+/**
+ * @brief Size, buffer, and align the Lottie widget on the clock screen.
+ */
+static void clock_lottie_setup_widget(lv_obj_t *widget)
+{
+    lv_obj_set_size(widget, CLOCK_LOTTIE_W, CLOCK_LOTTIE_H);
+    lv_lottie_set_buffer(widget, CLOCK_LOTTIE_W, CLOCK_LOTTIE_H, s_clock_lottie_buf);
+    lv_obj_align(widget, LV_ALIGN_BOTTOM_LEFT, 0, -16);
+    s_clock_lottie_widget = widget;
+    ESP_LOGI(TAG, "clock_lottie: widget=%p placed BOTTOM_LEFT", widget);
+}
+
+/**
+ * @brief Rescale the lv_anim driving the Lottie from the default 60fps to @p fps.
+ *
+ * lv_lottie.c hardcodes 60fps on load.  Called while the LVGL lock is held.
+ */
+static void clock_lottie_set_fps(lv_obj_t *widget, uint32_t fps)
+{
+    lv_anim_t *a = lv_lottie_get_anim(widget);
+    if (!a || fps == 0) return;
+    uint32_t dur = lv_anim_get_time(a);
+    lv_anim_set_duration(a, dur * 60 / fps);
+    a->act_time = 0;
+    ESP_LOGI(TAG, "clock_lottie: fps=%lu dur=%lu→%lu ms", (unsigned long)fps,
+             (unsigned long)dur, (unsigned long)(dur * 60 / fps));
+}
+
+/**
+ * @brief Check that the Lottie file exists on the SD card.
+ */
+static bool clock_lottie_check_file(const char *path)
+{
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        ESP_LOGE(TAG, "clock_lottie: file not found '%s' errno=%d", path, errno);
+        return false;
+    }
+    ESP_LOGI(TAG, "clock_lottie: file found, size=%lld B", (long long)st.st_size);
+    return true;
+}
+
+/**
+ * @brief Log entry stats for the clock lottie load task.
+ */
+static void clock_lottie_log_entry(const char *path, const void *probe)
+{
+    ESP_LOGI(TAG, "clock_lottie_load_task: start path='%s' stack=%p", path, probe);
+    ESP_LOGI(TAG, "clock_lottie_load_task: heap=%lu SPIRAM=%lu stack_hw=%lu",
+             (unsigned long)esp_get_free_heap_size(),
+             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+             (unsigned long)uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t));
+}
+
+/**
+ * @brief Acquire LVGL lock, load the Lottie file, and set target FPS.
+ */
+static void clock_lottie_load_and_set_fps(lv_obj_t *widget, const char *path, uint32_t fps)
+{
+    ESP_LOGI(TAG, "clock_lottie: acquiring LVGL lock");
+    lvgl_port_lock(0);
+    ESP_LOGI(TAG, "clock_lottie: calling lv_lottie_set_src_file");
+    lv_lottie_set_src_file(widget, path);
+    ESP_LOGI(TAG, "clock_lottie: lv_lottie_set_src_file returned");
+    clock_lottie_set_fps(widget, fps);
+    lvgl_port_unlock();
+}
+
+/**
+ * @brief Load task: runs on a 64 KB DRAM stack to parse hummingbird.json.
+ */
+static void clock_lottie_load_task(void *arg)
+{
+    clock_lottie_arg_t *a = (clock_lottie_arg_t *)arg;
+    lv_obj_t *widget = a->widget;
+    uint32_t  fps    = a->fps;
+    char path[256];
+    strlcpy(path, a->path, sizeof(path));
+    free(a);
+
+    volatile uint8_t _probe = 0;
+    clock_lottie_log_entry(path, (const void *)&_probe);
+
+    if (clock_lottie_check_file(path)) {
+        clock_lottie_load_and_set_fps(widget, path, fps);
+    }
+    vTaskDeleteWithCaps(NULL);
+}
+
+/**
+ * @brief Spawn the clock lottie load task on a DRAM stack.
+ */
+static void clock_lottie_spawn(lv_obj_t *widget, const char *path)
+{
+    clock_lottie_arg_t *a = malloc(sizeof(*a));
+    if (!a) {
+        ESP_LOGE(TAG, "clock_lottie: failed to alloc task arg");
+        return;
+    }
+    a->widget = widget;
+    a->fps    = CLOCK_LOTTIE_FPS;
+    strlcpy(a->path, path, sizeof(a->path));
+    ESP_LOGI(TAG, "clock_lottie: spawning load task (stack=%d B, DRAM)", CLOCK_LOTTIE_LOAD_STACK);
+    BaseType_t ret = xTaskCreateWithCaps(clock_lottie_load_task, "clk_lottie",
+                                         CLOCK_LOTTIE_LOAD_STACK, a, 5, NULL,
+                                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "clock_lottie: task spawn failed (ret=%d)", (int)ret);
+        free(a);
+    }
+}
+
+/**
+ * @brief Create and start the hummingbird Lottie on the clock screen.
+ *
+ * Allocates the SPIRAM render buffer, creates the widget under the LVGL lock,
+ * then spawns the load task to parse hummingbird.json on a DRAM stack.
+ * Safe to call from any task (manages its own lock).
+ *
+ * @param scr Clock screen object.
+ */
+static void ui_clock_add_lottie(lv_obj_t *scr)
+{
+    if (!clock_lottie_alloc_buf()) return;
+
+    lvgl_port_lock(0);
+    lv_obj_t *widget = clock_lottie_create_obj(scr);
+    if (widget) clock_lottie_setup_widget(widget);
+    lvgl_port_unlock();
+
+    if (widget) {
+        clock_lottie_spawn(widget, CLOCK_LOTTIE_PATH);
+    } else {
+        free(s_clock_lottie_buf);
+        s_clock_lottie_buf = NULL;
+    }
+}
+
+#endif /* LV_USE_LOTTIE */
+
 // ─── Private: clock screen builders ──────────────────────────────────────────
 
 /**
@@ -472,6 +672,9 @@ static void ui_clock_post_init(lv_obj_t *scr, const clock_settings_t *settings)
     bg_img = ui_bg_try_load(scr, settings);
     clock_update_cb(NULL);
     screen_manager_set_clock_screen(scr);
+#if LV_USE_LOTTIE
+    ui_clock_add_lottie(scr);
+#endif
     ESP_LOGI(TAG, "ui_clock_post_init: complete, heap=%lu",
              (unsigned long)esp_get_free_heap_size());
 }
