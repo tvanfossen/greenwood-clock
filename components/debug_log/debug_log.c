@@ -3,6 +3,8 @@
 #include "debug_log.h"
 #include "sdcard.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
@@ -16,11 +18,16 @@ static const char* TAG = "debug_log";
 #define DEBUG_LOG_SLOT_COUNT  3
 #define DEBUG_LOG_MAX_SIZE    (5 * 1024 * 1024)
 
-static FILE*          log_file        = NULL;
-static bool           is_active       = false;
-static bool           s_in_vprintf    = false;
-static int            s_slot          = 0;
-static size_t         s_bytes_written = 0;
+// Spinlock protecting log_file pointer.
+// Held only for pointer load/store (never while doing file I/O).
+// Safe from task context; short enough that interrupt latency is negligible.
+static portMUX_TYPE s_log_mux = portMUX_INITIALIZER_UNLOCKED;
+
+static FILE*          log_file          = NULL;
+static bool           is_active         = false;
+static bool           s_in_vprintf      = false;
+static int            s_slot            = 0;
+static size_t         s_bytes_written   = 0;
 static char           s_slot_paths[DEBUG_LOG_SLOT_COUNT][64];
 
 // Original vprintf function (for console output)
@@ -38,135 +45,130 @@ static void debug_log_init_slot_paths(void)
     }
 }
 
+
 /**
- * @brief Find the non-full slot with the highest mtime.
+ * @brief Shift log files down FIFO: slot2 deleted, slot1→slot2, slot0→slot1.
  *
- * @param st     Array of stat results for each slot.
- * @param exists Array of booleans indicating which slots exist.
- * @return Slot index, or -1 if all slots are full.
+ * Slot 0 is free for writing after this call.
+ * Used on boot and on mid-session 5 MB rotation.
+ * rename()/unlink() on non-existent files fail silently — correct on first boot.
+ * No mtime dependency: gettimeofday() returns 0 before SNTP sync.
  */
-static int debug_log_find_newest_nonfull(const struct stat* st, const bool* exists)
+static void debug_log_fifo_shift(void)
 {
-    int    best       = -1;
-    time_t best_mtime = -1;
-    for (int i = 0; i < DEBUG_LOG_SLOT_COUNT; i++) {
-        bool non_full = (!exists[i] || st[i].st_size < (off_t)DEBUG_LOG_MAX_SIZE);
-        if (!non_full) continue;
-        time_t mtime = exists[i] ? st[i].st_mtime : 0;
-        if (best == -1 || mtime > best_mtime) {
-            best       = i;
-            best_mtime = mtime;
-        }
-    }
-    return best;
+    unlink(s_slot_paths[2]);
+    rename(s_slot_paths[1], s_slot_paths[2]);
+    rename(s_slot_paths[0], s_slot_paths[1]);
 }
 
 /**
- * @brief Find the oldest slot by mtime (smallest value) for overwrite.
- *
- * @param st  Array of stat results for each slot.
- * @return Slot index of the oldest slot.
+ * @brief Write rotation footer, close @p old_f, and FIFO-shift slot files.
  */
-static int debug_log_find_oldest(const struct stat* st)
+static void debug_log_close_and_shift(FILE* old_f)
 {
-    int oldest = 0;
-    for (int i = 1; i < DEBUG_LOG_SLOT_COUNT; i++) {
-        if (st[i].st_mtime < st[oldest].st_mtime) oldest = i;
-    }
-    return oldest;
+    fprintf(old_f,
+            "\n===== LOG ROTATION: slot full (%.1f MB), shifting =====\n",
+            (double)s_bytes_written / (1024.0 * 1024.0));
+    fflush(old_f);
+    fsync(fileno(old_f));
+    fclose(old_f);
+    debug_log_fifo_shift();
 }
 
 /**
- * @brief Scan all slots and return the best one to use on init.
+ * @brief Open slot 0 for writing, write the rotation header, and publish
+ *        the new file handle under s_log_mux.
  *
- * Prefers the most-recently-modified non-full slot.  If all slots are full
- * or missing, returns the oldest (smallest mtime) for overwrite.
+ * Sets is_active = false if fopen fails.
  */
-static int debug_log_select_slot(void)
+static void debug_log_open_fresh_slot0(void)
 {
-    struct stat st[DEBUG_LOG_SLOT_COUNT];
-    bool        exists[DEBUG_LOG_SLOT_COUNT];
-    for (int i = 0; i < DEBUG_LOG_SLOT_COUNT; i++) {
-        exists[i] = (stat(s_slot_paths[i], &st[i]) == 0);
-    }
-    int best = debug_log_find_newest_nonfull(st, exists);
-    return (best != -1) ? best : debug_log_find_oldest(st);
-}
-
-/**
- * @brief Write the rotation footer and close the current log file handle.
- */
-static void debug_log_close_slot(void)
-{
-    fprintf(log_file,
-            "\n===== LOG ROTATION: slot %d full (%.1f MB), rotating =====\n",
-            s_slot, (double)s_bytes_written / (1024.0 * 1024.0));
-    fflush(log_file);
-    fsync(fileno(log_file));
-    fclose(log_file);
-    log_file = NULL;
-}
-
-/**
- * @brief Advance the ring index, wipe the next slot, and open a fresh file.
- *
- * Sets is_active to false on failure. Any ESP_LOG calls here go to console
- * only — this runs inside the s_in_vprintf guard.
- */
-static void debug_log_open_next_slot(void)
-{
-    s_slot = (s_slot + 1) % DEBUG_LOG_SLOT_COUNT;
-    unlink(s_slot_paths[s_slot]);
-    log_file = fopen(s_slot_paths[s_slot], "w");
-    if (!log_file) {
-        ESP_LOGE(TAG, "Log rotation failed: cannot open slot %d: %s",
-                 s_slot, s_slot_paths[s_slot]);
+    FILE* new_f = fopen(s_slot_paths[0], "w");
+    if (!new_f) {
         is_active = false;
         return;
     }
     s_bytes_written = 0;
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    fprintf(log_file,
-            "===== LOG ROTATION: new slot %d started at %ld =====\n\n",
-            s_slot, tv.tv_sec);
-    fflush(log_file);
-    fsync(fileno(log_file));
-    ESP_LOGI(TAG, "Log rotated to slot %d: %s", s_slot, s_slot_paths[s_slot]);
+    fprintf(new_f,
+            "===== LOG ROTATION: new slot 0 at %ld =====\n\n", tv.tv_sec);
+    fflush(new_f);
+    fsync(fileno(new_f));
+    taskENTER_CRITICAL(&s_log_mux);
+    log_file = new_f;
+    taskEXIT_CRITICAL(&s_log_mux);
 }
 
 /**
- * @brief Close current slot, advance ring index, delete next slot, open fresh.
+ * @brief Close the full slot, shift files FIFO, and open a fresh slot 0.
  *
  * Called from within debug_log_vprintf (s_in_vprintf is true), so any
  * ESP_LOG* calls here go to console only — no reentrancy risk.
  */
 static void debug_log_rotate(void)
 {
-    debug_log_close_slot();
-    debug_log_open_next_slot();
+    // Null out log_file BEFORE fclose so concurrent vprintf calls see NULL
+    // and skip the write rather than calling vfprintf on a closing handle.
+    FILE* old_f = NULL;
+    taskENTER_CRITICAL(&s_log_mux);
+    old_f    = log_file;
+    log_file = NULL;
+    taskEXIT_CRITICAL(&s_log_mux);
+
+    if (!old_f) return;
+    debug_log_close_and_shift(old_f);
+    debug_log_open_fresh_slot0();
 }
 
 /**
- * @brief Write @p fmt/@p args to the log file, tracking bytes and rotating
+ * @brief Write @p fmt/@p args to file handle @p f, tracking bytes and rotating
  *        if the slot limit is reached.
  *
+ * @p f must be a valid, open file handle obtained while holding s_log_mux.
  * Must only be called with s_in_vprintf set to prevent reentrancy.
  *
+ * @param f    File handle to write to.
  * @param fmt  Format string.
  * @param args Variadic argument list (a va_copy is made internally).
  */
-static void debug_log_write_to_file(const char* fmt, va_list args)
+static void debug_log_write_to_file(FILE* f, const char* fmt, va_list args)
 {
     va_list file_args;
     va_copy(file_args, args);
-    int n = vfprintf(log_file, fmt, file_args);
+    int n = vfprintf(f, fmt, file_args);
     va_end(file_args);
     if (n > 0) s_bytes_written += (size_t)n;
-    fflush(log_file);
-    fsync(fileno(log_file));
+    fflush(f);
+    fsync(fileno(f));
     if (s_bytes_written >= DEBUG_LOG_MAX_SIZE) {
         debug_log_rotate();
+    }
+}
+
+/**
+ * @brief Snapshot the active log_file under the spinlock and, if writable,
+ *        write the formatted message and clear the reentrancy guard.
+ *
+ * Thread safety: s_log_mux spinlock protects the log_file pointer snapshot
+ * so a concurrent debug_log_pause_for_read() cannot fclose() the handle
+ * between the NULL check and the vfprintf() call.
+ */
+static void debug_log_acquire_and_write(const char* fmt, va_list args)
+{
+    FILE* f = NULL;
+    taskENTER_CRITICAL(&s_log_mux);
+    if (log_file != NULL && is_active && !s_in_vprintf) {
+        f = log_file;
+        s_in_vprintf = true;
+    }
+    taskEXIT_CRITICAL(&s_log_mux);
+
+    if (f) {
+        debug_log_write_to_file(f, fmt, args);
+        taskENTER_CRITICAL(&s_log_mux);
+        s_in_vprintf = false;
+        taskEXIT_CRITICAL(&s_log_mux);
     }
 }
 
@@ -185,11 +187,7 @@ static int debug_log_vprintf(const char* fmt, va_list args)
         ret = original_vprintf(fmt, console_args);
         va_end(console_args);
     }
-    if (log_file != NULL && is_active && !s_in_vprintf) {
-        s_in_vprintf = true;
-        debug_log_write_to_file(fmt, args);
-        s_in_vprintf = false;
-    }
+    debug_log_acquire_and_write(fmt, args);
     return ret;
 }
 
@@ -224,17 +222,19 @@ static void debug_log_write_session_header(void)
 }
 
 /**
- * @brief Open the active slot in append mode and write the session header.
+ * @brief Open the active slot fresh (overwrite) and write the session header.
+ *
+ * Each boot starts a new file so the previous boot's content is preserved
+ * in other slots until they are naturally rotated.
  */
 static esp_err_t debug_log_open_file(void)
 {
-    log_file = fopen(s_slot_paths[s_slot], "a");
+    log_file = fopen(s_slot_paths[s_slot], "w");
     if (!log_file) {
         ESP_LOGE(TAG, "Failed to open log file: %s", s_slot_paths[s_slot]);
         return ESP_FAIL;
     }
-    fseek(log_file, 0, SEEK_END);
-    s_bytes_written = (size_t)ftell(log_file);
+    s_bytes_written = 0;
     debug_log_write_session_header();
     return ESP_OK;
 }
@@ -289,8 +289,9 @@ esp_err_t debug_log_init(void)
         return ESP_FAIL;
     }
     debug_log_init_slot_paths();
-    s_slot = debug_log_select_slot();
-    ESP_LOGI(TAG, "Selected log slot %d: %s", s_slot, s_slot_paths[s_slot]);
+    debug_log_fifo_shift();
+    s_slot = 0;
+    ESP_LOGI(TAG, "Log slot 0 (previous boot at slot 1): %s", s_slot_paths[s_slot]);
     esp_err_t err = debug_log_prepare_file();
     if (err != ESP_OK) return err;
     debug_log_activate();
@@ -305,11 +306,18 @@ esp_err_t debug_log_deinit(void)
         esp_log_set_vprintf(original_vprintf);
         original_vprintf = NULL;
     }
-    if (log_file != NULL) {
-        fprintf(log_file, "===== Log session ended =====\n\n");
-        fflush(log_file);
-        fclose(log_file);
-        log_file = NULL;
+
+    // Null log_file BEFORE fclose — same ordering as pause_for_read.
+    FILE* f = NULL;
+    taskENTER_CRITICAL(&s_log_mux);
+    f        = log_file;
+    log_file = NULL;
+    taskEXIT_CRITICAL(&s_log_mux);
+
+    if (f) {
+        fprintf(f, "===== Log session ended =====\n\n");
+        fflush(f);
+        fclose(f);
     }
     is_active = false;
     return ESP_OK;
@@ -340,9 +348,14 @@ int debug_log_get_active_slot(void)
 
 void debug_log_flush(void)
 {
-    if (log_file != NULL && is_active) {
-        fflush(log_file);
-        fsync(fileno(log_file));
+    FILE* f = NULL;
+    taskENTER_CRITICAL(&s_log_mux);
+    f = log_file;
+    taskEXIT_CRITICAL(&s_log_mux);
+
+    if (f != NULL && is_active) {
+        fflush(f);
+        fsync(fileno(f));
     }
 }
 
@@ -354,15 +367,25 @@ void debug_log_flush(void)
  * Any log output produced between this call and debug_log_reopen() is
  * forwarded to the console only.
  *
+ * Thread safety: log_file is nulled under s_log_mux BEFORE fclose so that
+ * any concurrent debug_log_vprintf() call sees NULL and skips the write
+ * rather than calling vfprintf() on a handle that is being closed.
+ *
  * @return Path to the active log file, or NULL if logging is not active.
  */
 const char* debug_log_pause_for_read(void)
 {
     if (!is_active || !log_file) return NULL;
-    fflush(log_file);
-    fsync(fileno(log_file));
-    fclose(log_file);
-    log_file = NULL;
+
+    FILE* f = NULL;
+    taskENTER_CRITICAL(&s_log_mux);
+    f        = log_file;
+    log_file = NULL;   // NULL first — concurrent vprintf will skip, not crash
+    taskEXIT_CRITICAL(&s_log_mux);
+
+    fflush(f);
+    fsync(fileno(f));
+    fclose(f);
     ESP_LOGI(TAG, "Log write handle closed for read — console only until reopen");
     return s_slot_paths[s_slot];
 }
@@ -375,13 +398,16 @@ const char* debug_log_pause_for_read(void)
 void debug_log_reopen(void)
 {
     if (!is_active || log_file != NULL) return;
-    log_file = fopen(s_slot_paths[s_slot], "a");
-    if (!log_file) {
+    FILE* f = fopen(s_slot_paths[s_slot], "a");
+    if (!f) {
         ESP_LOGE(TAG, "Failed to reopen log file: %s — disabling logging",
                  s_slot_paths[s_slot]);
         is_active = false;
         return;
     }
+    taskENTER_CRITICAL(&s_log_mux);
+    log_file = f;
+    taskEXIT_CRITICAL(&s_log_mux);
     ESP_LOGI(TAG, "Log write handle reopened: %s", s_slot_paths[s_slot]);
 }
 
@@ -391,14 +417,25 @@ void debug_log_reopen(void)
 esp_err_t debug_log_test_write(void)
 {
     if (!is_active || log_file == NULL) return ESP_FAIL;
-    fclose(log_file);
-    log_file = fopen(s_slot_paths[s_slot], "a");
-    if (!log_file) {
+
+    FILE* old_f = NULL;
+    taskENTER_CRITICAL(&s_log_mux);
+    old_f    = log_file;
+    log_file = NULL;
+    taskEXIT_CRITICAL(&s_log_mux);
+
+    fclose(old_f);
+    FILE* new_f = fopen(s_slot_paths[s_slot], "a");
+    if (!new_f) {
         is_active = false;
         return ESP_FAIL;
     }
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    debug_log_write_test_block(log_file, &tv);
+    debug_log_write_test_block(new_f, &tv);
+
+    taskENTER_CRITICAL(&s_log_mux);
+    log_file = new_f;
+    taskEXIT_CRITICAL(&s_log_mux);
     return ESP_OK;
 }

@@ -9,9 +9,9 @@
 #include "sdcard.h"
 #include "debug_log.h"
 #include "udp_log.h"
-#include "ui.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include <sys/stat.h>
 #include <dirent.h>
 #include <string.h>
@@ -21,6 +21,12 @@
 
 static const char* TAG = "http_api";
 static httpd_handle_t server = NULL;
+static SemaphoreHandle_t s_launch_sem = NULL;
+
+void http_api_set_launch_sem(SemaphoreHandle_t sem)
+{
+    s_launch_sem = sem;
+}
 
 // Maximum upload size: 10 MB
 #define MAX_UPLOAD_SIZE     (10 * 1024 * 1024)
@@ -941,32 +947,24 @@ static esp_err_t debug_reboot_handler(httpd_req_t *req)
 }
 
 /**
- * @brief Launch task — calls ui_launch_clock() outside the HTTP server task.
- *
- * ui_clock_init() is heavy (builds the full clock screen) and acquires the
- * LVGL lock internally.  Running it in a dedicated task keeps the HTTP server
- * task free and avoids any lock-order issues.
- */
-static void launch_clock_task(void* arg)
-{
-    ui_launch_clock();
-    vTaskDelete(NULL);
-}
-
-/**
- * @brief Skip the start screen and launch the clock UI immediately.
+ * @brief Signal the boot sequence to proceed to display init immediately.
  * POST /debug/launch
  *
- * Responds immediately, then launches the clock in a background task.
- * No-op guard: if the clock is already running this will rebuild the screen,
- * which is harmless but noisy — intended for dev use only.
+ * Gives the launch semaphore registered via http_api_set_launch_sem().
+ * app_main() blocks on the semaphore in boot_await_launch() and will
+ * proceed to boot_display_init() + ui_launch_clock() upon waking.
+ * No-op if the semaphore has not been registered yet (clock already running).
  */
 static esp_err_t debug_launch_handler(httpd_req_t *req)
 {
-    ESP_LOGI(TAG, "Remote clock launch requested");
+    ESP_LOGI(TAG, "Remote launch requested — signaling boot semaphore");
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, "{\"status\":\"launching\"}\n", HTTPD_RESP_USE_STRLEN);
-    xTaskCreate(launch_clock_task, "http_launch", 4096, NULL, 5, NULL);
+    httpd_resp_sendstr(req, "{\"status\":\"ok\"}");
+    if (s_launch_sem) {
+        xSemaphoreGive(s_launch_sem);
+    } else {
+        ESP_LOGW(TAG, "debug_launch_handler: no launch semaphore (clock may already be running)");
+    }
     return ESP_OK;
 }
 

@@ -337,15 +337,22 @@ esp_err_t ota_mark_app_valid(void) {
         ESP_LOGW(TAG, "Failed to get OTA state: %d", (int)err);
         return err;
     }
-    if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+    // Call cancel_rollback for both NEW and PENDING_VERIFY — both represent
+    // an unconfirmed partition.  NEW is what esp_ota_set_boot_partition() leaves
+    // after a push-OTA; PENDING_VERIFY is what the bootloader sets on first boot
+    // when CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y.  If we only handle
+    // PENDING_VERIFY, NEW partitions never get confirmed and the bootloader
+    // eventually rolls back to the other slot.
+    if (ota_state == ESP_OTA_IMG_PENDING_VERIFY || ota_state == ESP_OTA_IMG_NEW) {
         return ota_confirm_pending();
     }
-    if (ota_state != ESP_OTA_IMG_VALID) {
-        ESP_LOGW(TAG, "Unexpected OTA state: %d", ota_state);
-    } else {
+    if (ota_state == ESP_OTA_IMG_VALID) {
         ESP_LOGI(TAG, "OTA image already marked as valid");
+    } else {
+        ESP_LOGW(TAG, "Unexpected OTA state: %d", ota_state);
+        err = ESP_FAIL;
     }
-    return (ota_state == ESP_OTA_IMG_VALID) ? ESP_OK : ESP_FAIL;
+    return err;
 }
 
 // =============================================================================
