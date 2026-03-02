@@ -6,9 +6,10 @@ extern "C" {
 
 #include <stdint.h>
 #include <time.h>
-#include "weather.h"   // for weather_data_t
+// #include "weather.h"   // for weather_data_t
 #include "settings.h"  // for clock_settings_t
 
+void ui_set_clock_context(const struct tm *ti, const clock_settings_t *settings);
 void ui_show_splash(void);
 void ui_show_start_screen(const struct tm *timeinfo, const clock_settings_t *settings);
 void ui_clock_init(const struct tm *timeinfo, const clock_settings_t *settings);

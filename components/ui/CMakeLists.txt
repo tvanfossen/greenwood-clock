@@ -12,8 +12,6 @@ idf_component_register(
         images
         fonts
         lottie
-        weather
-        secrets
         esp_netif
         network
         settings

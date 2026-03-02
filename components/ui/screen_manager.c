@@ -5,7 +5,6 @@
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
 #include "esp_system.h"   // For esp_restart()
-#include "esp_task_wdt.h" // For esp_task_wdt_reset()
 #include "bsp/display.h"  // For brightness control
 #include "esp_mac.h"      // For MAC address
 #include "esp_netif.h"    // For IP address
@@ -15,8 +14,10 @@
 #include "freertos/FreeRTOS.h"  // For vTaskDelay and pdMS_TO_TICKS
 #include "freertos/task.h"
 #include <string.h>
-#include <dirent.h>       // For directory scanning
-#include <sys/stat.h>     // For stat()
+#include <errno.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include "esp_heap_caps.h"
 
 static const char* TAG = "screen_mgr";
 
@@ -40,7 +41,6 @@ static void wifi_scan_btn_cb(lv_event_t* e);
 static void wifi_network_select_cb(lv_event_t* e);
 static void wifi_connect_btn_cb(lv_event_t* e);
 static void background_select_cb(lv_event_t* e);
-static void animation_preview_play_btn_cb(lv_event_t* e);
 
 // =============================================================================
 // Navigation stack
@@ -266,7 +266,7 @@ static void reboot_btn_cb(lv_event_t* e) {
  */
 static void sm_add_menu_item(lv_obj_t* list, const char* icon,
                               const char* label, screen_id_t* screen_id) {
-    lv_obj_t* btn = lv_list_add_btn(list, icon, label);
+    lv_obj_t* btn = lv_list_add_button(list, icon, label);
     lv_obj_add_event_cb(btn, settings_menu_item_cb, LV_EVENT_CLICKED, screen_id);
 }
 
@@ -281,7 +281,7 @@ static void sm_populate_settings_menu(lv_obj_t* list) {
     sm_add_menu_item(list, LV_SYMBOL_EDIT,     "Text Color",       &text_color_settings_id);
     sm_add_menu_item(list, LV_SYMBOL_PLAY,     "Animation Preview",&animation_preview_id);
     sm_add_menu_item(list, LV_SYMBOL_SETTINGS, "About",            &about_screen_id);
-    lv_obj_t* btn_reboot = lv_list_add_btn(list, LV_SYMBOL_POWER, "Reboot Device");
+    lv_obj_t* btn_reboot = lv_list_add_button(list, LV_SYMBOL_POWER, "Reboot Device");
     lv_obj_add_event_cb(btn_reboot, reboot_btn_cb, LV_EVENT_CLICKED, NULL);
 }
 
@@ -752,7 +752,7 @@ static void color_select_cb(lv_event_t* e) {
  */
 static void tc_add_color_preset(lv_obj_t* list, const color_preset_t* preset,
                                  uint32_t current_color) {
-    lv_obj_t* btn = lv_list_add_btn(list, LV_SYMBOL_BULLET, preset->name);
+    lv_obj_t* btn = lv_list_add_button(list, LV_SYMBOL_BULLET, preset->name);
     lv_obj_add_event_cb(btn, color_select_cb, LV_EVENT_CLICKED,
                         (void*)(uintptr_t)preset->color);
     if (preset->color == current_color) {
@@ -865,7 +865,7 @@ static bool bg_scan_add_file(lv_obj_t* list, struct dirent* entry) {
     const char* icon = is_gif ? LV_SYMBOL_LOOP : LV_SYMBOL_IMAGE;
     char filepath[256];
     snprintf(filepath, sizeof(filepath), "/%s", entry->d_name);
-    lv_obj_t* btn = lv_list_add_btn(list, icon, entry->d_name);
+    lv_obj_t* btn = lv_list_add_button(list, icon, entry->d_name);
     lv_obj_add_event_cb(btn, background_select_cb, LV_EVENT_CLICKED,
                         (void*)strdup(filepath));
     return true;
@@ -897,7 +897,7 @@ static int bg_scan_directory(lv_obj_t* list) {
  * @param msg   Warning message string.
  */
 static void bg_add_warning_item(lv_obj_t* list, const char* msg) {
-    lv_obj_t* btn = lv_list_add_btn(list, LV_SYMBOL_WARNING, msg);
+    lv_obj_t* btn = lv_list_add_button(list, LV_SYMBOL_WARNING, msg);
     lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
 }
 
@@ -940,81 +940,231 @@ static lv_obj_t* create_background_selector(void) {
 // Animation preview screen
 // =============================================================================
 
+static uint8_t *s_lottie_buf = NULL;
+
+#define LOTTIE_FILE_PATH   "/sdcard/hummingbird.json"
+#define LOTTIE_LOAD_STACK  (64 * 1024)  /* 64 KB — hummingbird.json parse is deep recursive (approve used 29.4/32 KB) */
+#define LOTTIE_W           200
+#define LOTTIE_H           200
+
+/** @brief Arguments passed to the lottie_load_task. */
+typedef struct {
+    lv_obj_t *widget;
+    char      path[256];
+} lottie_load_arg_t;
+
 /**
- * @brief Attempt to remove the current task from the LVGL watchdog.
- * @return true if the watchdog was successfully disabled.
+ * @brief Log entry heap/stack stats for lottie_load_task.
  */
-static bool anim_watchdog_disable(void) {
-    esp_err_t err = esp_task_wdt_delete(NULL);
-    if (err == ESP_OK) ESP_LOGI(TAG, "Watchdog disabled for animation load");
-    return (err == ESP_OK);
+static void lottie_log_entry_stats(const char* path, const void* stack_probe)
+{
+    ESP_LOGI(TAG, "lottie_load_task: start path='%s' stack_addr=%p", path, stack_probe);
+    ESP_LOGI(TAG, "lottie_load_task: heap=%lu SPIRAM=%lu internal=%lu stack_hw=%lu",
+             (unsigned long)esp_get_free_heap_size(),
+             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned long)uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t));
 }
 
 /**
- * @brief Re-add the current task to the LVGL watchdog.
+ * @brief Log exit heap stats for lottie_load_task.
  */
-static void anim_watchdog_enable(void) {
-    esp_task_wdt_add(NULL);
-    ESP_LOGI(TAG, "Watchdog re-enabled after animation load");
+static void lottie_log_exit_stats(void)
+{
+    ESP_LOGI(TAG, "lottie_load_task: complete — heap=%lu SPIRAM=%lu",
+             (unsigned long)esp_get_free_heap_size(),
+             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 }
 
 /**
- * @brief Create the Lottie widget, configure its buffer, and load the animation.
- *
- * Uses a static ARGB8888 buffer (200×200×4 bytes).
- *
- * @param scr  Parent screen.
- * @return Lottie widget object, or NULL on failure.
+ * @brief Stat @p path and log the result.
+ * @return true if the file exists, false otherwise.
  */
-static lv_obj_t* anim_create_lottie_widget(lv_obj_t* scr) {
+static bool lottie_load_check_file(const char* path)
+{
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        ESP_LOGE(TAG, "lottie_load_task: file not found: '%s' (errno=%d %s)",
+                 path, errno, strerror(errno));
+        return false;
+    }
+    ESP_LOGI(TAG, "lottie_load_task: file found, size=%lld bytes", (long long)st.st_size);
+    return true;
+}
+
+/**
+ * @brief Acquire the LVGL lock and call lv_lottie_set_src_file on @p widget.
+ *
+ * Logs stack watermark before and after so ThorVG stack depth is visible.
+ */
+static void lottie_load_set_src(lv_obj_t* widget, const char* path)
+{
+    ESP_LOGI(TAG, "lottie_load_task: acquiring LVGL lock");
+    lvgl_port_lock(0);
+    ESP_LOGI(TAG, "lottie_load_task: calling lv_lottie_set_src_file (tvg_picture_load + first render)");
+    lv_lottie_set_src_file(widget, path);
+    ESP_LOGI(TAG, "lottie_load_task: lv_lottie_set_src_file returned");
+    ESP_LOGI(TAG, "lottie_load_task: stack_hw after load=%lu",
+             (unsigned long)uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t));
+    lvgl_port_unlock();
+}
+
+/**
+ * @brief Dedicated task: loads ThorVG/Lottie animation on a large stack.
+ *
+ * ThorVG's JSON parser uses deep recursion that overflows the 16 KB LVGL
+ * task stack. This task runs with LOTTIE_LOAD_STACK bytes so the parse
+ * completes safely.  The LVGL lock is held for the duration of set_src_file
+ * so ThorVG and LVGL are not accessed concurrently.
+ */
+static void lottie_load_task(void *arg)
+{
+    lottie_load_arg_t *a = (lottie_load_arg_t *)arg;
+    lv_obj_t *widget     = a->widget;
+    char path[256];
+    strlcpy(path, a->path, sizeof(path));
+    free(a);
+
+    volatile uint8_t _stack_probe = 0;
+    lottie_log_entry_stats(path, (const void*)&_stack_probe);
+
+    if (!lottie_load_check_file(path)) {
+        vTaskDeleteWithCaps(NULL);
+        return;
+    }
+    lottie_load_set_src(widget, path);
+    lottie_log_exit_stats();
+    vTaskDeleteWithCaps(NULL);
+}
+
+/**
+ * @brief Delete @p widget and return true if its render task failed to start.
+ *
+ * The render task runs on a 96 KB SPIRAM stack.  If PSRAM was exhausted at
+ * widget creation time this returns true so the caller can propagate NULL.
+ */
+static bool anim_delete_if_render_failed(lv_obj_t* widget)
+{
+    if (!lv_lottie_render_failed(widget)) return false;
+    ESP_LOGE(TAG, "anim: render task failed to start (insufficient PSRAM?) — showing text fallback");
+    lv_obj_delete(widget);
+    return true;
+}
+
+/**
+ * @brief Create the lv_lottie widget on @p scr and verify the render task started.
+ *
+ * @return Widget pointer, or NULL if creation failed or render task did not start.
+ */
+static lv_obj_t* anim_create_lottie_widget_obj(lv_obj_t* scr)
+{
+    ESP_LOGI(TAG, "anim: heap=%lu SPIRAM=%lu",
+             (unsigned long)esp_get_free_heap_size(),
+             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    ESP_LOGI(TAG, "anim: calling lv_lottie_create");
     lv_obj_t* widget = lv_lottie_create(scr);
     if (!widget) {
-        ESP_LOGE(TAG, "Failed to create Lottie widget");
+        ESP_LOGE(TAG, "anim: lv_lottie_create returned NULL");
         return NULL;
     }
-    static uint8_t lottie_buf[200 * 200 * 4];  // ARGB8888, fixed size
-    lv_obj_set_size(widget, 200, 200);
-    lv_lottie_set_buffer(widget, 200, 200, lottie_buf);
-    lv_obj_align(widget, LV_ALIGN_CENTER, 0, 0);
-    lv_lottie_set_src_file(widget, "A:/sdcard/hummingbird.json");
+    ESP_LOGI(TAG, "anim: lv_lottie_create OK, widget=%p", widget);
+    if (anim_delete_if_render_failed(widget)) return NULL;
     return widget;
 }
 
 /**
- * @brief Load the Lottie animation with watchdog management.
+ * @brief Allocate or reuse the global SPIRAM render buffer.
  *
- * Disables the task watchdog for the duration of the potentially long JSON
- * parse and re-enables it afterwards regardless of outcome.
+ * On alloc failure deletes @p widget and returns false so the caller can
+ * propagate NULL without a second delete.
  *
- * @param scr  Parent screen for the Lottie widget.
+ * @return true if s_lottie_buf is valid, false on alloc failure.
  */
-static void anim_load_with_watchdog(lv_obj_t* scr) {
-    bool wdt_was_disabled = anim_watchdog_disable();
-    lv_obj_t* widget = anim_create_lottie_widget(scr);
-    if (!widget) {
-        ESP_LOGE(TAG, "Lottie widget creation failed");
-    } else {
-        ESP_LOGI(TAG, "Animation loaded successfully");
+static bool anim_ensure_render_buf(lv_obj_t* widget)
+{
+    if (s_lottie_buf) {
+        ESP_LOGI(TAG, "anim: reusing existing SPIRAM render buf at %p", s_lottie_buf);
+        return true;
     }
-    if (wdt_was_disabled) anim_watchdog_enable();
+    /* lv_lottie_set_buffer computes stride = lv_draw_buf_width_to_stride(w, ARGB8888_PREMULTIPLIED)
+     * which includes 64-byte PPA alignment padding (e.g. 200px → 832 B/row, not 800 B/row).
+     * ThorVG writes stride×h bytes into this buffer.  Allocating only w×h×4 underestimates
+     * by (stride - w*4) * h = 32 * 200 = 6400 bytes → SPIRAM heap overflow → abort. */
+    uint32_t stride = lv_draw_buf_width_to_stride(LOTTIE_W, LV_COLOR_FORMAT_ARGB8888_PREMULTIPLIED);
+    size_t buf_sz = (size_t)stride * LOTTIE_H;
+    ESP_LOGI(TAG, "anim: allocating SPIRAM render buf %zu B (stride=%lu, 64-byte aligned)",
+             buf_sz, (unsigned long)stride);
+    s_lottie_buf = heap_caps_aligned_alloc(64, buf_sz, MALLOC_CAP_SPIRAM);
+    if (!s_lottie_buf) {
+        ESP_LOGE(TAG, "anim: SPIRAM alloc FAILED — SPIRAM free=%lu",
+                 (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        lv_obj_delete(widget);
+        return false;
+    }
+    ESP_LOGI(TAG, "anim: SPIRAM render buf at %p", s_lottie_buf);
+    return true;
 }
 
 /**
- * @brief Play button callback — checks file exists, then loads animation.
+ * @brief Create and configure the Lottie widget with buffer — NO animation load.
  *
- * The Lottie JSON parser can take several seconds on a 742 KB file; the
- * watchdog is disabled for the duration to prevent a spurious reset.
+ * Runs in the LVGL task under the LVGL lock.  Allocation and LVGL object
+ * setup are the only operations here; the heavy ThorVG parse is deferred to
+ * lottie_load_task so it runs on a large stack.
+ *
+ * @param scr  Parent screen.
+ * @return Lottie widget, or NULL on allocation failure.
  */
-static void animation_preview_play_btn_cb(lv_event_t* e) {
-    lv_obj_t* scr = lv_obj_get_parent(lv_event_get_target(e));
-    struct stat st;
-    if (stat("/sdcard/hummingbird.json", &st) != 0) {
-        ESP_LOGE(TAG, "Animation file not found");
+static lv_obj_t* anim_create_widget_and_buffer(lv_obj_t* scr)
+{
+    lv_obj_t* widget = anim_create_lottie_widget_obj(scr);
+    if (!widget) return NULL;
+    if (!anim_ensure_render_buf(widget)) return NULL;
+
+    ESP_LOGI(TAG, "anim: calling lv_obj_set_size(%d, %d)", LOTTIE_W, LOTTIE_H);
+    lv_obj_set_size(widget, LOTTIE_W, LOTTIE_H);
+
+    /* lv_lottie_set_buffer triggers tvg_canvas_draw on the empty canvas — log before/after */
+    ESP_LOGI(TAG, "anim: calling lv_lottie_set_buffer — triggers first tvg_canvas_draw (empty canvas)");
+    lv_lottie_set_buffer(widget, LOTTIE_W, LOTTIE_H, s_lottie_buf);
+    ESP_LOGI(TAG, "anim: lv_lottie_set_buffer returned");
+
+    lv_obj_align(widget, LV_ALIGN_CENTER, 0, 0);
+    return widget;
+}
+
+/**
+ * @brief Spawn lottie_load_task with a 32 KB stack to load the animation file.
+ *
+ * @param widget  Lottie widget to load into (already created and buffered).
+ * @param path    POSIX path to the Lottie JSON file on SD card.
+ */
+static void anim_spawn_load_task(lv_obj_t *widget, const char *path)
+{
+    lottie_load_arg_t *a = malloc(sizeof(*a));
+    if (!a) {
+        ESP_LOGE(TAG, "anim: failed to alloc load task arg");
         return;
     }
-    ESP_LOGI(TAG, "Loading animation (%ld bytes)...", st.st_size);
-    anim_load_with_watchdog(scr);
+    a->widget = widget;
+    strlcpy(a->path, path, sizeof(a->path));
+
+    /* Force task stack into internal DRAM — with CONFIG_SPIRAM_USE_MALLOC=y,
+     * plain xTaskCreate() allocates the 32 KB stack from SPIRAM (>ALWAYSINTERNAL).
+     * FreeRTOS context saves during I/O interrupts (SDMMC) crash when the stack
+     * is in PSRAM.  MALLOC_CAP_INTERNAL ensures DRAM regardless of SPIRAM config. */
+    ESP_LOGI(TAG, "anim: spawning lottie_load_task (stack=%d B, DRAM-forced)", LOTTIE_LOAD_STACK);
+    BaseType_t ret = xTaskCreateWithCaps(lottie_load_task, "lottie_load",
+                                         LOTTIE_LOAD_STACK, a, 5, NULL,
+                                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "anim: xTaskCreateWithCaps lottie_load FAILED (ret=%d)", (int)ret);
+        free(a);
+    } else {
+        ESP_LOGI(TAG, "anim: lottie_load_task spawned");
+    }
 }
+
 
 /**
  * @brief Create a centered red error label.
@@ -1051,60 +1201,55 @@ static lv_obj_t* anim_create_warning_label(lv_obj_t* scr, const char* msg) {
 }
 #endif
 
-/**
- * @brief Create the animation info label describing the test file.
- * @param scr  Parent screen.
- * @return Label object.
- */
-static lv_obj_t* anim_create_info_label(lv_obj_t* scr) {
-    lv_obj_t* lbl = lv_label_create(scr);
-    lv_label_set_text(lbl,
-        "Click PLAY to load animation\n\n"
-        "File: /sdcard/hummingbird.json\n"
-        "(~742 KB Lottie JSON)");
-    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_width(lbl, 700);
-    lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 100);
-    return lbl;
-}
 
-/**
- * @brief Create the PLAY button that triggers animation loading.
- * @param scr  Parent screen.
- */
-static void anim_create_play_btn(lv_obj_t* scr) {
-    lv_obj_t* btn = lv_btn_create(scr);
-    lv_obj_set_size(btn, 120, 50);
-    lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -40);
-    lv_obj_add_event_cb(btn, animation_preview_play_btn_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t* lbl = lv_label_create(btn);
-    lv_label_set_text(lbl, "PLAY");
-    lv_obj_center(lbl);
-    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-}
-
-/**
- * @brief Create the animation preview screen.
- * @return New LVGL screen object.
- */
-static lv_obj_t* create_animation_preview(void) {
-    lv_obj_t* scr = sm_new_screen("Animation Preview");
-    size_t free_heap = esp_get_free_heap_size();
-    ESP_LOGI(TAG, "Animation preview — free heap: %lu bytes", (unsigned long)free_heap);
 #if LV_USE_LOTTIE
+/**
+ * @brief Populate @p scr with the Lottie widget (or an error label).
+ *
+ * Factored out of create_animation_preview to keep that function below the
+ * ABC complexity gate while preserving the LV_USE_LOTTIE guard.
+ */
+static void anim_create_lottie_content(lv_obj_t* scr, size_t free_heap)
+{
     if (free_heap < 500000) {
         anim_create_error_label(scr,
             "ERROR: Insufficient memory\nRequires 500 KB free heap");
-        return scr;
+        return;
     }
-    anim_create_info_label(scr);
-    anim_create_play_btn(scr);
-    ESP_LOGI(TAG, "Animation preview screen ready");
+    lv_obj_t* widget = anim_create_widget_and_buffer(scr);
+    if (widget) {
+        anim_spawn_load_task(widget, LOTTIE_FILE_PATH);
+    } else {
+        /* NULL means SPIRAM buffer alloc failed or render task could not start. */
+        anim_create_error_label(scr,
+            "Animation unavailable\n(insufficient PSRAM for render task)");
+    }
+}
+#endif
+
+/**
+ * @brief Create the animation preview screen.
+ *
+ * Widget creation runs in the LVGL task (lightweight). The ThorVG JSON parse
+ * is deferred to lottie_load_task (32 KB stack) to avoid overflowing the
+ * LVGL task's 16 KB stack.
+ *
+ * @return New LVGL screen object.
+ */
+static lv_obj_t* create_animation_preview(void) {
+    lv_obj_t* scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+    size_t free_heap = esp_get_free_heap_size();
+    ESP_LOGI(TAG, "Animation preview — free heap: %lu SPIRAM: %lu",
+             (unsigned long)free_heap,
+             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+#if LV_USE_LOTTIE
+    anim_create_lottie_content(scr, free_heap);
 #else
     anim_create_warning_label(scr,
-        "Lottie animations not enabled\nCONFIG_LV_USE_LOTTIE is not set");
+        "Lottie not enabled\nCONFIG_LV_USE_LOTTIE is not set");
 #endif
+    create_back_button(scr);
     return scr;
 }
 

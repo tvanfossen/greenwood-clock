@@ -16,7 +16,6 @@ idf_component_register(
         network                     # your network module
         time_sync                   # your SNTP/TZ module
         ui                          # your LVGL splash & clock UI
-        weather
         settings                    # persistent settings via NVS
         ota                         # OTA firmware updates
         sdcard                      # SD card support
@@ -24,3 +23,7 @@ idf_component_register(
         debug_log                   # Debug log capture to SD card
 )
 spiffs_create_partition_image(storage ../spiffs FLASH_IN_PROJECT)
+
+# Intercept esp_panic_handler globally so we can log crash info to SD
+# before the real handler prints the backtrace to serial.
+idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=esp_panic_handler" APPEND)

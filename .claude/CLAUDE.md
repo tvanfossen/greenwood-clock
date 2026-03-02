@@ -20,7 +20,7 @@ Only build if user says: "build this", "run idf.py build", "compile it".
 | `components/settings/settings.h` | `clock_settings_t` — NVS settings schema |
 | `components/ui/ui.c` | Main clock screen |
 | `components/ui/screen_manager.c` | Settings screens, navigation stack |
-| `components/lvgl_mem_esp/lv_mem_esp.c` | Custom 64-byte aligned allocator (required for PPA) |
+| `components/lvgl_mem_esp/lv_mem_esp.c` | Custom 64-byte aligned heap allocator |
 
 ## Component Map
 
@@ -35,7 +35,7 @@ components/
 ├── debug_log/        Mirrors ESP logs → /sdcard/logs/debug.log
 ├── http_api/         Local REST server on port 80
 ├── time_sync/        POSIX TZ string timezone handling
-├── lvgl_mem_esp/     Custom 64-byte aligned heap allocator (PPA requirement)
+├── lvgl_mem_esp/     Custom 64-byte aligned heap allocator
 ├── secrets/          Compile-time API keys (not in git)
 ├── fonts/            Nunito 48/128/256/512pt LVGL fonts
 ├── images/           Splash and UI assets
@@ -67,30 +67,6 @@ weather_fetch(...);   // ← CRASH: blocks LVGL task for seconds
 lvgl_port_unlock();
 ```
 
-## PPA Hardware Acceleration — PRIORITY ISSUE
-
-PPA (Pixel Processing Accelerator) is the primary outstanding performance issue.
-
-**Current state**: `CONFIG_LV_USE_PPA=y` and `CONFIG_LVGL_PORT_ENABLE_PPA=y` are set in
-`sdkconfig.defaults`, but PPA is believed to be non-functional on hardware due to image data
-alignment errors.
-
-**Symptom**:
-```
-E (xxxxx) ppa_fill: out.buffer addr or out.buffer_size not aligned to cache line size
-[Error] lv_draw_ppa_fill: PPA fill failed: 258
-```
-
-**Root cause**: Image file format headers cause pixel data to land at unaligned offsets even
-when the buffer address and size are 64-byte aligned. The custom allocator (`lvgl_mem_esp`)
-handles buffer allocation alignment, but decoder output data pointers remain unaligned.
-
-**Fix direction**: See `docs/PPA_STATUS.md`. The fix requires modifying LVGL's image decoder
-to copy/realign decoded pixel data before handing it to PPA. DMA2D is an alternative that has
-less strict alignment requirements.
-
-**Do not claim PPA is working** until user confirms no `ppa_fill` errors in serial logs.
-
 ## Stability Requirements
 
 These patterns must be followed in all new code:
@@ -117,19 +93,20 @@ typedef struct {
 
 ## Boot Log Tags
 
-| Tag | Stage |
-|---|---|
-| `[0]` | Settings init |
-| `[1]` | SPIFFS mount |
-| `[1.5]` | SD card + debug log |
-| `[2]` | Display, filesystem drivers, touch |
-| `[3]` | Splash |
-| `[4]` | Wi-Fi + SNTP |
-| `[5]` | Timezone |
-| `[5.5]` | OTA init |
-| `[6]` | Weather + HTTP API |
-| `[7]` | Start screen |
-| `[HEALTH]` | 60s idle loop heap report |
+All boot log lines use tag `[BOOT]`. Sequence is:
+
+| Stage | Function | Key log line |
+|---|---|---|
+| Settings | `boot_settings_init()` | `[BOOT] settings_load: OK` |
+| SD card | `boot_sdcard_init()` | `[BOOT] Reset reason: ...` |
+| Network + OTA | `boot_network_early()` | `[BOOT] OTA valid: slot=...` ← rollback boundary |
+| SNTP | `boot_sntp_wait()` | `[BOOT] SNTP sync complete` |
+| Timezone | `boot_timezone()` | `[BOOT] TZ: ...` |
+| Services | `boot_services()` | `[BOOT] HTTP API started on port 80` |
+| Launch wait | `boot_await_launch()` | `[BOOT] Pre-launch heap: free=... / Awaiting launch` |
+| SPIFFS | `boot_spiffs_mount()` | `[BOOT] SPIFFS: mounted` ← after 60s window |
+| Display | `boot_display_init()` | `[BOOT] bsp_display_start... / Display ready` |
+| Health | `boot_health_loop()` | `[HEALTH] Loop N: free=...` |
 
 ## OTA Workflow
 
@@ -146,9 +123,6 @@ idf.py -p /dev/ttyUSB0 monitor     # Serial monitor (Ctrl+] to exit)
 idf.py fullclean && idf.py build    # Clean rebuild
 idf.py -p /dev/ttyUSB0 erase-flash # Nuclear option — wipes NVS settings too
 
-# Verify PPA config in build output:
-grep "CONFIG_LV_USE_PPA" build/config/sdkconfig.h
-grep "CONFIG_LVGL_PORT_ENABLE_PPA" build/config/sdkconfig.h
 ```
 
 ## Secrets

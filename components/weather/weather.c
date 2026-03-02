@@ -86,9 +86,10 @@ static char *weather_http_fetch_json(const char *url)
         if (result == HTTP_ATTEMPT_OK)         return buf;
         if (result == HTTP_ATTEMPT_ABORT)      break;
         if (result == HTTP_ATTEMPT_RATE_LIMIT) {
-            ESP_LOGW(TAG, "weather_http_fetch_json: rate limited, waiting %dms",
-                     HTTP_RATE_LIMIT_DELAY_MS);
-            vTaskDelay(pdMS_TO_TICKS(HTTP_RATE_LIMIT_DELAY_MS));
+            // Do not wait — a 60 s vTaskDelay starves the watchdog.
+            // The 30-minute LVGL timer will retry at the next interval.
+            ESP_LOGW(TAG, "weather_http_fetch_json: rate limited — skipping retries");
+            break;
         } else {
             vTaskDelay(pdMS_TO_TICKS(HTTP_RETRY_DELAY_MS * retry));
         }
