@@ -1,0 +1,111 @@
+
+
+===== Log session started at 1772447440 (slot 0) =====
+Debug log initialized successfully
+I (1982) debug_log: Debug logging started: /sdcard/logs/debug_log0.log (0.0 MB used)
+I (1984) debug_log: vprintf redirection: original=0x4814fb6c
+I (1986) main: [BOOT] Debug log: /sdcard/logs/debug_log0.log
+I (1991) main: [BOOT] Reset reason (SD): PANIC (4)
+E (1996) main: ===== ABNORMAL RESET: reason=PANIC ===== (see previous log slot)
+I (2003) main: [BOOT] RTC crash magic: 0xdeadbeef (VALID — crash context follows)
+E (2014) main: ===== PREVIOUS CRASH (RTC memory) =====
+E (2016) main:   Stage : health_loop
+E (2020) main:   Reason: Illegal instruction
+E (2022) main:   PC=0x4ff00d9a  RA=0x4ff0b56a  SP=0x4ff26a30
+E (2028) main: ========================================
+I (2040) main: [BOOT] SD: ✓ /sdcard/splash.png (426223 bytes)
+I (2043) main: [BOOT] Wi-Fi: connecting to 'LadyB'
+I (2045) transport: Attempt connection with slave: retry[0]
+I (2048) transport: Reset slave using GPIO[54]
+I (2052) os_wrapper_esp: GPIO [54] configured
+I (3663) sdio_wrapper: SDIO master: Slot 1, Data-Lines: 4-bit Freq(KHz)[40000 KHz]
+I (3668) sdio_wrapper: GPIOs: CLK[18] CMD[19] D0[14] D1[15] D2[16] D3[17] Slave_Reset[54]
+I (3673) sdio_wrapper: Queues: Tx[20] Rx[20] SDIO-Rx-Mode[1]
+I (3752) sdio_wrapper: Function 0 Blocksize: 512
+I (3761) sdio_wrapper: Function 1 Blocksize: 512
+I (3763) H_SDIO_DRV: SDIO Host operating in STREAMING MODE
+I (3767) H_SDIO_DRV: generate slave intr
+I (3776) transport: Received INIT event from ESP32 peripheral
+I (3781) transport: EVENT: 12
+I (3787) transport: EVENT: 11
+I (3789) transport: capabilities: 0xd
+I (3791) transport: Features supported are:
+I (3793) transport: 	 * WLAN
+I (3795) transport: 	   - HCI over SDIO
+I (3797) transport: 	   - BLE only
+I (3799) transport: EVENT: 13
+I (3801) transport: ESP board type is : 13 
+
+I (3805) transport: Base transport is set-up
+
+I (3814) transport: Slave chip Id[12]
+I (3817) hci_stub_drv: Host BT Support: Disabled
+I (3819) H_SDIO_DRV: Received INIT event
+I (3867) rpc_wrap: --- ESP Event: Slave ESP Init ---
+I (4877) network: Wi-Fi infrastructure initialized (no connection)
+I (4921) H_API: esp_wifi_remote_connect
+W (4963) rpc_rsp: Hosted RPC_Resp [0x21a], uid [8], resp code [12290]
+I (5053) network: Wi-Fi init complete, connecting to 'LadyB'
+I (5057) main: [BOOT] network_init: OK
+I (5059) main: [BOOT] OTA init...
+I (5062) ota: Running partition: ota_1 (type=0 subtype=17 offset=0xa20000 size=0x500000)
+I (5064) ota: Current firmware version: 1.0.2
+I (5067) ota: Compiled: Mar  2 2026 04:14:11
+I (5076) H_API: esp_wifi_remote_connect
+I (5077) ota: OTA image already marked as valid
+I (5082) main: [BOOT] OTA valid: slot=ota_1, version=1.0.2
+I (5088) main: [BOOT] Waiting for SNTP time sync...
+I (8123) esp_wifi_remote: esp_wifi_internal_reg_rxcb: sta: 0x4811d78c
+I (9141) esp_netif_handlers: sta ip: 192.168.1.15, mask: 255.255.255.0, gw: 192.168.1.1
+I (9145) network: Got IP, starting SNTP
+I (9147) network: NTP server 0: pool.ntp.org
+I (9149) network: NTP server 1: time.google.com
+I (9151) network: NTP server 2: time.cloudflare.com
+I (9160) network: NTP server 3: time.nist.gov
+I (10164) network: Saved time to NVS: 1772447448
+I (10169) network: SNTP synchronised successfully
+I (10172) main: [BOOT] SNTP sync complete
+I (10174) main: [BOOT] TZ: EST5EDT,M3.2.0/2,M11.1.0/2
+I (10176) main: [BOOT] Local time: 2026-03-02 05:30:49
+I (10178) http_api: Starting HTTP API server on port 80
+I (10183) http_api: HTTP API server started successfully
+I (10187) main: [BOOT] HTTP API started on port 80
+I (10193) main: [BOOT] Pre-launch heap: free=31603892 min=31603048
+I (10202) main: [BOOT] Pre-launch tasks:
+main           	X	1	4420	10	0
+IDLE0          	R	0	1180	11	0
+IDLE1          	R	0	1172	12	1
+tiT            	B	18	2656	14	-1
+Tmr Svc        	B	1	1660	13	-1
+esp_timer      	S	22	3724	9	0
+ipc1           	S	24	648	2	1
+rpc_tx         	B	23	4264	8	-1
+rpc_rx         	B	23	2996	7	-1
+sdio_read      	B	23	2516	4	0
+sdio_rx_buf    	B	23	4580	3	-1
+sdio_process_rx	B	23	3064	5	-1
+sdio_write     	B	23	4284	6	-1
+httpd          	B	5	7372	16	-1
+sys_evt        	B	20	844	15	0
+ipc0           	S	24	640	1	0
+
+I (10253) main: [BOOT] Awaiting launch (60 s or POST /debug/launch) — display dark
+I (42541) http_api: OTA push: receiving 2270656 bytes
+I (47357) ota: OTA push begin: partition=ota_0 size=2270656
+I (53211) ota: Validating OTA image (2270656 bytes written)
+I (53215) esp_image: segment 0: paddr=00520020 vaddr=48170020 size=a6108h (680200) map
+I (53265) esp_image: segment 1: paddr=005c6130 vaddr=30100000 size=00068h (   104) 
+I (53274) esp_image: segment 2: paddr=005c61a0 vaddr=4ff00000 size=09e78h ( 40568) 
+I (53279) esp_image: segment 3: paddr=005d0020 vaddr=48000020 size=169360h (1479520) map
+I (53383) esp_image: segment 4: paddr=00739388 vaddr=4ff09e78 size=0d8dch ( 55516) 
+I (53392) esp_image: segment 5: paddr=00746c6c vaddr=4ff17780 size=038fch ( 14588) 
+I (53395) esp_image: segment 6: paddr=0074a570 vaddr=50108080 size=00020h (    32) 
+I (53398) esp_image: segment 0: paddr=00520020 vaddr=48170020 size=a6108h (680200) map
+I (53459) esp_image: segment 1: paddr=005c6130 vaddr=30100000 size=00068h (   104) 
+I (53465) esp_image: segment 2: paddr=005c61a0 vaddr=4ff00000 size=09e78h ( 40568) 
+I (53470) esp_image: segment 3: paddr=005d0020 vaddr=48000020 size=169360h (1479520) map
+I (53575) esp_image: segment 4: paddr=00739388 vaddr=4ff09e78 size=0d8dch ( 55516) 
+I (53585) esp_image: segment 5: paddr=00746c6c vaddr=4ff17780 size=038fch ( 14588) 
+I (53588) esp_image: segment 6: paddr=0074a570 vaddr=50108080 size=00020h (    32) 
+I (53625) ota: OTA image validated — call ota_push_commit() to reboot
+I (53630) ota: OTA complete — rebooting in 1 s...

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Greenwood Clock</title>
+<link rel="stylesheet" href="/www/style.css">
+</head>
+<body>
+<header>
+  <h1>Greenwood Clock</h1>
+  <span id="connection-status" class="status-dot"></span>
+</header>
+
+<main>
+  <!-- Display Control -->
+  <section id="display-section">
+    <h2>Display</h2>
+    <p class="current-state">Current: <strong id="current-state">---</strong></p>
+    <div class="btn-grid">
+      <button onclick="forceState('clock')">Clock</button>
+      <button onclick="forceState('weather')">Weather</button>
+      <button onclick="forceState('radar')">Radar</button>
+      <button onclick="forceState('astronomy')">Astronomy</button>
+      <button onclick="forceState('photos')">Photos</button>
+      <button onclick="forceState('ambient')">Ambient</button>
+    </div>
+  </section>
+
+  <!-- Surprise Message -->
+  <section id="surprise-section">
+    <h2>Surprise Message</h2>
+    <div class="form-group">
+      <label for="surprise-text">Message</label>
+      <input type="text" id="surprise-text" placeholder="Happy Birthday!">
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="surprise-color">Color</label>
+        <input type="color" id="surprise-color" value="#ff69b4">
+      </div>
+      <div class="form-group">
+        <label for="surprise-duration">Duration</label>
+        <select id="surprise-duration">
+          <option value="30">30 seconds</option>
+          <option value="60">1 minute</option>
+          <option value="300">5 minutes</option>
+          <option value="3600">1 hour</option>
+          <option value="86400">All day</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label for="surprise-bg">Background</label>
+      <select id="surprise-bg">
+        <option value="">Default (dark)</option>
+      </select>
+    </div>
+    <button class="btn-primary" onclick="sendSurprise()">Send Surprise</button>
+  </section>
+
+  <!-- Schedule Config -->
+  <section id="schedule-section">
+    <h2>Schedule</h2>
+    <div id="schedule-fields"></div>
+    <button class="btn-primary" onclick="saveSchedule()">Save Schedule</button>
+  </section>
+
+  <!-- Settings -->
+  <section id="settings-section">
+    <h2>Settings</h2>
+    <div class="form-group">
+      <label for="set-brightness">Brightness</label>
+      <input type="range" id="set-brightness" min="0" max="100" value="50">
+      <span id="brightness-val" class="range-val">50%</span>
+    </div>
+    <div class="form-group">
+      <label for="set-text-color">Clock Text Color</label>
+      <input type="color" id="set-text-color" value="#ffffff">
+    </div>
+    <div class="form-group">
+      <label for="set-background">Background Image</label>
+      <select id="set-background">
+        <option value="">Loading...</option>
+      </select>
+    </div>
+    <button class="btn-primary" onclick="saveSettings()">Save Settings</button>
+  </section>
+
+  <!-- Asset Manager -->
+  <section id="assets-section">
+    <h2>Assets</h2>
+    <div id="asset-list" class="asset-grid"></div>
+    <div class="form-group" style="margin-top:12px">
+      <label for="asset-category">Upload to</label>
+      <select id="asset-category">
+        <option value="lottie">Lottie Animations</option>
+        <option value="backgrounds">Backgrounds</option>
+        <option value="photos">Photos</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <input type="file" id="asset-file">
+    </div>
+    <button class="btn-primary" onclick="uploadAsset()">Upload</button>
+  </section>
+
+  <!-- Weather -->
+  <section id="weather-section">
+    <h2>Weather</h2>
+    <div id="weather-data" class="data-card">
+      <p class="placeholder">Loading...</p>
+    </div>
+    <div id="forecast-data" class="forecast-strip"></div>
+    <div id="alerts-data"></div>
+  </section>
+
+  <!-- Device Info -->
+  <section id="info-section">
+    <h2>Device</h2>
+    <div id="device-info" class="data-card">
+      <p class="placeholder">Loading...</p>
+    </div>
+    <div class="btn-grid">
+      <button class="btn-danger" onclick="rebootDevice()">Reboot</button>
+    </div>
+  </section>
+</main>
+
+<script src="/www/app.js"></script>
+</body>
+</html>

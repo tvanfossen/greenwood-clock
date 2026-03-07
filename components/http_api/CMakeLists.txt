@@ -11,4 +11,8 @@ idf_component_register(
         ota
         secrets
         freertos
+        display_fsm
+        nws
+        settings
+        cjson
 )

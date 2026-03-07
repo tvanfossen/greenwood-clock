@@ -11,7 +11,8 @@
 #include "esp_lvgl_port.h"
 #include "bsp/display.h"
 #include "time_sync.h"
-#include "screen_manager.h"
+#include "display_fsm.h"
+#include "display_widgets.h"
 #include "sdcard.h"
 #include "settings.h"
 #include "freertos/FreeRTOS.h"
@@ -127,10 +128,14 @@ static void clock_screen_gesture_cb(lv_event_t *e)
     (void)e;
     lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
     switch (dir) {
-        case LV_DIR_TOP:
-            ESP_LOGI(TAG, "gesture: SWIPE UP — opening settings");
-            screen_manager_push(SCREEN_SETTINGS_MENU);
+        case LV_DIR_TOP: {
+            ESP_LOGI(TAG, "gesture: SWIPE UP — sending to FSM");
+            display_event_t evt = {0};
+            evt.type = DISPLAY_EVT_GESTURE;
+            evt.gesture.dir = LV_DIR_TOP;
+            display_fsm_send_event(&evt);
             break;
+        }
         case LV_DIR_BOTTOM:
             ESP_LOGI(TAG, "gesture: SWIPE DOWN");
             break;
@@ -314,8 +319,8 @@ static lv_obj_t *ui_bg_try_load(lv_obj_t *scr, const clock_settings_t *settings)
 
 #if LV_USE_LOTTIE
 
-#define CLOCK_LOTTIE_W          200
-#define CLOCK_LOTTIE_H          200
+#define CLOCK_LOTTIE_W          250
+#define CLOCK_LOTTIE_H          250
 #define CLOCK_LOTTIE_FPS        20
 #define CLOCK_LOTTIE_PATH       "/sdcard/hummingbird.json"
 #define CLOCK_LOTTIE_LOAD_STACK (64 * 1024)  /* DRAM — hummingbird parse is deep recursive */
@@ -374,7 +379,7 @@ static void clock_lottie_setup_widget(lv_obj_t *widget)
 {
     lv_obj_set_size(widget, CLOCK_LOTTIE_W, CLOCK_LOTTIE_H);
     lv_lottie_set_buffer(widget, CLOCK_LOTTIE_W, CLOCK_LOTTIE_H, s_clock_lottie_buf);
-    lv_obj_align(widget, LV_ALIGN_BOTTOM_LEFT, 0, -16);
+    lv_obj_align(widget, LV_ALIGN_BOTTOM_LEFT, 16, -16);
     s_clock_lottie_widget = widget;
     ESP_LOGI(TAG, "clock_lottie: widget=%p placed BOTTOM_LEFT", widget);
 }
@@ -671,7 +676,7 @@ static void ui_clock_post_init(lv_obj_t *scr, const clock_settings_t *settings)
 {
     bg_img = ui_bg_try_load(scr, settings);
     clock_update_cb(NULL);
-    screen_manager_set_clock_screen(scr);
+
 #if LV_USE_LOTTIE
     ui_clock_add_lottie(scr);
 #endif
@@ -695,8 +700,6 @@ void ui_clock_init(const struct tm *ti0, const clock_settings_t *settings)
 {
     (void)ti0;
     ESP_LOGI(TAG, "ui_clock_init: start");
-    screen_manager_init();
-
     lvgl_port_lock(0);
     lv_obj_t *scr = lv_scr_act();
     screen_clock = scr;
@@ -1062,18 +1065,26 @@ void ui_refresh_text_color(void)
 {
     ESP_LOGI(TAG, "ui_refresh_text_color: start");
 
-    if (!screen_clock) {
-        ESP_LOGW(TAG, "ui_refresh_text_color: clock screen not initialised");
-        return;
-    }
-
     clock_settings_t cfg;
     if (settings_load(&cfg) != ESP_OK) {
         ESP_LOGE(TAG, "ui_refresh_text_color: settings_load failed");
         return;
     }
 
+    lv_color_t color = lv_color_hex(cfg.text_color);
     ESP_LOGI(TAG, "ui_refresh_text_color: applying 0x%06lX", (unsigned long)cfg.text_color);
-    ui_apply_text_color(lv_color_hex(cfg.text_color));
+
+    // Update FSM's ClockWidget (primary clock)
+    struct clock_widget_t *cw = display_fsm_get_clock();
+    if (cw) {
+        lvgl_port_lock(0);
+        clock_widget_set_color(cw, color);
+        lvgl_port_unlock();
+    }
+
+    // Also update legacy labels if they exist (during migration)
+    if (screen_clock) {
+        ui_apply_text_color(color);
+    }
     ESP_LOGI(TAG, "ui_refresh_text_color: complete");
 }

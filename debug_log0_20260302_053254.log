@@ -1,0 +1,190 @@
+
+
+===== Log session started at 1772447495 (slot 0) =====
+Debug log initialized successfully
+I (1988) debug_log: Debug logging started: /sdcard/logs/debug_log0.log (0.0 MB used)
+I (1990) debug_log: vprintf redirection: original=0x4814d570
+I (1992) main: [BOOT] Debug log: /sdcard/logs/debug_log0.log
+I (1997) main: [BOOT] Reset reason (SD): SW_RESET (3)
+I (2002) main: [BOOT] RTC crash magic: 0x00000000 (clean)
+I (2015) main: [BOOT] SD: ✓ /sdcard/splash.png (426223 bytes)
+I (2018) main: [BOOT] Wi-Fi: connecting to 'LadyB'
+I (2024) transport: Attempt connection with slave: retry[0]
+I (2027) transport: Reset slave using GPIO[54]
+I (2028) os_wrapper_esp: GPIO [54] configured
+I (3668) sdio_wrapper: SDIO master: Slot 1, Data-Lines: 4-bit Freq(KHz)[40000 KHz]
+I (3672) sdio_wrapper: GPIOs: CLK[18] CMD[19] D0[14] D1[15] D2[16] D3[17] Slave_Reset[54]
+I (3678) sdio_wrapper: Queues: Tx[20] Rx[20] SDIO-Rx-Mode[1]
+I (3757) sdio_wrapper: Function 0 Blocksize: 512
+I (3766) sdio_wrapper: Function 1 Blocksize: 512
+I (3767) H_SDIO_DRV: SDIO Host operating in STREAMING MODE
+I (3778) H_SDIO_DRV: generate slave intr
+I (3786) transport: Received INIT event from ESP32 peripheral
+I (3791) transport: EVENT: 12
+I (3793) transport: EVENT: 11
+I (3795) transport: capabilities: 0xd
+I (3797) transport: Features supported are:
+I (3799) transport: 	 * WLAN
+I (3801) transport: 	   - HCI over SDIO
+I (3803) transport: 	   - BLE only
+I (3805) transport: EVENT: 13
+I (3807) transport: ESP board type is : 13 
+
+I (3811) transport: Base transport is set-up
+
+I (3820) transport: Slave chip Id[12]
+I (3822) hci_stub_drv: Host BT Support: Disabled
+I (3824) H_SDIO_DRV: Received INIT event
+I (3836) rpc_wrap: --- ESP Event: Slave ESP Init ---
+I (4847) network: Wi-Fi infrastructure initialized (no connection)
+I (4891) H_API: esp_wifi_remote_connect
+W (4933) rpc_rsp: Hosted RPC_Resp [0x21a], uid [8], resp code [12290]
+I (5023) network: Wi-Fi init complete, connecting to 'LadyB'
+I (5027) main: [BOOT] network_init: OK
+I (5030) main: [BOOT] OTA init...
+I (5032) ota: Running partition: ota_0 (type=0 subtype=16 offset=0x520000 size=0x500000)
+I (5038) ota: Current firmware version: 1.0.2
+I (5040) ota: Compiled: Mar  2 2026 05:29:47
+I (5043) H_API: esp_wifi_remote_connect
+I (5077) ota: OTA image marked as valid, rollback cancelled
+I (5081) main: [BOOT] OTA valid: slot=ota_0, version=1.0.2
+I (5083) main: [BOOT] Waiting for SNTP time sync...
+I (8086) esp_wifi_remote: esp_wifi_internal_reg_rxcb: sta: 0x4811b312
+I (9125) esp_netif_handlers: sta ip: 192.168.1.15, mask: 255.255.255.0, gw: 192.168.1.1
+I (9134) network: Got IP, starting SNTP
+I (9136) network: NTP server 0: pool.ntp.org
+I (9138) network: NTP server 1: time.google.com
+I (9139) network: NTP server 2: time.cloudflare.com
+I (9141) network: NTP server 3: time.nist.gov
+I (9145) network: SNTP attempt 1/10 (delay 1000 ms)
+I (10150) network: Saved time to NVS: 1772447503
+I (10155) network: SNTP synchronised successfully
+I (10156) main: [BOOT] SNTP sync complete
+I (10158) main: [BOOT] TZ: EST5EDT,M3.2.0/2,M11.1.0/2
+I (10160) main: [BOOT] Local time: 2026-03-02 05:31:43
+I (10167) http_api: Starting HTTP API server on port 80
+I (10171) http_api: HTTP API server started successfully
+I (10173) main: [BOOT] HTTP API started on port 80
+I (10178) main: [BOOT] Pre-launch heap: free=31616116 min=31615272
+I (10184) main: [BOOT] Pre-launch tasks:
+main           	X	1	4388	10	0
+IDLE0          	R	0	1148	11	0
+IDLE1          	R	0	1140	12	1
+tiT            	B	18	2624	14	-1
+Tmr Svc        	B	1	1628	13	-1
+esp_timer      	S	22	3692	9	0
+ipc1           	S	24	616	2	1
+rpc_tx         	B	23	4232	8	-1
+rpc_rx         	B	23	2964	7	-1
+sdio_read      	B	23	2484	4	0
+sdio_rx_buf    	B	23	4612	3	-1
+sdio_process_rx	B	23	3032	5	-1
+sdio_write     	B	23	4252	6	-1
+httpd          	B	5	7340	16	-1
+sys_evt        	B	20	812	15	0
+ipc0           	S	24	608	1	0
+
+I (10239) main: [BOOT] Awaiting launch (60 s or POST /debug/launch) — display dark
+I (70178) main: [BOOT] Launch signaled — heap free=31616096
+I (70193) main: Partition size: total: 474641, used: 429963
+I (70203) main: [BOOT] SPIFFS: mounted
+I (70205) main: [BOOT] SPIFFS:   splash.png
+I (70218) main: [BOOT] SPIFFS: ✓ splash.png (426223 bytes)
+I (70223) main: [BOOT] display_init: heap free=31614696
+I (70225) main: [BOOT] bsp_display_start_with_config...
+I (70227) lv_mem_esp: LVGL memory using ESP-IDF heap_caps with SPIRAM preference
+I (70231) lv_mem_esp: All allocations aligned to 64 bytes for PPA compatibility
+I (70239) LVGL: Starting LVGL task
+W (70242) ledc: GPIO 26 is not usable, maybe conflict with others
+I (70251) ESP32_P4_EV: MIPI DSI PHY Powered on
+I (70255) ESP32_P4_EV: Install MIPI DSI LCD control panel
+I (70257) ESP32_P4_EV: Install EK79007 LCD control panel
+I (70262) ek79007: version: 1.0.2
+I (70437) ESP32_P4_EV: Display initialized
+I (70441) ESP32_P4_EV: Display resolution 1024x600
+E (70446) lcd_panel: esp_lcd_panel_swap_xy(50): swap_xy is not supported by this panel
+W (70449) i2c.master: Please check pull-up resistances whether be connected properly. Otherwise unexpected behavior would happen. For more detailed information, please read docs
+I (70468) GT911: I2C address initialization procedure skipped - using default GT9xx setup
+I (70471) GT911: TouchPad_ID:0x39,0x31,0x31
+I (70473) GT911: TouchPad_Config_Version:89
+I (70476) main: [BOOT] bsp_display_start done, heap free=29115012
+I (70482) main: [BOOT] LVGL log callback registered
+I (70487) main: [BOOT] Display watchdog started (timeout 15000 ms)
+I (70492) ESP32_P4_EV: Setting LCD backlight: 100%
+I (70497) ESP32_P4_EV: Setting LCD backlight: 50%
+I (70506) main: [BOOT] Brightness: 50%
+I (70509) main: [BOOT] ✓ PPA hardware acceleration: ENABLED
+I (70511) main: [BOOT] ✓ PPA image operations: ENABLED
+I (70515) main: [BOOT] ✓ PPA in BSP display driver: ENABLED
+I (70521) main: [BOOT] Buffer alignment: 64 bytes
+I (70525) main: [BOOT] Stride alignment: 64 bytes
+I (70530) main: [BOOT] Registering LVGL FS drivers
+I (70534) main: [BOOT] A: drive registered (/sdcard)
+I (70539) main: [BOOT] B: drive registered (/spiffs)
+I (70544) main: [B: DRIVER] Open request: path='/splash.png', mode=2
+I (70554) main: [B: DRIVER] Full path: /spiffs/splash.png
+I (70556) main: [B: DRIVER] Successfully opened fd=6
+I (70559) main: [BOOT] ✓ B:/splash.png opened via LVGL
+I (70570) main: [BOOT] ✓ A:/splash.png opened via LVGL
+I (70572) main: [BOOT] Touch: enabled
+I (70574) main: [BOOT] Display ready
+I (70576) main: [BOOT] Clock context set: 2026-03-02 05:32:44, bg='A:/spring-flower.png'
+I (70584) main: [BOOT] ui_show_splash...
+I (70587) ui: ui_show_splash: start
+I (70591) main: [B: DRIVER] Open request: path='/splash.png', mode=2
+I (70601) main: [B: DRIVER] Full path: /spiffs/splash.png
+I (70603) main: [B: DRIVER] Successfully opened fd=6
+I (70607) ui: ui_splash_load_image: loaded, src=0x4816d4c0
+I (70612) ui: ui_show_splash: complete
+I (70616) main: [B: DRIVER] Open request: path='/splash.png', mode=2
+I (70628) main: [B: DRIVER] Full path: /spiffs/splash.png
+I (70634) main: [B: DRIVER] Successfully opened fd=6
+I (70640) main: [B: DRIVER] Open request: path='/splash.png', mode=2
+I (70649) main: [B: DRIVER] Full path: /spiffs/splash.png
+I (70655) main: [B: DRIVER] Successfully opened fd=6
+I (70659) main: [B: DRIVER] Open request: path='/splash.png', mode=2
+I (70665) main: [B: DRIVER] Full path: /spiffs/splash.png
+I (70671) main: [B: DRIVER] Successfully opened fd=6
+I (70680) main: [B: DRIVER] Open request: path='/splash.png', mode=2
+I (70682) main: [B: DRIVER] Full path: /spiffs/splash.png
+I (70686) main: [B: DRIVER] Successfully opened fd=6
+I (71283) ui: ui_clock_init: start
+I (71293) screen_mgr: Screen manager initialized
+I (71297) ui: ui_color_from_settings: 0x000000
+I (71302) ui: ui_bg_try_load: loading A:/spring-flower.png (gif=0)
+I (71336) ui: ui_bg_verify: background loaded from A:/spring-flower.png
+I (71338) ui: clock_update_cb: 2026-03-02 05:32:44
+I (72345) screen_mgr: Pushed screen 0 to stack (depth: 1)
+I (72366) screen_mgr: Clock screen set
+I (72375) ui: clock_lottie: alloc SPIRAM buf 256000 B (stride=1024)
+I (72377) ui: clock_lottie: buf at 0x48478ac0
+E (72431) lv_lottie: ctor: ENTRY obj=0x4816f1c0 count=0
+E (72440) lv_lottie: ctor: set_size done
+E (72443) lv_lottie: ctor: tvg_animation_new
+E (72445) lv_lottie: ctor: tvg_animation_get_picture
+E (72447) lv_lottie: ctor: tvg_swcanvas_create
+E (72449) lv_lottie: ctor: fields init done, internal_free=256675
+E (72455) lv_lottie: ctor: done_sem=0x4ff52cb0
+I (72458) lv_lottie: lottie: shared render task started (stack=40960 B DRAM, DRAM free=256475 B)
+I (72458) lv_lottie: render_task: started stack_addr=0x4ff26c97 DRAM free=256475 B
+I (72481) ui: clock_lottie: spawning load task (stack=65536 B, DRAM)
+I (72488) ui: clock_lottie_load_task: start path='/sdcard/hummingbird.json' stack=0x4ff62e17
+I (72496) ui: ui_clock_post_init: complete, heap=26327744
+I (72518) ui: ui_clock_init: complete
+I (72527) main: [BOOT] ui_launch_clock done — entering health loop
+I (72546) ui: clock_lottie: calling lv_lottie_set_src_file
+E (72551) lv_lottie: CP1: tvg_picture_load start src=/sdcard/hummingbird.json
+LottieLoader ctor: builder=0x4ff52e60open: start path=/sdcard/hummingbird.jsonopen: fopen=0x4ff3c018open: lv_malloc content=0x484b7300 size=742521open: calling header()header: single-thread, calling LoadModule::read()header: calling run(0)run: creating LottieParserrun: calling parser.parse()run: parse OK, comp=0x4ff63040run: calling builder->build(comp)run: build doneheader: run(0) done, comp=0x4ff63040E (73574) lv_lottie: CP2: tvg_picture_load done res=0
+E (73580) lv_lottie: CP3: tvg_picture_set_size 250x250
+E (73585) lv_lottie: CP4: tvg_picture_set_size done
+E (73595) lv_lottie: CP5: tvg_animation_get_total_frame start
+E (73597) lv_lottie: CP6: tvg_animation_get_total_frame done f_total=56
+E (73601) lv_lottie: CP7: calling lottie_update (initial, inline on load-task stack)
+E (73614) lv_lottie: LU1: tvg_animation_set_frame 0 (initial, inline)
+E (73617) lv_lottie: LU2: tvg_canvas_update
+E (73623) lv_lottie: LU3: tvg_canvas_draw
+E (73625) lv_lottie: LU4: tvg_canvas_sync
+E (73627) lv_lottie: LU5: initial render done — load task stack_hw=44996 B
+E (73633) lv_lottie: CP8: lottie_update done
+I (73641) ui: clock_lottie: lv_lottie_set_src_file returned
+I (73643) ui: clock_lottie: fps=20 dur=933→2799 ms

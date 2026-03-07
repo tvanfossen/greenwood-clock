@@ -7,4 +7,6 @@ dependencies:
 
   espressif/esp_wifi_remote: "*"
 
-  espressif/esp_lcd_ek79007: "*"         
+  espressif/esp_lcd_ek79007: "*"
+
+  espressif/mdns: "*"

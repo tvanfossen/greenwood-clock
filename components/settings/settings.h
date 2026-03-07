@@ -11,7 +11,7 @@ extern "C" {
 #include <stdbool.h>
 #include "esp_err.h"
 
-#define SETTINGS_VERSION 3  // Incremented: added text_color field
+#define SETTINGS_VERSION 5  // Incremented: added display schedule fields
 
 typedef struct {
     uint32_t version;  // Settings schema version
@@ -40,6 +40,24 @@ typedef struct {
 
     // OTA
     char ota_server_url[128];
+
+    // NWS Weather — cached grid/station from /points lookup
+    char nws_office[8];       // e.g. "GRR"
+    int  nws_grid_x;
+    int  nws_grid_y;
+    char nws_station[8];      // e.g. "KMKG"
+
+    // Display schedule — per-state timing (seconds)
+    uint16_t weather_show_s;      // how long to display weather (default 30)
+    uint16_t weather_cooldown_s;  // debounce between triggers (default 1800)
+    uint16_t radar_show_s;        // default 30
+    uint16_t radar_cooldown_s;    // default 1800
+    uint16_t astro_show_s;        // default 30
+    uint16_t astro_cooldown_s;    // default 43200 (12h)
+    uint16_t photos_interval_s;   // periodic trigger interval (default 1800)
+    uint16_t photos_show_s;       // default 30
+    uint16_t ambient_interval_s;  // periodic trigger interval (default 2700)
+    uint16_t ambient_show_s;      // default 30
 
 } clock_settings_t;
 

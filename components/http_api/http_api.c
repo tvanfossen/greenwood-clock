@@ -9,6 +9,11 @@
 #include "sdcard.h"
 #include "debug_log.h"
 #include "udp_log.h"
+#include "display_fsm.h"
+#include "nws.h"
+#include "settings.h"
+#include "cJSON.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -524,6 +529,19 @@ static esp_err_t debug_udp_log_start_handler(httpd_req_t *req);
 static esp_err_t debug_udp_log_stop_handler(httpd_req_t *req);
 static esp_err_t debug_reboot_handler(httpd_req_t *req);
 static esp_err_t debug_launch_handler(httpd_req_t *req);
+static esp_err_t www_file_handler(httpd_req_t *req);
+static esp_err_t display_state_get_handler(httpd_req_t *req);
+static esp_err_t display_state_post_handler(httpd_req_t *req);
+static esp_err_t display_surprise_handler(httpd_req_t *req);
+static esp_err_t weather_current_handler(httpd_req_t *req);
+static esp_err_t weather_forecast_handler(httpd_req_t *req);
+static esp_err_t weather_alerts_handler(httpd_req_t *req);
+static esp_err_t schedule_get_handler(httpd_req_t *req);
+static esp_err_t schedule_post_handler(httpd_req_t *req);
+static esp_err_t assets_list_handler(httpd_req_t *req);
+static esp_err_t assets_upload_handler(httpd_req_t *req);
+static esp_err_t settings_get_handler(httpd_req_t *req);
+static esp_err_t settings_post_handler(httpd_req_t *req);
 
 /**
  * @brief Apply non-default httpd configuration values.
@@ -533,7 +551,7 @@ static esp_err_t debug_launch_handler(httpd_req_t *req);
 static void http_api_configure_server(httpd_config_t* config)
 {
     config->server_port     = 80;
-    config->max_uri_handlers = 20;
+    config->max_uri_handlers = 30;
     config->stack_size      = 8192;
     config->uri_match_fn    = httpd_uri_match_wildcard;
 }
@@ -638,6 +656,94 @@ static void http_api_register_debug_handlers(httpd_handle_t srv)
 }
 
 /**
+ * @brief Register display control and weather data URI handlers.
+ *
+ * @param srv  Running httpd server handle.
+ */
+static void http_api_register_display_handlers(httpd_handle_t srv)
+{
+    static const httpd_uri_t uri_www = {
+        .uri     = "/www/*",
+        .method  = HTTP_GET,
+        .handler = www_file_handler,
+    };
+    static const httpd_uri_t uri_display_state_get = {
+        .uri     = "/api/display/state",
+        .method  = HTTP_GET,
+        .handler = display_state_get_handler,
+    };
+    static const httpd_uri_t uri_display_state_post = {
+        .uri     = "/api/display/state",
+        .method  = HTTP_POST,
+        .handler = display_state_post_handler,
+    };
+    static const httpd_uri_t uri_display_surprise = {
+        .uri     = "/api/display/surprise",
+        .method  = HTTP_POST,
+        .handler = display_surprise_handler,
+    };
+    static const httpd_uri_t uri_weather_current = {
+        .uri     = "/api/weather/current",
+        .method  = HTTP_GET,
+        .handler = weather_current_handler,
+    };
+    static const httpd_uri_t uri_weather_forecast = {
+        .uri     = "/api/weather/forecast",
+        .method  = HTTP_GET,
+        .handler = weather_forecast_handler,
+    };
+    static const httpd_uri_t uri_weather_alerts = {
+        .uri     = "/api/weather/alerts",
+        .method  = HTTP_GET,
+        .handler = weather_alerts_handler,
+    };
+    static const httpd_uri_t uri_schedule_get = {
+        .uri     = "/api/display/schedule",
+        .method  = HTTP_GET,
+        .handler = schedule_get_handler,
+    };
+    static const httpd_uri_t uri_schedule_post = {
+        .uri     = "/api/display/schedule",
+        .method  = HTTP_POST,
+        .handler = schedule_post_handler,
+    };
+    static const httpd_uri_t uri_assets_list = {
+        .uri     = "/api/assets/list",
+        .method  = HTTP_GET,
+        .handler = assets_list_handler,
+    };
+    static const httpd_uri_t uri_assets_upload = {
+        .uri     = "/api/assets/upload",
+        .method  = HTTP_POST,
+        .handler = assets_upload_handler,
+    };
+    static const httpd_uri_t uri_settings_get = {
+        .uri     = "/api/settings",
+        .method  = HTTP_GET,
+        .handler = settings_get_handler,
+    };
+    static const httpd_uri_t uri_settings_post = {
+        .uri     = "/api/settings",
+        .method  = HTTP_POST,
+        .handler = settings_post_handler,
+    };
+    httpd_register_uri_handler(srv, &uri_display_state_get);
+    httpd_register_uri_handler(srv, &uri_display_state_post);
+    httpd_register_uri_handler(srv, &uri_display_surprise);
+    httpd_register_uri_handler(srv, &uri_schedule_get);
+    httpd_register_uri_handler(srv, &uri_schedule_post);
+    httpd_register_uri_handler(srv, &uri_weather_current);
+    httpd_register_uri_handler(srv, &uri_weather_forecast);
+    httpd_register_uri_handler(srv, &uri_weather_alerts);
+    httpd_register_uri_handler(srv, &uri_assets_list);
+    httpd_register_uri_handler(srv, &uri_assets_upload);
+    httpd_register_uri_handler(srv, &uri_settings_get);
+    httpd_register_uri_handler(srv, &uri_settings_post);
+    // www wildcard MUST be registered LAST (wildcard matching priority)
+    httpd_register_uri_handler(srv, &uri_www);
+}
+
+/**
  * @brief Register all URI handlers with the running server.
  *
  * @param srv  Running httpd server handle.
@@ -647,6 +753,7 @@ static void http_api_register_handlers(httpd_handle_t srv)
     http_api_register_file_handlers(srv);
     http_api_register_ota_handlers(srv);
     http_api_register_debug_handlers(srv);
+    http_api_register_display_handlers(srv);
 }
 
 // =============================================================================
@@ -1005,6 +1112,608 @@ static esp_err_t ota_status_handler(httpd_req_t *req)
              st.total_bytes, st.error_msg);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+// =============================================================================
+// Static file server (www)
+// =============================================================================
+
+/**
+ * @brief Determine MIME type from file extension.
+ */
+static const char *www_mime_type(const char *path)
+{
+    const char *ext = strrchr(path, '.');
+    if (!ext) return "application/octet-stream";
+    if (strcmp(ext, ".html") == 0 || strcmp(ext, ".htm") == 0) return "text/html";
+    if (strcmp(ext, ".css") == 0)  return "text/css";
+    if (strcmp(ext, ".js") == 0)   return "application/javascript";
+    if (strcmp(ext, ".json") == 0) return "application/json";
+    if (strcmp(ext, ".png") == 0)  return "image/png";
+    if (strcmp(ext, ".jpg") == 0 || strcmp(ext, ".jpeg") == 0) return "image/jpeg";
+    if (strcmp(ext, ".gif") == 0)  return "image/gif";
+    if (strcmp(ext, ".svg") == 0)  return "image/svg+xml";
+    if (strcmp(ext, ".ico") == 0)  return "image/x-icon";
+    return "application/octet-stream";
+}
+
+/**
+ * @brief Serve static files from SD card /sdcard/www/.
+ * GET /www/... serves from /sdcard/www/...
+ */
+static esp_err_t www_file_handler(httpd_req_t *req)
+{
+    // /www/index.html → /sdcard/www/index.html
+    char filepath[256];
+    snprintf(filepath, sizeof(filepath), "/sdcard%s", req->uri);
+
+    if (!sdcard_is_mounted()) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "SD card not mounted");
+        return ESP_FAIL;
+    }
+
+    FILE *f = fopen(filepath, "rb");
+    if (!f) {
+        httpd_resp_send_404(req);
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, www_mime_type(filepath));
+    // Allow caching of static assets (1 hour)
+    httpd_resp_set_hdr(req, "Cache-Control", "max-age=3600");
+
+    char buf[UPLOAD_BUFFER_SIZE];
+    size_t len;
+    while ((len = fread(buf, 1, sizeof(buf), f)) > 0) {
+        if (httpd_resp_send_chunk(req, buf, len) != ESP_OK) {
+            fclose(f);
+            return ESP_FAIL;
+        }
+    }
+    fclose(f);
+    httpd_resp_send_chunk(req, NULL, 0);
+    return ESP_OK;
+}
+
+// =============================================================================
+// Display control endpoints
+// =============================================================================
+
+/**
+ * @brief Get current display state.
+ * GET /api/display/state → {"state":"clock"}
+ */
+static esp_err_t display_state_get_handler(httpd_req_t *req)
+{
+    char response[128];
+    snprintf(response, sizeof(response),
+             "{\"state\":\"%s\",\"uptime\":%lld}\n",
+             display_fsm_get_state_name(),
+             esp_timer_get_time() / 1000000);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+/**
+ * @brief Map state name string to display_state_id_t.
+ * @return DISPLAY_STATE_MAX if not found.
+ */
+static display_state_id_t state_name_to_id(const char *name)
+{
+    static const struct { const char *name; display_state_id_t id; } map[] = {
+        {"clock",     DISPLAY_STATE_CLOCK},
+        {"weather",   DISPLAY_STATE_WEATHER},
+        {"radar",     DISPLAY_STATE_RADAR},
+        {"astronomy", DISPLAY_STATE_ASTRONOMY},
+        {"photos",    DISPLAY_STATE_PHOTOS},
+        {"ambient",   DISPLAY_STATE_AMBIENT},
+    };
+    for (size_t i = 0; i < sizeof(map)/sizeof(map[0]); i++) {
+        if (strcmp(name, map[i].name) == 0) return map[i].id;
+    }
+    return DISPLAY_STATE_MAX;
+}
+
+/**
+ * @brief Force display to a specific state.
+ * POST /api/display/state — body: {"state":"weather"}
+ */
+static esp_err_t display_state_post_handler(httpd_req_t *req)
+{
+    char body[128];
+    int received = httpd_req_recv(req, body, sizeof(body) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing body");
+        return ESP_FAIL;
+    }
+    body[received] = '\0';
+
+    cJSON *root = cJSON_Parse(body);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    const cJSON *state_json = cJSON_GetObjectItemCaseSensitive(root, "state");
+    if (!cJSON_IsString(state_json) || !state_json->valuestring) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing \"state\" field");
+        return ESP_FAIL;
+    }
+
+    display_state_id_t id = state_name_to_id(state_json->valuestring);
+    cJSON_Delete(root);
+
+    if (id == DISPLAY_STATE_MAX) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Unknown state");
+        return ESP_FAIL;
+    }
+
+    display_event_t evt = {};
+    evt.type = DISPLAY_EVT_FORCE_STATE;
+    evt.force_state.state = id;
+    display_fsm_send_event(&evt);
+
+    ESP_LOGI(TAG, "Force display state: %d", id);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"status\":\"ok\"}\n", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+/**
+ * @brief Push a surprise message layout.
+ * POST /api/display/surprise — body is JSON layout DSL
+ */
+static esp_err_t display_surprise_handler(httpd_req_t *req)
+{
+    if (req->content_len == 0 || req->content_len > 8192) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                            "Body required (max 8 KB)");
+        return ESP_FAIL;
+    }
+
+    // Allocate in SPIRAM — FSM takes ownership
+    char *json_buf = heap_caps_malloc(req->content_len + 1, MALLOC_CAP_SPIRAM);
+    if (!json_buf) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+        return ESP_FAIL;
+    }
+
+    size_t total = 0;
+    while (total < req->content_len) {
+        int r = httpd_req_recv(req, json_buf + total, req->content_len - total);
+        if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (r <= 0) {
+            free(json_buf);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Receive failed");
+            return ESP_FAIL;
+        }
+        total += (size_t)r;
+    }
+    json_buf[total] = '\0';
+
+    // Parse duration_s from JSON (default 30s)
+    uint32_t duration_s = 30;
+    cJSON *root = cJSON_Parse(json_buf);
+    if (root) {
+        const cJSON *dur = cJSON_GetObjectItemCaseSensitive(root, "duration_s");
+        if (cJSON_IsNumber(dur) && dur->valueint > 0) {
+            duration_s = (uint32_t)dur->valueint;
+        }
+        cJSON_Delete(root);
+    }
+
+    display_event_t evt = {};
+    evt.type = DISPLAY_EVT_SURPRISE_MESSAGE;
+    evt.surprise.json_str = json_buf;  // FSM takes ownership
+    evt.surprise.duration_s = duration_s;
+    display_fsm_send_event(&evt);
+
+    ESP_LOGI(TAG, "Surprise message pushed (%zu bytes, %lus)", total, (unsigned long)duration_s);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"status\":\"ok\"}\n", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+// =============================================================================
+// Schedule endpoints
+// =============================================================================
+
+/**
+ * @brief Get display schedule configuration.
+ * GET /api/display/schedule
+ */
+static esp_err_t schedule_get_handler(httpd_req_t *req)
+{
+    clock_settings_t cfg;
+    settings_load(&cfg);
+
+    char response[512];
+    snprintf(response, sizeof(response),
+             "{\"weather_show_s\":%u,"
+             "\"weather_cooldown_s\":%u,"
+             "\"radar_show_s\":%u,"
+             "\"radar_cooldown_s\":%u,"
+             "\"astro_show_s\":%u,"
+             "\"astro_cooldown_s\":%u,"
+             "\"photos_interval_s\":%u,"
+             "\"photos_show_s\":%u,"
+             "\"ambient_interval_s\":%u,"
+             "\"ambient_show_s\":%u}\n",
+             cfg.weather_show_s, cfg.weather_cooldown_s,
+             cfg.radar_show_s, cfg.radar_cooldown_s,
+             cfg.astro_show_s, cfg.astro_cooldown_s,
+             cfg.photos_interval_s, cfg.photos_show_s,
+             cfg.ambient_interval_s, cfg.ambient_show_s);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+/**
+ * @brief Update display schedule configuration.
+ * POST /api/display/schedule — body: {"weather_show_s":30, ...}
+ * Only provided fields are updated; others keep their current value.
+ */
+static esp_err_t schedule_post_handler(httpd_req_t *req)
+{
+    char body[512];
+    int received = httpd_req_recv(req, body, sizeof(body) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing body");
+        return ESP_FAIL;
+    }
+    body[received] = '\0';
+
+    cJSON *root = cJSON_Parse(body);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    clock_settings_t cfg;
+    settings_load(&cfg);
+
+    // Update only fields present in JSON
+    const cJSON *j;
+    if ((j = cJSON_GetObjectItem(root, "weather_show_s")) && cJSON_IsNumber(j))
+        cfg.weather_show_s = (uint16_t)j->valueint;
+    if ((j = cJSON_GetObjectItem(root, "weather_cooldown_s")) && cJSON_IsNumber(j))
+        cfg.weather_cooldown_s = (uint16_t)j->valueint;
+    if ((j = cJSON_GetObjectItem(root, "radar_show_s")) && cJSON_IsNumber(j))
+        cfg.radar_show_s = (uint16_t)j->valueint;
+    if ((j = cJSON_GetObjectItem(root, "radar_cooldown_s")) && cJSON_IsNumber(j))
+        cfg.radar_cooldown_s = (uint16_t)j->valueint;
+    if ((j = cJSON_GetObjectItem(root, "astro_show_s")) && cJSON_IsNumber(j))
+        cfg.astro_show_s = (uint16_t)j->valueint;
+    if ((j = cJSON_GetObjectItem(root, "astro_cooldown_s")) && cJSON_IsNumber(j))
+        cfg.astro_cooldown_s = (uint16_t)j->valueint;
+    if ((j = cJSON_GetObjectItem(root, "photos_interval_s")) && cJSON_IsNumber(j))
+        cfg.photos_interval_s = (uint16_t)j->valueint;
+    if ((j = cJSON_GetObjectItem(root, "photos_show_s")) && cJSON_IsNumber(j))
+        cfg.photos_show_s = (uint16_t)j->valueint;
+    if ((j = cJSON_GetObjectItem(root, "ambient_interval_s")) && cJSON_IsNumber(j))
+        cfg.ambient_interval_s = (uint16_t)j->valueint;
+    if ((j = cJSON_GetObjectItem(root, "ambient_show_s")) && cJSON_IsNumber(j))
+        cfg.ambient_show_s = (uint16_t)j->valueint;
+
+    cJSON_Delete(root);
+
+    esp_err_t err = settings_save(&cfg);
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save settings");
+        return ESP_FAIL;
+    }
+
+    // Notify FSM scheduler of each state's updated config
+    struct { display_state_id_t id; uint16_t show_s; uint16_t cooldown_s; } sched[] = {
+        { DISPLAY_STATE_WEATHER,   cfg.weather_show_s,   cfg.weather_cooldown_s },
+        { DISPLAY_STATE_RADAR,     cfg.radar_show_s,     cfg.radar_cooldown_s },
+        { DISPLAY_STATE_ASTRONOMY, cfg.astro_show_s,     cfg.astro_cooldown_s },
+        { DISPLAY_STATE_PHOTOS,    cfg.photos_show_s,    cfg.photos_interval_s },
+        { DISPLAY_STATE_AMBIENT,   cfg.ambient_show_s,   cfg.ambient_interval_s },
+    };
+    for (size_t i = 0; i < sizeof(sched)/sizeof(sched[0]); i++) {
+        display_event_t evt = {};
+        evt.type = DISPLAY_EVT_SCHEDULE_CONFIG;
+        evt.schedule.state = sched[i].id;
+        evt.schedule.display_duration_ms = (uint32_t)sched[i].show_s * 1000;
+        evt.schedule.cooldown_ms = (uint32_t)sched[i].cooldown_s * 1000;
+        evt.schedule.enabled = true;
+        display_fsm_send_event(&evt);
+    }
+
+    ESP_LOGI(TAG, "Schedule config updated");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"status\":\"ok\"}\n", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+// =============================================================================
+// Asset management endpoints
+// =============================================================================
+
+/**
+ * @brief List contents of a single SD card directory, appending to chunked response.
+ */
+static void assets_list_dir(httpd_req_t *req, const char *sd_path,
+                            const char *category, bool *first_entry)
+{
+    DIR *dir = opendir(sd_path);
+    if (!dir) return;
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        char full[300];
+        snprintf(full, sizeof(full), "%s/%s", sd_path, entry->d_name);
+        struct stat st;
+        int sz = 0;
+        if (stat(full, &st) == 0) sz = (int)st.st_size;
+
+        char buf[384];
+        snprintf(buf, sizeof(buf),
+                 "%s{\"name\":\"%s\",\"category\":\"%s\",\"size\":%d}",
+                 *first_entry ? "" : ",\n",
+                 entry->d_name, category, sz);
+        httpd_resp_sendstr_chunk(req, buf);
+        *first_entry = false;
+    }
+    closedir(dir);
+}
+
+/**
+ * @brief List asset files across known SD card directories.
+ * GET /api/assets/list → {"assets":[{"name":"clear.json","category":"lottie","size":1234},...]}
+ */
+static esp_err_t assets_list_handler(httpd_req_t *req)
+{
+    if (!sdcard_is_mounted()) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "SD card not mounted");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr_chunk(req, "{\"assets\":[\n");
+
+    bool first = true;
+    assets_list_dir(req, "/sdcard/lottie", "lottie", &first);
+    assets_list_dir(req, "/sdcard/backgrounds", "backgrounds", &first);
+    assets_list_dir(req, "/sdcard/photos", "photos", &first);
+    assets_list_dir(req, "/sdcard/www", "www", &first);
+
+    httpd_resp_sendstr_chunk(req, "\n]}\n");
+    httpd_resp_send_chunk(req, NULL, 0);
+    return ESP_OK;
+}
+
+/**
+ * @brief Upload an asset file to the SD card.
+ * POST /api/assets/upload?path=lottie/weather/day/clear.json
+ * Body is raw file content.
+ */
+static esp_err_t assets_upload_handler(httpd_req_t *req)
+{
+    // Get destination path from query parameter
+    char query[256] = {0};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                            "Missing ?path= query parameter");
+        return ESP_FAIL;
+    }
+    char rel_path[200] = {0};
+    if (httpd_query_key_value(query, "path", rel_path, sizeof(rel_path)) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                            "Missing ?path= query parameter");
+        return ESP_FAIL;
+    }
+
+    // Build absolute path and reuse upload helpers
+    char filepath[256];
+    snprintf(filepath, sizeof(filepath), "/sdcard/%s", rel_path);
+    ESP_LOGI(TAG, "Asset upload: %s (%d bytes)", filepath, req->content_len);
+
+    esp_err_t err = upload_check_preconditions(req);
+    if (err != ESP_OK) return err;
+    upload_ensure_dir(filepath);
+
+    size_t total = 0;
+    err = upload_open_and_receive(req, filepath, &total);
+    if (err == ESP_OK) upload_send_success(req, filepath, total);
+    return err;
+}
+
+// =============================================================================
+// Device settings endpoints
+// =============================================================================
+
+/**
+ * @brief Get device settings (brightness, text color, background).
+ * GET /api/settings
+ */
+static esp_err_t settings_get_handler(httpd_req_t *req)
+{
+    clock_settings_t cfg;
+    settings_load(&cfg);
+
+    char response[384];
+    snprintf(response, sizeof(response),
+             "{\"brightness\":%u,"
+             "\"text_color\":\"#%06lx\","
+             "\"background_image\":\"%s\"}\n",
+             cfg.brightness,
+             (unsigned long)cfg.text_color,
+             cfg.background_image);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+/**
+ * @brief Update device settings.
+ * POST /api/settings — body: {"brightness":75, "text_color":"#ff0000", "background_image":"A:/bg.png"}
+ */
+static esp_err_t settings_post_handler(httpd_req_t *req)
+{
+    char body[384];
+    int received = httpd_req_recv(req, body, sizeof(body) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing body");
+        return ESP_FAIL;
+    }
+    body[received] = '\0';
+
+    cJSON *root = cJSON_Parse(body);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    clock_settings_t cfg;
+    settings_load(&cfg);
+
+    const cJSON *j;
+    if ((j = cJSON_GetObjectItem(root, "brightness")) && cJSON_IsNumber(j)) {
+        int v = j->valueint;
+        if (v >= 0 && v <= 100) cfg.brightness = (uint8_t)v;
+    }
+    if ((j = cJSON_GetObjectItem(root, "text_color")) && cJSON_IsString(j)) {
+        // Parse "#RRGGBB" hex string
+        const char *s = j->valuestring;
+        if (s[0] == '#' && strlen(s) == 7) {
+            cfg.text_color = (uint32_t)strtoul(s + 1, NULL, 16);
+        }
+    }
+    if ((j = cJSON_GetObjectItem(root, "background_image")) && cJSON_IsString(j)) {
+        strncpy(cfg.background_image, j->valuestring, sizeof(cfg.background_image) - 1);
+        cfg.background_image[sizeof(cfg.background_image) - 1] = '\0';
+    }
+
+    cJSON_Delete(root);
+
+    esp_err_t err = settings_save(&cfg);
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save settings");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "Settings updated: brightness=%u text_color=#%06lx bg=%s",
+             cfg.brightness, (unsigned long)cfg.text_color, cfg.background_image);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"status\":\"ok\"}\n", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+// =============================================================================
+// Weather data endpoints
+// =============================================================================
+
+/**
+ * @brief Serialize conditions to JSON and send.
+ * GET /api/weather/current
+ */
+static esp_err_t weather_current_handler(httpd_req_t *req)
+{
+    const nws_conditions_t *c = nws_get_conditions();
+    if (!c || !c->valid) {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, "{\"valid\":false}\n", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
+    char response[512];
+    snprintf(response, sizeof(response),
+             "{\"valid\":true,"
+             "\"temp_c\":%.1f,"
+             "\"feels_like_c\":%.1f,"
+             "\"humidity\":%d,"
+             "\"wind_speed_kmh\":%.1f,"
+             "\"wind_dir\":\"%s\","
+             "\"pressure_hpa\":%.1f,"
+             "\"description\":\"%s\","
+             "\"station\":\"%s\"}\n",
+             c->temp_c, c->feels_like_c, c->humidity,
+             c->wind_speed_kmh, c->wind_dir_cardinal,
+             c->pressure_hpa, c->description, c->station_id);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+/**
+ * @brief Serialize forecast periods to JSON and send.
+ * GET /api/weather/forecast
+ */
+static esp_err_t weather_forecast_handler(httpd_req_t *req)
+{
+    const nws_forecast_t *fc = nws_get_forecast();
+    if (!fc || !fc->valid) {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, "{\"valid\":false}\n", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr_chunk(req, "{\"valid\":true,\"periods\":[\n");
+
+    for (int i = 0; i < fc->period_count; i++) {
+        const nws_forecast_period_t *p = &fc->periods[i];
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+                 "%s{\"name\":\"%s\",\"temp\":%d,\"unit\":\"%c\","
+                 "\"short\":\"%s\",\"wind\":\"%s %s\",\"daytime\":%s}",
+                 i > 0 ? ",\n" : "",
+                 p->name, p->temperature, p->temp_unit,
+                 p->short_forecast, p->wind_speed, p->wind_direction,
+                 p->is_daytime ? "true" : "false");
+        httpd_resp_sendstr_chunk(req, buf);
+    }
+
+    httpd_resp_sendstr_chunk(req, "\n]}\n");
+    httpd_resp_send_chunk(req, NULL, 0);
+    return ESP_OK;
+}
+
+/**
+ * @brief Serialize active alerts to JSON and send.
+ * GET /api/weather/alerts
+ */
+static esp_err_t weather_alerts_handler(httpd_req_t *req)
+{
+    const nws_alerts_t *al = nws_get_alerts();
+    if (!al || !al->valid) {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, "{\"valid\":false,\"count\":0}\n", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+
+    char header[64];
+    snprintf(header, sizeof(header), "{\"valid\":true,\"count\":%d,\"alerts\":[\n",
+             al->alert_count);
+    httpd_resp_sendstr_chunk(req, header);
+
+    for (int i = 0; i < al->alert_count; i++) {
+        const nws_alert_t *a = &al->alerts[i];
+        char buf[512];
+        snprintf(buf, sizeof(buf),
+                 "%s{\"event\":\"%s\",\"severity\":\"%s\","
+                 "\"urgency\":\"%s\",\"headline\":\"%.*s\"}",
+                 i > 0 ? ",\n" : "",
+                 a->event, a->severity, a->urgency,
+                 200, a->headline);  // truncate headline for JSON safety
+        httpd_resp_sendstr_chunk(req, buf);
+    }
+
+    httpd_resp_sendstr_chunk(req, "\n]}\n");
+    httpd_resp_send_chunk(req, NULL, 0);
     return ESP_OK;
 }
 

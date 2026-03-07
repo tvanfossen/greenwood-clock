@@ -1,7 +1,7 @@
 # components/ui/CMakeLists.txt
 
 idf_component_register(
-    SRCS        "ui.c" "screen_manager.c"
+    SRCS        "ui.c"
     INCLUDE_DIRS "."
     REQUIRES
         lvgl
@@ -17,4 +17,5 @@ idf_component_register(
         settings
         ota
         sdcard
+        display_fsm
 )
