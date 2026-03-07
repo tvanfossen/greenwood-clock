@@ -26,6 +26,9 @@
 #include "sdcard.h"
 #include "http_api.h"
 #include "debug_log.h"
+#include "display_fsm.h"
+#include "nws.h"
+#include "mdns.h"
 #include "lvgl.h"
 #include "libs/fsdrv/lv_fsdrv.h"
 
@@ -585,7 +588,18 @@ static void boot_services(const clock_settings_t *cfg)
              ti.tm_year+1900, ti.tm_mon+1, ti.tm_mday,
              ti.tm_hour, ti.tm_min, ti.tm_sec);
 
-    esp_err_t err = http_api_start();
+    // mDNS — advertise greenwood-clock.local for phone access
+    esp_err_t err = mdns_init();
+    if (err == ESP_OK) {
+        mdns_hostname_set(cfg->hostname[0] ? cfg->hostname : "greenwood-clock");
+        mdns_instance_name_set("Greenwood Clock");
+        mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
+        ESP_LOGI(TAG, "[BOOT] mDNS: %s.local", cfg->hostname[0] ? cfg->hostname : "greenwood-clock");
+    } else {
+        ESP_LOGW(TAG, "[BOOT] mDNS init failed: %s", esp_err_to_name(err));
+    }
+
+    err = http_api_start();
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "[BOOT] HTTP API started on port 80");
     } else {
@@ -803,27 +817,37 @@ extern "C" void app_main()
     boot_sntp_wait(&cfg);
     boot_timezone(&cfg);
     boot_services(&cfg);        // HTTP API up, OTA pushable, UDP log streamable
+
+    // Start NWS weather polling (resolves location, then fetches in background)
+    if (cfg.wifi_configured && cfg.enable_weather) {
+        esp_err_t nws_err = nws_init(cfg.latitude, cfg.longitude, display_fsm_send_event);
+        if (nws_err == ESP_OK) {
+            ESP_LOGI(TAG, "[BOOT] NWS weather task started");
+        } else {
+            ESP_LOGW(TAG, "[BOOT] NWS init failed: %s (weather disabled)",
+                     esp_err_to_name(nws_err));
+        }
+    } else {
+        ESP_LOGI(TAG, "[BOOT] NWS weather: %s",
+                 !cfg.wifi_configured ? "skipped (no WiFi)" : "disabled in settings");
+    }
+
     boot_await_launch();        // blocks 60 s or until POST /debug/launch
     boot_spiffs_mount();        // SPIFFS only needed for B:/splash.png — defer until here
     boot_display_init(&cfg);    // LVGL init — after rollback boundary
-    {
-        time_t now;
-        struct tm ti;
-        time_sync_get_local(&now, &ti);
-        ui_set_clock_context(&ti, &cfg);
-        ESP_LOGI(TAG, "[BOOT] Clock context set: %04d-%02d-%02d %02d:%02d:%02d, bg='%s'",
-                 ti.tm_year+1900, ti.tm_mon+1, ti.tm_mday,
-                 ti.tm_hour, ti.tm_min, ti.tm_sec,
-                 cfg.background_image);
-    }
+
     set_boot_stage("ui_show_splash");
     ESP_LOGI(TAG, "[BOOT] ui_show_splash...");
     ui_show_splash();
     ESP_LOGI(TAG, "[BOOT] ui_show_splash done");
-    set_boot_stage("ui_launch");
-    ESP_LOGI(TAG, "[BOOT] ui_launch_clock...");
-    ui_launch_clock();
-    ESP_LOGI(TAG, "[BOOT] ui_launch_clock done — entering health loop");
+
+    // Display FSM takes ownership of the clock display.
+    // Creates ClockWidget, loads background + Lottie, registers gestures,
+    // starts clock update timer. Replaces the old ui_launch_clock() path.
+    set_boot_stage("fsm_init");
+    ESP_LOGI(TAG, "[BOOT] display_fsm_init...");
+    display_fsm_init();
+    ESP_LOGI(TAG, "[BOOT] display_fsm_init done — entering health loop");
     set_boot_stage("health_loop");
     boot_health_loop();         // never returns
 }

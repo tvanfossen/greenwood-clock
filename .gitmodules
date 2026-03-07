@@ -1,6 +1,6 @@
 [submodule "components/lvgl"]
 	path = components/lvgl
-	url = https://github.com/lvgl/lvgl
+	url = https://github.com/tvanfossen/lvgl
 [submodule "components/cjson/cjson"]
 	path = components/cjson/cjson
 	url = https://github.com/DaveGamble/cJSON.git

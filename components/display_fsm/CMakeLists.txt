@@ -1,0 +1,42 @@
+# components/display_fsm/CMakeLists.txt
+
+idf_component_register(
+    SRCS
+        "src/display_fsm_task.cpp"
+        "src/display_fsm_base.cpp"
+        "src/display_scheduler.cpp"
+        "src/clock_widget.c"
+        "src/weather_widgets.c"
+        "src/particle_effects.c"
+        "src/alert_banner.c"
+        "src/radar_view.c"
+        "src/astro_calc.c"
+        "src/image_rotator.c"
+        "src/json_layout.c"
+        "src/state_clock.cpp"
+        "src/state_weather.cpp"
+        "src/state_radar.cpp"
+        "src/state_astronomy.cpp"
+        "src/state_photos.cpp"
+        "src/state_ambient.cpp"
+        "src/state_surprise.cpp"
+        "src/state_settings.cpp"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        lvgl
+        esp_lvgl_port
+        freertos
+        settings
+        fonts
+        display_events
+    PRIV_REQUIRES
+        network
+        sdcard
+        nws
+        cjson
+        esp_netif
+        esp32_p4_function_ev_board
+        time_sync
+        ui
+)

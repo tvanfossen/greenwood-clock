@@ -21,6 +21,9 @@ idf_component_register(
         sdcard                      # SD card support
         http_api                    # HTTP server for file management
         debug_log                   # Debug log capture to SD card
+        display_fsm                 # Display state machine
+        nws                         # NWS weather service
+        mdns                        # mDNS service advertisement
 )
 spiffs_create_partition_image(storage ../spiffs FLASH_IN_PROJECT)
 

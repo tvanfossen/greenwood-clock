@@ -28,6 +28,17 @@ static const clock_settings_t default_settings = {
     .enable_weather = true,
     .enable_touch = true,
     .ota_server_url = "http://192.168.1.96:8000",
+    // Display schedule defaults (seconds)
+    .weather_show_s     = 30,
+    .weather_cooldown_s = 1800,     // 30 min
+    .radar_show_s       = 30,
+    .radar_cooldown_s   = 1800,     // 30 min
+    .astro_show_s       = 30,
+    .astro_cooldown_s   = 43200,    // 12 hours (uint16 max = 65535 ≈ 18h, plenty)
+    .photos_interval_s  = 1800,     // 30 min
+    .photos_show_s      = 30,
+    .ambient_interval_s = 2700,     // 45 min
+    .ambient_show_s     = 30,
 };
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
