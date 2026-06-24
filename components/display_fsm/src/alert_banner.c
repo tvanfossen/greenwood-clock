@@ -11,8 +11,9 @@
 
 static const char *TAG = "alert_banner";
 
-#define BANNER_HEIGHT   50
-#define SCROLL_SPEED_MS 8000  // time to scroll full width
+// Local alias — canonical value is ALERT_BANNER_HEIGHT in display_widgets.h
+#define BANNER_HEIGHT   ALERT_BANNER_HEIGHT
+#define SCROLL_SPEED_PX_SEC 15  // pixels/second for circular scroll
 
 struct alert_banner_t {
     lv_obj_t *container;
@@ -55,6 +56,9 @@ alert_banner_t *alert_banner_create(lv_obj_t *parent)
     lv_obj_set_style_text_font(b->lbl_headline, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(b->lbl_headline, lv_color_white(), 0);
     lv_label_set_long_mode(b->lbl_headline, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    // LVGL 9 uses anim_duration with speed-encoded value (lv_anim_speed converts
+    // px/sec → internal representation resolved by lv_anim_resolve_speed at runtime).
+    lv_obj_set_style_anim_duration(b->lbl_headline, lv_anim_speed(SCROLL_SPEED_PX_SEC), 0);
     lv_obj_set_width(b->lbl_headline, 1000);
     lv_obj_align(b->lbl_headline, LV_ALIGN_CENTER, 0, 0);
     lv_label_set_text(b->lbl_headline, "");
@@ -67,7 +71,10 @@ alert_banner_t *alert_banner_create(lv_obj_t *parent)
 void alert_banner_destroy(alert_banner_t *b)
 {
     if (!b) return;
-    if (b->container) lv_obj_del(b->container);
+    if (b->container) {
+        lv_anim_delete(b->container, NULL);
+        lv_obj_delete(b->container);
+    }
     lv_free(b);
     ESP_LOGI(TAG, "AlertBanner destroyed");
 }

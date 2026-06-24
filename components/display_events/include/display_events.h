@@ -49,6 +49,7 @@ typedef enum {
     DISPLAY_EVT_FORCE_STATE,         // web control override (bypasses debounce)
     DISPLAY_EVT_SCHEDULE_CONFIG,     // update display durations/cooldowns
     DISPLAY_EVT_CLOCK_UPDATE,        // time tick → update clock widget
+    DISPLAY_EVT_REFRESH_BG,          // reload clock background from settings
 } display_event_type_t;
 
 // ---------------------------------------------------------------------------

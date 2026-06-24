@@ -10,6 +10,10 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
+#include <dirent.h>
+#include <string.h>
+#include <strings.h>
+#include <sys/stat.h>
 
 static const char *TAG = "scheduler";
 
@@ -55,6 +59,25 @@ static void ambient_trigger_cb(TimerHandle_t timer)
 // ---------------------------------------------------------------------------
 // Implementation
 // ---------------------------------------------------------------------------
+
+// True if /sdcard/photos contains at least one .png file.
+static bool photos_dir_has_png(void)
+{
+    DIR *d = opendir("/sdcard/photos");
+    if (!d) return false;
+
+    bool found = false;
+    struct dirent *ent;
+    while (!found && (ent = readdir(d)) != NULL) {
+        if (ent->d_type != DT_REG) continue;
+        size_t len = strlen(ent->d_name);
+        if (len >= 4 && strcasecmp(ent->d_name + len - 4, ".png") == 0) {
+            found = true;
+        }
+    }
+    closedir(d);
+    return found;
+}
 
 void DisplayScheduler::init(void)
 {
@@ -105,10 +128,19 @@ void DisplayScheduler::init(void)
     uint32_t photo_ms   = (uint32_t)cfg.photos_interval_s * 1000;
     uint32_t ambient_ms = (uint32_t)cfg.ambient_interval_s * 1000;
 
+    // Check if photos directory has any PNG files — disable state if empty
+    bool photos_available = photos_dir_has_png();
+
     m_photo_timer = xTimerCreate("fsm_photo", pdMS_TO_TICKS(photo_ms),
                                   pdTRUE, nullptr, photo_trigger_cb);
     configASSERT(m_photo_timer);
-    xTimerStart(m_photo_timer, 0);
+    if (photos_available) {
+        xTimerStart(m_photo_timer, 0);
+    } else {
+        StateConfig *photo_cfg = find_config(DISPLAY_STATE_PHOTOS);
+        if (photo_cfg) photo_cfg->enabled = false;
+        ESP_LOGI(TAG, "Photos disabled — no PNG files in /sdcard/photos");
+    }
 
     m_ambient_timer = xTimerCreate("fsm_ambient", pdMS_TO_TICKS(ambient_ms),
                                     pdTRUE, nullptr, ambient_trigger_cb);

@@ -14,6 +14,9 @@ extern "C" {
 #include <stdbool.h>
 #include <time.h>
 
+// Height of alert banner — used by clock widget and states to offset content
+#define ALERT_BANNER_HEIGHT 50
+
 // ---------------------------------------------------------------------------
 // ClockWidget — time/date display with full/minimized modes
 // ---------------------------------------------------------------------------
@@ -21,6 +24,7 @@ extern "C" {
 typedef enum {
     CLOCK_MODE_FULL,        // 256pt time, centered
     CLOCK_MODE_MINIMIZED,   // 128pt time, top-right corner
+    CLOCK_MODE_TOPBAR,      // 48pt time, full-width thin bar at top
 } clock_mode_t;
 
 typedef struct clock_widget_t clock_widget_t;
@@ -60,6 +64,16 @@ void clock_widget_set_color(clock_widget_t *w, lv_color_t color);
  */
 clock_mode_t clock_widget_get_mode(const clock_widget_t *w);
 
+/**
+ * @brief Apply a small render-time translation to the clock container for
+ * burn-in mitigation. Offsets are clamped to ±4 px; values outside that
+ * range are saturated. The translation is purely visual (LVGL translate_x/y
+ * style) and does not affect the container's logical position used by
+ * mode/animation logic.
+ * Caller must hold LVGL lock.
+ */
+void clock_widget_set_jitter(clock_widget_t *w, int8_t dx, int8_t dy);
+
 // ---------------------------------------------------------------------------
 // WeatherCard — current conditions display
 // ---------------------------------------------------------------------------
@@ -72,7 +86,17 @@ typedef struct weather_card_t weather_card_t;
 weather_card_t *weather_card_create(lv_obj_t *parent);
 void weather_card_destroy(weather_card_t *w);
 void weather_card_update(weather_card_t *w, const struct nws_conditions_t *cond);
+void weather_card_set_color(weather_card_t *w, lv_color_t primary, lv_color_t secondary);
 lv_obj_t *weather_card_container(const weather_card_t *w);
+
+/**
+ * @brief Load a Lottie condition animation into the weather card.
+ * Matches condition_desc to a Lottie file in A:/lottie/weather/{day,night}/.
+ * Spawns a background load task. No-op if Lottie not enabled or file missing.
+ * Caller must hold LVGL lock.
+ */
+void weather_card_load_condition_lottie(weather_card_t *w, const char *condition_desc,
+                                         bool is_daytime);
 
 // ---------------------------------------------------------------------------
 // ForecastStrip — 7-day forecast bar
@@ -85,6 +109,7 @@ typedef struct forecast_strip_t forecast_strip_t;
 forecast_strip_t *forecast_strip_create(lv_obj_t *parent);
 void forecast_strip_destroy(forecast_strip_t *s);
 void forecast_strip_update(forecast_strip_t *s, const struct nws_forecast_t *fc);
+void forecast_strip_set_color(forecast_strip_t *s, lv_color_t primary, lv_color_t secondary);
 lv_obj_t *forecast_strip_container(const forecast_strip_t *s);
 
 // ---------------------------------------------------------------------------
@@ -140,7 +165,12 @@ typedef struct radar_view_t radar_view_t;
 
 radar_view_t *radar_view_create(lv_obj_t *parent, float lat, float lon);
 void radar_view_destroy(radar_view_t *rv);
-void radar_view_set_radar(radar_view_t *rv, const uint8_t *png_data, size_t len);
+
+// Two-phase radar overlay: predecode runs without LVGL lock (~500ms),
+// apply_radar runs with LVGL lock (instant pointer swap).
+void radar_view_predecode(const uint8_t *png_data, size_t len);
+void radar_view_apply_radar(radar_view_t *rv);
+
 lv_obj_t *radar_view_container(const radar_view_t *rv);
 
 // ---------------------------------------------------------------------------
@@ -149,10 +179,14 @@ lv_obj_t *radar_view_container(const radar_view_t *rv);
 
 typedef struct image_rotator_t image_rotator_t;
 
-image_rotator_t *image_rotator_create(lv_obj_t *parent, const char *dir_path);
+// start_index: first image to show (clamped into range); lets the slideshow
+// resume where a previous visit left off instead of always restarting at 0.
+image_rotator_t *image_rotator_create(lv_obj_t *parent, const char *dir_path,
+                                      int start_index);
 void image_rotator_destroy(image_rotator_t *r);
 void image_rotator_advance(image_rotator_t *r);
 int  image_rotator_count(const image_rotator_t *r);
+int  image_rotator_index(const image_rotator_t *r);
 
 // ---------------------------------------------------------------------------
 // JsonLayout — creates LVGL widgets from JSON DSL

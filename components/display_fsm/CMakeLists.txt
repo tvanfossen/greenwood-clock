@@ -10,6 +10,7 @@ idf_component_register(
         "src/particle_effects.c"
         "src/alert_banner.c"
         "src/radar_view.c"
+        "src/image_decode.c"
         "src/astro_calc.c"
         "src/image_rotator.c"
         "src/json_layout.c"
@@ -35,8 +36,8 @@ idf_component_register(
         sdcard
         nws
         cjson
+        esp_mm
         esp_netif
         esp32_p4_function_ev_board
         time_sync
-        ui
 )

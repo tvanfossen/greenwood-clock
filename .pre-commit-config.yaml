@@ -1,11 +1,12 @@
 repos:
   - repo: https://github.com/brandon-arrendondo/knots
-    rev: 1.0.0
+    rev: v1.8.3
     hooks:
       - id: knots
         args:
           - --cognitive-threshold=15
-        exclude: ^(managed_components/|components/lvgl/|components/cjson/)
+        # Vendored / external code only — we hold our own source to the standard.
+        exclude: ^(managed_components/|components/lvgl/|components/cjson/|components/display_fsm/src/stb_image\.h$)
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.4.4

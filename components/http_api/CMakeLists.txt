@@ -7,7 +7,6 @@ idf_component_register(
         esp_timer
         debug_log
         udp_log
-        ui
         ota
         secrets
         freertos

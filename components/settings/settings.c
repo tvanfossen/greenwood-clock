@@ -23,7 +23,7 @@ static const clock_settings_t default_settings = {
     .brightness = 50,
     .clock_update_ms = 60000,
     .weather_update_ms = 1800000,
-    .background_image = "A:/splash.png",  // A: maps to /sdcard, so A:/splash.png = /sdcard/splash.png
+    .background_image = "A:/backgrounds/splash.png",
     .text_color = 0xFFFFFF,  // Default to white (RGB888)
     .enable_weather = true,
     .enable_touch = true,
@@ -82,19 +82,29 @@ static bool settings_nvs_read(nvs_handle_t handle, clock_settings_t* out)
 }
 
 /**
- * @brief Log a summary of the loaded settings to INFO.
+ * @brief Log a summary of the loaded settings.
+ *
+ * Logs at INFO on first call, DEBUG thereafter (reduces noise from
+ * repeated settings_load calls during state transitions).
  *
  * @param out  Loaded settings.
  */
 static void settings_log_load_result(const clock_settings_t* out)
 {
-    ESP_LOGI(TAG, "Settings loaded — WiFi configured: %s",
-             out->wifi_configured ? "yes" : "no");
-    if (out->wifi_configured) {
-        ESP_LOGI(TAG, "  SSID: %s", out->wifi_ssid);
+    static bool s_first_load = true;
+    if (s_first_load) {
+        ESP_LOGI(TAG, "Settings loaded — WiFi configured: %s",
+                 out->wifi_configured ? "yes" : "no");
+        if (out->wifi_configured) {
+            ESP_LOGI(TAG, "  SSID: %s", out->wifi_ssid);
+        }
+        ESP_LOGI(TAG, "  Brightness: %d%%", out->brightness);
+        ESP_LOGI(TAG, "  Location: %.3f, %.3f", out->latitude, out->longitude);
+        s_first_load = false;
+    } else {
+        ESP_LOGD(TAG, "Settings loaded (WiFi=%s, brightness=%d%%)",
+                 out->wifi_configured ? "yes" : "no", out->brightness);
     }
-    ESP_LOGI(TAG, "  Brightness: %d%%", out->brightness);
-    ESP_LOGI(TAG, "  Location: %.3f, %.3f", out->latitude, out->longitude);
 }
 
 /**

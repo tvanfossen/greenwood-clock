@@ -34,7 +34,6 @@ struct WeatherOverlay : DisplayFsm
 {
     static weather_card_t    *s_card;
     static forecast_strip_t  *s_strip;
-    static particle_system_t *s_particles;
 
     void entry() override;
     void exit() override;

@@ -11,6 +11,13 @@
 
 static const char *TAG = "particles";
 
+// Wrapper for lv_obj_set_style_opa — lv_anim_exec_xcb_t is (void*, int32_t)
+// but lv_obj_set_style_opa takes 3 args; casting directly leaves selector as garbage.
+static void sparkle_opa_cb(void *obj, int32_t v)
+{
+    lv_obj_set_style_opa((lv_obj_t *)obj, (lv_opa_t)v, 0);
+}
+
 #define MAX_PARTICLES 50
 
 // ---- Pre-defined configs ----
@@ -147,7 +154,7 @@ particle_system_t *particle_system_create(lv_obj_t *parent, const particle_confi
             lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
             lv_anim_set_playback_time(&a, cfg->fall_time_ms);
             lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
-            lv_anim_set_exec_cb(&a, (lv_anim_exec_xcb_t)lv_obj_set_style_opa);
+            lv_anim_set_exec_cb(&a, sparkle_opa_cb);
             lv_anim_start(&a);
         } else {
             // Falling: animate Y from start_y to screen_h + margin
@@ -188,8 +195,8 @@ void particle_system_destroy(particle_system_t *ps)
     if (!ps) return;
     for (int i = 0; i < ps->count; i++) {
         if (ps->particles[i]) {
-            lv_anim_del(ps->particles[i], NULL);  // stop all anims on this var
-            lv_obj_del(ps->particles[i]);
+            lv_anim_delete(ps->particles[i], NULL);
+            lv_obj_delete(ps->particles[i]);
         }
     }
     lv_free(ps);

@@ -30,6 +30,30 @@ struct clock_widget_t {
 };
 
 // ---------------------------------------------------------------------------
+// Position constants for full / minimized modes
+// ---------------------------------------------------------------------------
+
+// All non-full modes reserve ALERT_BANNER_HEIGHT (50px) at the top so the alert
+// banner never overlaps minimized/topbar content.  Full mode keeps y=8 because the
+// 256pt time text is tall enough that a 50px banner overlap is < 7% and acceptable.
+//
+// Full mode:      1008×350 at (8, 8)
+// Minimized:      420×180  at (588, 58)  — 8px below alert zone
+// Topbar:         1008×56  at (8, 54)    — 4px below alert zone
+#define FULL_X  8
+#define FULL_Y  8
+#define FULL_W  1008
+#define FULL_H  350
+#define MIN_W   420
+#define MIN_X   (1024 - MIN_W - 16)  // right-aligned with 16px margin
+#define MIN_Y   (ALERT_BANNER_HEIGHT + 8)   // 58 — below alert banner zone
+#define MIN_H   180
+#define BAR_X   8
+#define BAR_Y   (ALERT_BANNER_HEIGHT + 4)   // 54 — below alert banner zone
+#define BAR_W   1008
+#define BAR_H   56
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -44,19 +68,21 @@ static void format_time(const struct tm *ti, char *buf_time, size_t time_sz,
     strftime(buf_date, date_sz, "%A, %B, %d", ti);
 }
 
-static void apply_full_mode(clock_widget_t *w)
+// Apply fonts and inner label alignment for full mode.
+// Does NOT touch container position/size — that's handled by animation or snap_to().
+static void apply_full_layout(clock_widget_t *w)
 {
-    // Container: full width, tall, centered
-    lv_obj_set_size(w->container, 1008, 350);
-    lv_obj_align(w->container, LV_ALIGN_TOP_MID, 0, 8);
-
     // Time: 256pt, centered in container
     lv_obj_set_style_text_font(w->lbl_time, &nunito_256, 0);
     lv_obj_align(w->lbl_time, LV_ALIGN_TOP_MID, 0, 24);
 
-    // AM/PM: 48pt, right of time
+    // AM/PM: 48pt, visual text-bottom aligned with time.
+    // y_ofs = -(nunito_256.base_line - nunito_48.base_line) = -(53 - 10) = -43
+    // Verified: LV_ALIGN_OUT_RIGHT_BOTTOM sets y = h(base)-h(obj)+y_ofs = 265-50-43 = 172
+    //   time baseline  = 265 - 53 = 212
+    //   ampm baseline  = 172 + 50 - 10 = 212  (same pixel row)
     lv_obj_set_style_text_font(w->lbl_ampm, &nunito_48, 0);
-    lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_MID, 160, 0);
+    lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_BOTTOM, 8, -43);
 
     // Date: 48pt, bottom center
     lv_obj_set_style_text_font(w->lbl_date, &nunito_48, 0);
@@ -65,25 +91,57 @@ static void apply_full_mode(clock_widget_t *w)
     lv_obj_clear_flag(w->container, LV_OBJ_FLAG_HIDDEN);
 }
 
-static void apply_minimized_mode(clock_widget_t *w)
+// Apply fonts and inner label alignment for minimized mode.
+// Does NOT touch container position/size — that's handled by animation or snap_to().
+static void apply_minimized_layout(clock_widget_t *w)
 {
-    // Container: smaller, top-right corner
-    lv_obj_set_size(w->container, 300, 180);
-    lv_obj_align(w->container, LV_ALIGN_TOP_RIGHT, -16, 8);
-
     // Time: 128pt
     lv_obj_set_style_text_font(w->lbl_time, &nunito_128, 0);
     lv_obj_align(w->lbl_time, LV_ALIGN_TOP_MID, 0, 0);
 
-    // AM/PM: 48pt, right of time
+    // AM/PM: 48pt, visual text-bottom aligned with time.
+    // y_ofs = -(nunito_128.base_line - nunito_48.base_line) = -(27 - 10) = -17
+    // Verified: y = h(base)-h(obj)+y_ofs = 133-50-17 = 66
+    //   time baseline  = 133 - 27 = 106
+    //   ampm baseline  = 66 + 50 - 10 = 106  (same pixel row)
     lv_obj_set_style_text_font(w->lbl_ampm, &nunito_48, 0);
-    lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
+    lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_BOTTOM, 8, -17);
 
-    // Date: 48pt, below time but smaller
+    // Date: 24pt, below time
     lv_obj_set_style_text_font(w->lbl_date, &lv_font_montserrat_24, 0);
     lv_obj_align(w->lbl_date, LV_ALIGN_BOTTOM_MID, 0, -4);
 
     lv_obj_clear_flag(w->container, LV_OBJ_FLAG_HIDDEN);
+}
+
+// Apply fonts and inner label alignment for topbar mode (thin strip, settings use).
+// Does NOT touch container position/size — that's handled by animation or snap_to().
+static void apply_topbar_layout(clock_widget_t *w)
+{
+    // Time: 48pt, left-aligned
+    lv_obj_set_style_text_font(w->lbl_time, &nunito_48, 0);
+    lv_obj_align(w->lbl_time, LV_ALIGN_LEFT_MID, 8, 0);
+
+    // AM/PM: 24pt, right of time
+    lv_obj_set_style_text_font(w->lbl_ampm, &lv_font_montserrat_24, 0);
+    lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
+
+    // Date: 24pt, right-aligned
+    lv_obj_set_style_text_font(w->lbl_date, &lv_font_montserrat_24, 0);
+    lv_obj_align(w->lbl_date, LV_ALIGN_RIGHT_MID, -8, 0);
+
+    lv_obj_clear_flag(w->container, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void mode_geometry(clock_mode_t mode, int32_t *x, int32_t *y, int32_t *w, int32_t *h);
+
+// Snap container to a mode's target position/size immediately (no animation).
+static void snap_to(clock_widget_t *w, clock_mode_t mode)
+{
+    int32_t x, y, mw, mh;
+    mode_geometry(mode, &x, &y, &mw, &mh);
+    lv_obj_set_pos(w->container, x, y);
+    lv_obj_set_size(w->container, mw, mh);
 }
 
 // ---------------------------------------------------------------------------
@@ -101,12 +159,17 @@ clock_widget_t *clock_widget_create(lv_obj_t *parent)
     w->color = lv_color_white();
     w->mode  = CLOCK_MODE_FULL;
 
-    // Transparent container — groups labels for easy repositioning
+    // Transparent container — groups labels for easy repositioning.
+    // OVERFLOW_VISIBLE: AM/PM is positioned LV_ALIGN_OUT_RIGHT_BOTTOM past
+    // the time label's right edge; in MINIMIZED mode that pushes it just
+    // past the container's right edge. Without overflow-visible the "M"
+    // gets clipped, leaving only "P".
     w->container = lv_obj_create(parent);
     lv_obj_set_style_bg_opa(w->container, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(w->container, 0, 0);
     lv_obj_set_style_pad_all(w->container, 8, 0);
-    lv_obj_clear_flag(w->container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(w->container, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(w->container, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
 
     // Time label
     w->lbl_time = lv_label_create(w->container);
@@ -125,7 +188,8 @@ clock_widget_t *clock_widget_create(lv_obj_t *parent)
     lv_obj_set_style_text_align(w->lbl_date, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(w->lbl_date, "");
 
-    apply_full_mode(w);
+    apply_full_layout(w);
+    snap_to(w, CLOCK_MODE_FULL);
     ESP_LOGI(TAG, "ClockWidget created");
     return w;
 }
@@ -134,7 +198,8 @@ void clock_widget_destroy(clock_widget_t *w)
 {
     if (!w) return;
     if (w->container) {
-        lv_obj_del(w->container);
+        lv_anim_delete(w->container, NULL);
+        lv_obj_delete(w->container);
     }
     lv_free(w);
     ESP_LOGI(TAG, "ClockWidget destroyed");
@@ -152,6 +217,19 @@ void clock_widget_update(clock_widget_t *w, const struct tm *ti)
     lv_label_set_text(w->lbl_time, buf_time);
     lv_label_set_text(w->lbl_ampm, buf_ampm);
     lv_label_set_text(w->lbl_date, buf_date);
+
+    // Re-align AM/PM after time text change (width varies by digit glyphs)
+    switch (w->mode) {
+        case CLOCK_MODE_FULL:
+            lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_BOTTOM, 8, -43);
+            break;
+        case CLOCK_MODE_MINIMIZED:
+            lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_BOTTOM, 8, -17);
+            break;
+        case CLOCK_MODE_TOPBAR:
+            lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
+            break;
+    }
 }
 
 static void anim_x_cb(void *obj, int32_t v) { lv_obj_set_x((lv_obj_t *)obj, v); }
@@ -164,12 +242,12 @@ static void animate_container(lv_obj_t *cont,
                                int32_t x1, int32_t y1, int32_t w1, int32_t h1)
 {
     lv_anim_t a;
-    uint32_t dur = 250;
+    uint32_t dur = 420;   // longer + ease_in_out for a smoother, less abrupt morph
 
     lv_anim_init(&a);
     lv_anim_set_var(&a, cont);
     lv_anim_set_duration(&a, dur);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
 
     lv_anim_set_values(&a, x0, x1);
     lv_anim_set_exec_cb(&a, anim_x_cb);
@@ -188,36 +266,42 @@ static void animate_container(lv_obj_t *cont,
     lv_anim_start(&a);
 }
 
-// Full mode: container 1008×350 at top-center (x ≈ 8, y = 8)
-// Minimized: container 300×180 at top-right (x ≈ 708, y = 8)
-#define FULL_X  8
-#define FULL_Y  8
-#define FULL_W  1008
-#define FULL_H  350
-#define MIN_X   708
-#define MIN_Y   8
-#define MIN_W   300
-#define MIN_H   180
+// Get position/size for a mode (avoids repeating constants in animation logic).
+static void mode_geometry(clock_mode_t mode, int32_t *x, int32_t *y, int32_t *w, int32_t *h)
+{
+    switch (mode) {
+        case CLOCK_MODE_FULL:      *x = FULL_X; *y = FULL_Y; *w = FULL_W; *h = FULL_H; break;
+        case CLOCK_MODE_TOPBAR:    *x = BAR_X;  *y = BAR_Y;  *w = BAR_W;  *h = BAR_H;  break;
+        case CLOCK_MODE_MINIMIZED:
+        default:                   *x = MIN_X;  *y = MIN_Y;  *w = MIN_W;  *h = MIN_H;  break;
+    }
+}
 
 void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
 {
     if (!w || w->mode == mode) return;
 
-    // Apply font/layout for target mode immediately (fonts can't be animated)
-    if (mode == CLOCK_MODE_FULL) {
-        apply_full_mode(w);
-        // Animate container from minimized position to full position
-        animate_container(w->container, MIN_X, MIN_Y, MIN_W, MIN_H,
-                                         FULL_X, FULL_Y, FULL_W, FULL_H);
-    } else {
-        apply_minimized_mode(w);
-        // Animate container from full position to minimized position
-        animate_container(w->container, FULL_X, FULL_Y, FULL_W, FULL_H,
-                                         MIN_X, MIN_Y, MIN_W, MIN_H);
+    clock_mode_t old_mode = w->mode;
+
+    // Snap container to target size FIRST so align_to resolves correctly
+    // against the final geometry. Then apply fonts + alignment.
+    int32_t ox, oy, ow, oh, nx, ny, nw, nh;
+    mode_geometry(old_mode, &ox, &oy, &ow, &oh);
+    mode_geometry(mode,     &nx, &ny, &nw, &nh);
+    snap_to(w, mode);
+
+    switch (mode) {
+        case CLOCK_MODE_FULL:      apply_full_layout(w);      break;
+        case CLOCK_MODE_TOPBAR:    apply_topbar_layout(w);    break;
+        case CLOCK_MODE_MINIMIZED: apply_minimized_layout(w); break;
     }
 
+    // Animate container position/size from old → new (visual transition)
+    animate_container(w->container, ox, oy, ow, oh, nx, ny, nw, nh);
+
     w->mode = mode;
-    ESP_LOGI(TAG, "ClockWidget mode → %s (animated)", mode == CLOCK_MODE_FULL ? "FULL" : "MINIMIZED");
+    static const char *mode_names[] = {"FULL", "MINIMIZED", "TOPBAR"};
+    ESP_LOGI(TAG, "ClockWidget mode → %s (animated)", mode_names[mode]);
 }
 
 void clock_widget_set_color(clock_widget_t *w, lv_color_t color)
@@ -232,4 +316,15 @@ void clock_widget_set_color(clock_widget_t *w, lv_color_t color)
 clock_mode_t clock_widget_get_mode(const clock_widget_t *w)
 {
     return w ? w->mode : CLOCK_MODE_FULL;
+}
+
+void clock_widget_set_jitter(clock_widget_t *w, int8_t dx, int8_t dy)
+{
+    if (!w || !w->container) return;
+    if (dx >  4) dx =  4;
+    if (dx < -4) dx = -4;
+    if (dy >  4) dy =  4;
+    if (dy < -4) dy = -4;
+    lv_obj_set_style_translate_x(w->container, (int32_t)dx, 0);
+    lv_obj_set_style_translate_y(w->container, (int32_t)dy, 0);
 }

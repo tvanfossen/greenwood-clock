@@ -1,7 +1,7 @@
 // components/nws/src/nws_task.c
 //
 // FreeRTOS task: staggered polling of NWS endpoints, delivering events to
-// the display FSM.  Single task, priority 3, 8 KB stack.
+// the display FSM.  Single task, priority 3, 12 KB stack.
 
 #include "nws_internal.h"
 
@@ -24,12 +24,17 @@ static void send_event(const display_event_t *evt)
 #define RADAR_INTERVAL_S        (10 * 60)   // 10 minutes
 #define KP_INTERVAL_S           (3 * 3600)  // 3 hours
 
-// Stagger initial fetches so they don't all fire at once
-#define INITIAL_DELAY_S         5
+// Stagger initial fetches — longer initial delay lets WiFi/TLS stabilize
+#define INITIAL_DELAY_S         15
 #define STAGGER_S               10
 
 // Aurora visibility threshold for latitude ~43°N
 #define AURORA_KP_THRESHOLD     6.0f
+
+// Backoff when all fetches fail (network down / DRAM exhaustion)
+#define BACKOFF_BASE_S          300     // 5 minutes
+#define BACKOFF_MAX_S           1800    // 30 minutes
+#define BACKOFF_HEAP_MIN        4000    // skip fetches if internal DRAM below 4KB
 
 // ---------------------------------------------------------------------------
 // Cached data (thread-safe: written only by nws_task, read by accessors)
@@ -98,6 +103,174 @@ static void alerts_snapshot(const nws_alerts_t *alerts)
 // Task
 // ---------------------------------------------------------------------------
 
+// Per-source last-fetch ticks and per-cycle attempt/fail counters.
+typedef struct {
+    TickType_t conditions, forecast, alerts, radar, kp;
+} poll_ticks_t;
+
+typedef struct {
+    int attempted, failed;
+} poll_stats_t;
+
+// True if a source is due (never fetched, or its interval has elapsed).
+static bool poll_due(TickType_t now, TickType_t last, uint32_t interval_s)
+{
+    return last == 0 || (now - last) >= pdMS_TO_TICKS(interval_s * 1000);
+}
+
+static void send_simple_event(display_event_type_t type)
+{
+    display_event_t evt = {};
+    evt.type = type;
+    send_event(&evt);
+}
+
+// Stagger between fetches in a cycle, then refresh `now`.
+static void poll_stagger(TickType_t *now)
+{
+    vTaskDelay(pdMS_TO_TICKS(STAGGER_S * 1000));
+    *now = xTaskGetTickCount();
+}
+
+static void poll_conditions(TickType_t *now, TickType_t *last, poll_stats_t *st)
+{
+    if (!poll_due(*now, *last, CONDITIONS_INTERVAL_S)) return;
+    st->attempted++;
+    esp_err_t err = nws_fetch_conditions(&s_location, &s_conditions);
+    if (err == ESP_OK) {
+        send_simple_event(DISPLAY_EVT_WEATHER_UPDATE);
+    } else {
+        st->failed++;
+        ESP_LOGW(TAG, "conditions fetch failed: %s", esp_err_to_name(err));
+    }
+    *last = xTaskGetTickCount();
+    poll_stagger(now);
+}
+
+static void poll_forecast(TickType_t *now, TickType_t *last, poll_stats_t *st)
+{
+    if (!poll_due(*now, *last, FORECAST_INTERVAL_S)) return;
+    st->attempted++;
+    esp_err_t err = nws_fetch_forecast(&s_location, &s_forecast);
+    if (err == ESP_OK) {
+        send_simple_event(DISPLAY_EVT_FORECAST_UPDATE);
+    } else {
+        st->failed++;
+        ESP_LOGW(TAG, "forecast fetch failed: %s", esp_err_to_name(err));
+    }
+    *last = xTaskGetTickCount();
+    poll_stagger(now);
+}
+
+// Adopt freshly-fetched alerts, emitting an event only when they changed.
+static void process_alerts(const nws_alerts_t *new_alerts)
+{
+    bool changed = alerts_changed(new_alerts);
+    memcpy(&s_alerts, new_alerts, sizeof(s_alerts));
+    if (changed) {
+        alerts_snapshot(&s_alerts);
+        send_simple_event(DISPLAY_EVT_ALERT_RECEIVED);
+        ESP_LOGI(TAG, "alert change: %d active", s_alerts.alert_count);
+    }
+}
+
+static void poll_alerts(float lat, float lon, TickType_t *now,
+                        TickType_t *last, poll_stats_t *st)
+{
+    if (!poll_due(*now, *last, ALERTS_INTERVAL_S)) return;
+    st->attempted++;
+    // Heap-allocated: nws_alerts_t is ~17KB (too large for stack).
+    nws_alerts_t *new_alerts = (nws_alerts_t *)malloc(sizeof(nws_alerts_t));
+    if (!new_alerts) {
+        st->failed++;
+        ESP_LOGE(TAG, "alerts: malloc failed (%zu B)", sizeof(nws_alerts_t));
+    } else {
+        esp_err_t err = nws_fetch_alerts(lat, lon, new_alerts);
+        if (err == ESP_OK) {
+            process_alerts(new_alerts);
+        } else {
+            st->failed++;
+            ESP_LOGW(TAG, "alerts fetch failed: %s", esp_err_to_name(err));
+        }
+        free(new_alerts);
+    }
+    *last = xTaskGetTickCount();
+    poll_stagger(now);
+}
+
+static void poll_radar(float lat, float lon, TickType_t *now,
+                       TickType_t *last, poll_stats_t *st)
+{
+    if (!poll_due(*now, *last, RADAR_INTERVAL_S)) return;
+    st->attempted++;
+    uint8_t *png_buf = NULL;
+    size_t   png_len = 0;
+    esp_err_t err = nws_fetch_radar(lat, lon, &png_buf, &png_len);
+    if (err == ESP_OK && png_buf) {
+        free(s_radar_png);              // swap cached radar buffer
+        s_radar_png     = png_buf;
+        s_radar_png_len = png_len;
+        ESP_LOGI(TAG, "radar cached: %zu bytes", png_len);
+        send_simple_event(DISPLAY_EVT_RADAR_READY);
+    } else {
+        st->failed++;
+        ESP_LOGW(TAG, "radar fetch failed: %s", esp_err_to_name(err));
+    }
+    *last = xTaskGetTickCount();
+    poll_stagger(now);
+}
+
+static void poll_kp(TickType_t *now, TickType_t *last, poll_stats_t *st)
+{
+    if (!poll_due(*now, *last, KP_INTERVAL_S)) return;
+    st->attempted++;
+    float kp = 0.0f;
+    esp_err_t err = nws_fetch_kp_index(&kp);
+    if (err == ESP_OK) {
+        s_kp_index = kp;
+        if (kp >= AURORA_KP_THRESHOLD) {
+            ESP_LOGW(TAG, "Aurora possible! Kp=%.1f (threshold=%.1f)",
+                     kp, AURORA_KP_THRESHOLD);
+            send_simple_event(DISPLAY_EVT_ASTRO_TRIGGER);
+        }
+    } else {
+        st->failed++;
+        ESP_LOGW(TAG, "Kp fetch failed: %s", esp_err_to_name(err));
+    }
+    *last = xTaskGetTickCount();
+    // No stagger after the final fetch of the cycle.
+}
+
+// True (and logs/sleeps) if internal DRAM is too low to safely do HTTP/TLS work.
+static bool dram_too_low_backoff(void)
+{
+    size_t internal_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    if (internal_free >= BACKOFF_HEAP_MIN) return false;
+    ESP_LOGW(TAG, "internal DRAM low (%zu B < %d) — skipping fetch cycle",
+             internal_free, BACKOFF_HEAP_MIN);
+    vTaskDelay(pdMS_TO_TICKS(BACKOFF_BASE_S * 1000));
+    return true;
+}
+
+// Exponential backoff when every attempted fetch failed; normal cadence otherwise.
+static void apply_backoff(const poll_stats_t *st, int *streak)
+{
+    if (st->attempted > 0 && st->failed == st->attempted) {
+        (*streak)++;
+        int backoff_s = BACKOFF_BASE_S * (*streak);
+        if (backoff_s > BACKOFF_MAX_S) backoff_s = BACKOFF_MAX_S;
+        ESP_LOGW(TAG, "all %d fetches failed (streak=%d) — backing off %ds",
+                 st->attempted, *streak, backoff_s);
+        vTaskDelay(pdMS_TO_TICKS(backoff_s * 1000));
+        return;
+    }
+    if (*streak > 0) {
+        ESP_LOGI(TAG, "fetch recovery after %d consecutive failures", *streak);
+    }
+    *streak = 0;
+    vTaskDelay(pdMS_TO_TICKS(60 * 1000));  // normal sleep between poll cycles
+}
+
 static void nws_task_fn(void *arg)
 {
     (void)arg;
@@ -107,122 +280,26 @@ static void nws_task_fn(void *arg)
     ESP_LOGI(TAG, "task started: lat=%.4f lon=%.4f office=%s station=%s",
              lat, lon, s_location.office, s_location.station);
 
-    // Stagger initial fetches
-    vTaskDelay(pdMS_TO_TICKS(INITIAL_DELAY_S * 1000));
+    vTaskDelay(pdMS_TO_TICKS(INITIAL_DELAY_S * 1000));  // stagger initial fetches
 
-    TickType_t last_conditions = 0;
-    TickType_t last_forecast   = 0;
-    TickType_t last_alerts     = 0;
-    TickType_t last_radar      = 0;
-    TickType_t last_kp         = 0;
+    poll_ticks_t last = {0, 0, 0, 0, 0};
+    int streak = 0;
 
     while (true) {
+        // Steady-state internal DRAM is ~15KB (TLS session reuse); only skip if
+        // dangerously low (SDMMC/LVGL starvation risk).
+        if (dram_too_low_backoff()) continue;
+
         TickType_t now = xTaskGetTickCount();
-        display_event_t evt = {};
+        poll_stats_t st = {0, 0};
 
-        // --- Conditions ---
-        if (last_conditions == 0 ||
-            (now - last_conditions) >= pdMS_TO_TICKS(CONDITIONS_INTERVAL_S * 1000)) {
-            esp_err_t err = nws_fetch_conditions(&s_location, &s_conditions);
-            if (err == ESP_OK) {
-                evt.type = DISPLAY_EVT_WEATHER_UPDATE;
-                send_event(&evt);
-            } else {
-                ESP_LOGW(TAG, "conditions fetch failed: %s", esp_err_to_name(err));
-            }
-            last_conditions = xTaskGetTickCount();
+        poll_conditions(&now, &last.conditions, &st);
+        poll_forecast(&now, &last.forecast, &st);
+        poll_alerts(lat, lon, &now, &last.alerts, &st);
+        poll_radar(lat, lon, &now, &last.radar, &st);
+        poll_kp(&now, &last.kp, &st);
 
-            // Stagger next fetch
-            vTaskDelay(pdMS_TO_TICKS(STAGGER_S * 1000));
-            now = xTaskGetTickCount();
-        }
-
-        // --- Forecast ---
-        if (last_forecast == 0 ||
-            (now - last_forecast) >= pdMS_TO_TICKS(FORECAST_INTERVAL_S * 1000)) {
-            esp_err_t err = nws_fetch_forecast(&s_location, &s_forecast);
-            if (err == ESP_OK) {
-                evt.type = DISPLAY_EVT_FORECAST_UPDATE;
-                send_event(&evt);
-            } else {
-                ESP_LOGW(TAG, "forecast fetch failed: %s", esp_err_to_name(err));
-            }
-            last_forecast = xTaskGetTickCount();
-
-            vTaskDelay(pdMS_TO_TICKS(STAGGER_S * 1000));
-            now = xTaskGetTickCount();
-        }
-
-        // --- Alerts ---
-        if (last_alerts == 0 ||
-            (now - last_alerts) >= pdMS_TO_TICKS(ALERTS_INTERVAL_S * 1000)) {
-            nws_alerts_t new_alerts;
-            esp_err_t err = nws_fetch_alerts(lat, lon, &new_alerts);
-            if (err == ESP_OK) {
-                if (alerts_changed(&new_alerts)) {
-                    memcpy(&s_alerts, &new_alerts, sizeof(s_alerts));
-                    alerts_snapshot(&s_alerts);
-                    evt.type = DISPLAY_EVT_ALERT_RECEIVED;
-                    send_event(&evt);
-                    ESP_LOGI(TAG, "alert change: %d active", s_alerts.alert_count);
-                } else {
-                    // No change — update cached data but don't send event
-                    memcpy(&s_alerts, &new_alerts, sizeof(s_alerts));
-                }
-            } else {
-                ESP_LOGW(TAG, "alerts fetch failed: %s", esp_err_to_name(err));
-            }
-            last_alerts = xTaskGetTickCount();
-
-            vTaskDelay(pdMS_TO_TICKS(STAGGER_S * 1000));
-            now = xTaskGetTickCount();
-        }
-
-        // --- Radar ---
-        if (last_radar == 0 ||
-            (now - last_radar) >= pdMS_TO_TICKS(RADAR_INTERVAL_S * 1000)) {
-            uint8_t *png_buf = NULL;
-            size_t   png_len = 0;
-            esp_err_t err = nws_fetch_radar(lat, lon, &png_buf, &png_len);
-            if (err == ESP_OK && png_buf) {
-                // Swap cached radar buffer — free old, cache new
-                free(s_radar_png);
-                s_radar_png     = png_buf;
-                s_radar_png_len = png_len;
-                ESP_LOGI(TAG, "radar cached: %zu bytes", png_len);
-                evt.type = DISPLAY_EVT_RADAR_READY;
-                send_event(&evt);
-            } else {
-                ESP_LOGW(TAG, "radar fetch failed: %s", esp_err_to_name(err));
-            }
-            last_radar = xTaskGetTickCount();
-
-            vTaskDelay(pdMS_TO_TICKS(STAGGER_S * 1000));
-            now = xTaskGetTickCount();
-        }
-
-        // --- Kp index (aurora) ---
-        if (last_kp == 0 ||
-            (now - last_kp) >= pdMS_TO_TICKS(KP_INTERVAL_S * 1000)) {
-            float kp = 0.0f;
-            esp_err_t err = nws_fetch_kp_index(&kp);
-            if (err == ESP_OK) {
-                s_kp_index = kp;
-                if (kp >= AURORA_KP_THRESHOLD) {
-                    ESP_LOGW(TAG, "Aurora possible! Kp=%.1f (threshold=%.1f)",
-                             kp, AURORA_KP_THRESHOLD);
-                    // Trigger astronomy display for aurora visibility
-                    evt.type = DISPLAY_EVT_ASTRO_TRIGGER;
-                    send_event(&evt);
-                }
-            } else {
-                ESP_LOGW(TAG, "Kp fetch failed: %s", esp_err_to_name(err));
-            }
-            last_kp = xTaskGetTickCount();
-        }
-
-        // Sleep 60s between poll cycles
-        vTaskDelay(pdMS_TO_TICKS(60 * 1000));
+        apply_backoff(&st, &streak);
     }
 }
 
@@ -250,7 +327,7 @@ esp_err_t nws_init(float lat, float lon, nws_event_cb_t event_cb)
     }
 
     // Start polling task
-    BaseType_t ret = xTaskCreate(nws_task_fn, "nws_task", 8192, NULL, 3, NULL);
+    BaseType_t ret = xTaskCreate(nws_task_fn, "nws_task", 12288, NULL, 3, NULL);
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "failed to create nws_task");
         return ESP_ERR_NO_MEM;

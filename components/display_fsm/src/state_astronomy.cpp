@@ -67,19 +67,26 @@ void Astronomy::entry()
     while (ss_local < 0) ss_local += 1440;
     while (ss_local >= 1440) ss_local -= 1440;
 
-    // Container
+    // Fixed high-contrast palette for secondary screens (NVS text_color is clock-only)
+    lv_color_t primary = lv_color_white();
+    lv_color_t secondary = lv_color_hex(0xb0b0c0);
+
+    // Container with dark semi-opaque backdrop for contrast.
+    // Y=66: reserves 50px alert banner zone + 16px margin.
     s_container = lv_obj_create(s_screen);
-    lv_obj_set_size(s_container, 700, 500);
-    lv_obj_align(s_container, LV_ALIGN_TOP_LEFT, 16, 16);
-    lv_obj_set_style_bg_opa(s_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_size(s_container, 556, 470);
+    lv_obj_align(s_container, LV_ALIGN_TOP_LEFT, 16, ALERT_BANNER_HEIGHT + 16);
+    lv_obj_set_style_bg_color(s_container, lv_color_hex(0x0a0a1e), 0);
+    lv_obj_set_style_bg_opa(s_container, LV_OPA_70, 0);
+    lv_obj_set_style_radius(s_container, 12, 0);
     lv_obj_set_style_border_width(s_container, 0, 0);
-    lv_obj_set_style_pad_all(s_container, 0, 0);
+    lv_obj_set_style_pad_all(s_container, 16, 0);
     lv_obj_clear_flag(s_container, LV_OBJ_FLAG_SCROLLABLE);
 
     // Moon phase title
     lv_obj_t *lbl_title = lv_label_create(s_container);
     lv_obj_set_style_text_font(lbl_title, &nunito_48, 0);
-    lv_obj_set_style_text_color(lbl_title, lv_color_white(), 0);
+    lv_obj_set_style_text_color(lbl_title, primary, 0);
     lv_obj_align(lbl_title, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_label_set_text(lbl_title, moon.phase_name);
 
@@ -87,7 +94,7 @@ void Astronomy::entry()
     char buf[128];
     lv_obj_t *lbl_illum = lv_label_create(s_container);
     lv_obj_set_style_text_font(lbl_illum, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(lbl_illum, lv_color_hex(0xc0c0c0), 0);
+    lv_obj_set_style_text_color(lbl_illum, secondary, 0);
     lv_obj_align(lbl_illum, LV_ALIGN_TOP_LEFT, 0, 60);
     snprintf(buf, sizeof(buf), "%.0f%% illuminated", moon.illumination_pct);
     lv_label_set_text(lbl_illum, buf);
@@ -95,7 +102,7 @@ void Astronomy::entry()
     // Next full/new moon
     lv_obj_t *lbl_next = lv_label_create(s_container);
     lv_obj_set_style_text_font(lbl_next, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(lbl_next, lv_color_hex(0x8888aa), 0);
+    lv_obj_set_style_text_color(lbl_next, secondary, 0);
     lv_obj_align(lbl_next, LV_ALIGN_TOP_LEFT, 0, 92);
     snprintf(buf, sizeof(buf), "Full in %d days  |  New in %d days",
              moon.days_to_full, moon.days_to_new);
@@ -134,7 +141,7 @@ void Astronomy::entry()
     int now_min = ti.tm_hour * 60 + ti.tm_min;
     lv_obj_t *lbl_daylight = lv_label_create(s_container);
     lv_obj_set_style_text_font(lbl_daylight, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(lbl_daylight, lv_color_hex(0x8888aa), 0);
+    lv_obj_set_style_text_color(lbl_daylight, secondary, 0);
     lv_obj_align(lbl_daylight, LV_ALIGN_TOP_LEFT, 0, 300);
 
     int daylight_h = sun.daylight_minutes / 60;
@@ -180,7 +187,7 @@ void Astronomy::entry()
 
 void Astronomy::exit()
 {
-    if (s_container) { lv_obj_del(s_container); s_container = NULL; }
+    if (s_container) { lv_anim_delete(s_container, NULL); lv_obj_delete(s_container); s_container = NULL; }
     ESP_LOGI(TAG, "Astronomy: exit");
 }
 

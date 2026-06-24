@@ -12,10 +12,33 @@ static const char *TAG = "nws_radar";
     "https://mapservices.weather.noaa.gov/eventdriven/rest/services/" \
     "radar/radar_base_reflectivity_time/ImageServer/exportImage" \
     "?bbox=%.4f,%.4f,%.4f,%.4f" \
-    "&bboxSR=4326&size=1024,600&format=png32&f=image"
+    "&bboxSR=4326&size=1024,600&format=png32&transparent=true&f=image"
 
 #define NWS_KP_URL \
     "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json"
+
+// Validate a fetched buffer as a PNG and copy it into a fresh SPIRAM buffer.
+// Returns ESP_OK (out set), ESP_ERR_NO_MEM, or ESP_FAIL (not a PNG — give up).
+static esp_err_t accept_radar_png(const char *buf, size_t len,
+                                  uint8_t **out, size_t *out_len)
+{
+    static const uint8_t png_sig[4] = {0x89, 0x50, 0x4E, 0x47};
+    if (len < 8 || memcmp(buf, png_sig, 4) != 0) {
+        ESP_LOGE(TAG, "radar response is not PNG (first bytes: %02x %02x %02x %02x, len=%zu)",
+                 (uint8_t)buf[0], (uint8_t)buf[1], (uint8_t)buf[2], (uint8_t)buf[3], len);
+        return ESP_FAIL;
+    }
+    uint8_t *spiram_buf = heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
+    if (!spiram_buf) {
+        ESP_LOGE(TAG, "SPIRAM alloc failed for radar PNG (%zu bytes)", len);
+        return ESP_ERR_NO_MEM;
+    }
+    memcpy(spiram_buf, buf, len);
+    *out = spiram_buf;
+    *out_len = len;
+    ESP_LOGI(TAG, "radar: %zu bytes fetched", len);
+    return ESP_OK;
+}
 
 esp_err_t nws_fetch_radar(float lat, float lon, uint8_t **png_buf, size_t *png_len)
 {
@@ -33,11 +56,12 @@ esp_err_t nws_fetch_radar(float lat, float lon, uint8_t **png_buf, size_t *png_l
              lon_min, lat_min, lon_max, lat_max);
 
     esp_http_client_config_t cfg = {
-        .url               = url,
-        .transport_type    = HTTP_TRANSPORT_OVER_SSL,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .timeout_ms        = 15000,  // radar images can be slow
-        .user_agent        = NWS_USER_AGENT,
+        .url                   = url,
+        .transport_type        = HTTP_TRANSPORT_OVER_SSL,
+        .crt_bundle_attach     = esp_crt_bundle_attach,
+        .timeout_ms            = 15000,  // radar images can be slow
+        .user_agent            = NWS_USER_AGENT,
+        .max_redirection_count = 3,
     };
 
     for (int attempt = 0; attempt < NWS_MAX_RETRIES; attempt++) {
@@ -51,28 +75,15 @@ esp_err_t nws_fetch_radar(float lat, float lon, uint8_t **png_buf, size_t *png_l
         char *buf = http_request_execute(&cfg, &result, &len);
 
         if (result == HTTP_ATTEMPT_OK && buf && len > 0) {
-            // Copy to SPIRAM so the original heap buffer can be freed
-            uint8_t *spiram_buf = heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
-            if (!spiram_buf) {
-                ESP_LOGE(TAG, "SPIRAM alloc failed for radar PNG (%zu bytes)", len);
-                free(buf);
-                return ESP_ERR_NO_MEM;
-            }
-            memcpy(spiram_buf, buf, len);
+            esp_err_t r = accept_radar_png(buf, len, png_buf, png_len);
             free(buf);
-
-            *png_buf = spiram_buf;
-            *png_len = len;
-
-            ESP_LOGI(TAG, "radar: %zu bytes fetched", len);
-            return ESP_OK;
+            if (r == ESP_OK || r == ESP_ERR_NO_MEM) return r;
+            break;  // not a PNG — not retryable
         }
 
-        if (result == HTTP_ATTEMPT_ABORT || result == HTTP_ATTEMPT_RATE_LIMIT) {
-            free(buf);
-            break;
-        }
+        bool stop = (result == HTTP_ATTEMPT_ABORT || result == HTTP_ATTEMPT_RATE_LIMIT);
         free(buf);
+        if (stop) break;
     }
 
     ESP_LOGE(TAG, "radar fetch failed after %d attempts", NWS_MAX_RETRIES);

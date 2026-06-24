@@ -19,6 +19,8 @@
 #include "freertos/semphr.h"
 #include <sys/stat.h>
 #include <dirent.h>
+#include "esp_vfs_fat.h"
+#include "bsp/esp32_p4_function_ev_board.h"
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
@@ -70,7 +72,8 @@ static esp_err_t upload_check_preconditions(httpd_req_t* req)
 static void upload_ensure_dir(const char* filepath)
 {
     char dirpath[256];
-    strncpy(dirpath, filepath, sizeof(dirpath));
+    strncpy(dirpath, filepath, sizeof(dirpath) - 1);
+    dirpath[sizeof(dirpath) - 1] = '\0';
     char* last_slash = strrchr(dirpath, '/');
     if (last_slash) {
         *last_slash = '\0';
@@ -139,9 +142,24 @@ static esp_err_t upload_receive_loop(httpd_req_t* req, FILE* f,
  * @param total_out  Set to bytes received on success.
  * @return ESP_OK or ESP_FAIL.
  */
+// Recursively create parent directories for a file path (like mkdir -p).
+static void mkdirs(const char *filepath)
+{
+    char tmp[256];
+    strlcpy(tmp, filepath, sizeof(tmp));
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+            mkdir(tmp, 0755);
+            *p = '/';
+        }
+    }
+}
+
 static esp_err_t upload_open_and_receive(httpd_req_t* req, const char* filepath,
                                           size_t* total_out)
 {
+    mkdirs(filepath);
     FILE* f = fopen(filepath, "wb");
     if (!f) {
         ESP_LOGE(TAG, "Failed to open for writing: %s", filepath);
@@ -521,6 +539,9 @@ static esp_err_t upload_file_handler(httpd_req_t *req);
 static esp_err_t download_file_handler(httpd_req_t *req);
 static esp_err_t delete_file_handler(httpd_req_t *req);
 static esp_err_t status_handler(httpd_req_t *req);
+static esp_err_t boot_history_handler(httpd_req_t *req);
+static esp_err_t disk_usage_handler(httpd_req_t *req);
+static esp_err_t sdcard_format_handler(httpd_req_t *req);
 static esp_err_t logs_test_handler(httpd_req_t *req);
 static esp_err_t logs_download_handler(httpd_req_t *req);
 static esp_err_t ota_push_handler(httpd_req_t *req);
@@ -568,6 +589,21 @@ static void http_api_register_file_handlers(httpd_handle_t srv)
         .method  = HTTP_GET,
         .handler = status_handler,
     };
+    static const httpd_uri_t uri_boot_hist = {
+        .uri     = "/api/boot_history",
+        .method  = HTTP_GET,
+        .handler = boot_history_handler,
+    };
+    static const httpd_uri_t uri_disk = {
+        .uri     = "/api/disk",
+        .method  = HTTP_GET,
+        .handler = disk_usage_handler,
+    };
+    static const httpd_uri_t uri_sd_format = {
+        .uri     = "/api/sdcard/format",
+        .method  = HTTP_POST,
+        .handler = sdcard_format_handler,
+    };
     static const httpd_uri_t uri_logs = {
         .uri     = "/api/logs/download",
         .method  = HTTP_GET,
@@ -594,6 +630,9 @@ static void http_api_register_file_handlers(httpd_handle_t srv)
         .handler = delete_file_handler,
     };
     httpd_register_uri_handler(srv, &uri_status);
+    httpd_register_uri_handler(srv, &uri_boot_hist);
+    httpd_register_uri_handler(srv, &uri_disk);
+    httpd_register_uri_handler(srv, &uri_sd_format);
     httpd_register_uri_handler(srv, &uri_logs);
     httpd_register_uri_handler(srv, &uri_logs_test);
     httpd_register_uri_handler(srv, &uri_upload);
@@ -798,25 +837,176 @@ static esp_err_t download_file_handler(httpd_req_t *req)
  * @brief Return basic device status as JSON.
  * GET /api/status
  */
+extern bool main_tsens_get_last(float *out_last, float *out_min, float *out_max);
+
+// Mirror of struct boot_hist_entry_t in main.cpp (packed 8 bytes).
+struct boot_hist_entry_t {
+    uint8_t  reset_reason;
+    uint8_t  _pad[3];
+    uint32_t timestamp;
+};
+extern size_t main_boot_history_get(struct boot_hist_entry_t *out, size_t cap);
+
+/**
+ * GET /api/disk
+ * Returns SD card capacity: total bytes, free bytes, used bytes,
+ * percent used. Uses esp_vfs_fat_info() — the ESP-IDF wrapper that
+ * walks the FAT cluster table for free count.
+ */
+static esp_err_t disk_usage_handler(httpd_req_t *req)
+{
+    uint64_t total = 0, free_bytes = 0;
+    esp_err_t err = esp_vfs_fat_info("/sdcard", &total, &free_bytes);
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                            "esp_vfs_fat_info failed");
+        return ESP_FAIL;
+    }
+    uint64_t used = total > free_bytes ? (total - free_bytes) : 0;
+    int pct = (total > 0) ? (int)((used * 100) / total) : 0;
+
+    char body[256];
+    snprintf(body, sizeof(body),
+             "{\"mount\":\"/sdcard\","
+             "\"total_bytes\":%llu,"
+             "\"free_bytes\":%llu,"
+             "\"used_bytes\":%llu,"
+             "\"used_pct\":%d}\n",
+             (unsigned long long)total,
+             (unsigned long long)free_bytes,
+             (unsigned long long)used,
+             pct);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+/**
+ * POST /api/sdcard/format
+ *
+ * Reformats the SD card FAT filesystem in place. Wipes all user files on
+ * /sdcard (lottie, backgrounds, maps, photos, logs). Requires Bearer auth
+ * (same token as OTA push) to prevent accidental triggering.
+ *
+ * The debug log is paused for the duration so its file handle doesn't
+ * fight with the format operation.
+ */
+static esp_err_t sdcard_format_handler(httpd_req_t *req)
+{
+    /* Auth check — same Bearer token as OTA push */
+    char auth[128];
+    if (httpd_req_get_hdr_value_str(req, "Authorization", auth, sizeof(auth)) != ESP_OK) {
+        ESP_LOGW(TAG, "SD format: missing Authorization header");
+        httpd_resp_set_status(req, "401 Unauthorized");
+        httpd_resp_send(req, "{\"error\":\"missing auth\"}", HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;
+    }
+    char expected[160];
+    snprintf(expected, sizeof(expected), "Bearer %s", OTA_API_TOKEN);
+    if (strcmp(auth, expected) != 0) {
+        ESP_LOGW(TAG, "SD format: bad token");
+        httpd_resp_set_status(req, "403 Forbidden");
+        httpd_resp_send(req, "{\"error\":\"bad token\"}", HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;
+    }
+
+    sdmmc_card_t *card = bsp_sdcard_get_handle();
+    if (!card) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no SD card");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGW(TAG, "SD format: starting — debug log paused, all /sdcard data will be wiped");
+    debug_log_pause_for_read();
+
+    esp_err_t err = esp_vfs_fat_sdcard_format("/sdcard", card);
+
+    debug_log_reopen();
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "SD format failed: %s", esp_err_to_name(err));
+        char body[128];
+        snprintf(body, sizeof(body), "{\"status\":\"error\",\"err\":\"%s\"}",
+                 esp_err_to_name(err));
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "SD format complete — FAT volume rewritten");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req,
+        "{\"status\":\"ok\",\"note\":\"FAT volume reformatted; all /sdcard files erased\"}",
+        HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+static esp_err_t boot_history_handler(httpd_req_t *req)
+{
+    struct boot_hist_entry_t entries[16];
+    size_t n = main_boot_history_get(entries, 16);
+    // JSON: {"boot_history":[{reason:%u,timestamp:%lu},...]}
+    char body[1024];
+    int off = snprintf(body, sizeof(body), "{\"boot_history\":[");
+    for (size_t i = 0; i < n; i++) {
+        off += snprintf(body + off, sizeof(body) - off,
+                        "%s{\"reason\":%u,\"timestamp\":%lu}",
+                        i == 0 ? "" : ",",
+                        entries[i].reset_reason,
+                        (unsigned long)entries[i].timestamp);
+        if ((size_t)off >= sizeof(body)) break;
+    }
+    snprintf(body + off, sizeof(body) - off, "]}");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
 static esp_err_t status_handler(httpd_req_t *req)
 {
-    char response[512];
+    char response[640];
     const char* log_path = debug_log_get_path();
     bool logging_active = debug_log_is_active();
-    snprintf(response, sizeof(response),
-             "{\n"
-             "  \"status\": \"ok\",\n"
-             "  \"uptime\": %lld,\n"
-             "  \"free_heap\": %lu,\n"
-             "  \"sd_card\": %s,\n"
-             "  \"debug_log_active\": %s,\n"
-             "  \"debug_log_path\": \"%s\"\n"
-             "}\n",
-             esp_timer_get_time() / 1000000,
-             (unsigned long)esp_get_free_heap_size(),
-             sdcard_is_mounted() ? "true" : "false",
-             logging_active ? "true" : "false",
-             log_path ? log_path : "null");
+
+    float tsens_c = 0.0f, tsens_lo = 0.0f, tsens_hi = 0.0f;
+    bool  tsens_ok = main_tsens_get_last(&tsens_c, &tsens_lo, &tsens_hi);
+
+    if (tsens_ok) {
+        snprintf(response, sizeof(response),
+                 "{\n"
+                 "  \"status\": \"ok\",\n"
+                 "  \"uptime\": %lld,\n"
+                 "  \"free_heap\": %lu,\n"
+                 "  \"sd_card\": %s,\n"
+                 "  \"debug_log_active\": %s,\n"
+                 "  \"debug_log_path\": \"%s\",\n"
+                 "  \"tsens_c\": %.1f,\n"
+                 "  \"tsens_min_c\": %.1f,\n"
+                 "  \"tsens_max_c\": %.1f\n"
+                 "}\n",
+                 esp_timer_get_time() / 1000000,
+                 (unsigned long)esp_get_free_heap_size(),
+                 sdcard_is_mounted() ? "true" : "false",
+                 logging_active ? "true" : "false",
+                 log_path ? log_path : "null",
+                 tsens_c, tsens_lo, tsens_hi);
+    } else {
+        snprintf(response, sizeof(response),
+                 "{\n"
+                 "  \"status\": \"ok\",\n"
+                 "  \"uptime\": %lld,\n"
+                 "  \"free_heap\": %lu,\n"
+                 "  \"sd_card\": %s,\n"
+                 "  \"debug_log_active\": %s,\n"
+                 "  \"debug_log_path\": \"%s\"\n"
+                 "}\n",
+                 esp_timer_get_time() / 1000000,
+                 (unsigned long)esp_get_free_heap_size(),
+                 sdcard_is_mounted() ? "true" : "false",
+                 logging_active ? "true" : "false",
+                 log_path ? log_path : "null");
+    }
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
@@ -1059,7 +1249,7 @@ static esp_err_t debug_reboot_handler(httpd_req_t *req)
  *
  * Gives the launch semaphore registered via http_api_set_launch_sem().
  * app_main() blocks on the semaphore in boot_await_launch() and will
- * proceed to boot_display_init() + ui_launch_clock() upon waking.
+ * proceed to boot_display_init() + display_fsm_init() upon waking.
  * No-op if the semaphore has not been registered yet (clock already running).
  */
 static esp_err_t debug_launch_handler(httpd_req_t *req)
@@ -1358,6 +1548,49 @@ static esp_err_t schedule_get_handler(httpd_req_t *req)
  * POST /api/display/schedule — body: {"weather_show_s":30, ...}
  * Only provided fields are updated; others keep their current value.
  */
+// Copy a uint16 JSON field into *out if present and numeric.
+static void json_copy_u16(const cJSON *root, const char *key, uint16_t *out)
+{
+    const cJSON *j = cJSON_GetObjectItem(root, key);
+    if (j && cJSON_IsNumber(j)) *out = (uint16_t)j->valueint;
+}
+
+// Overlay any present schedule timing fields from JSON onto cfg.
+static void parse_schedule_fields(const cJSON *root, clock_settings_t *cfg)
+{
+    json_copy_u16(root, "weather_show_s",     &cfg->weather_show_s);
+    json_copy_u16(root, "weather_cooldown_s", &cfg->weather_cooldown_s);
+    json_copy_u16(root, "radar_show_s",       &cfg->radar_show_s);
+    json_copy_u16(root, "radar_cooldown_s",   &cfg->radar_cooldown_s);
+    json_copy_u16(root, "astro_show_s",       &cfg->astro_show_s);
+    json_copy_u16(root, "astro_cooldown_s",   &cfg->astro_cooldown_s);
+    json_copy_u16(root, "photos_interval_s",  &cfg->photos_interval_s);
+    json_copy_u16(root, "photos_show_s",      &cfg->photos_show_s);
+    json_copy_u16(root, "ambient_interval_s", &cfg->ambient_interval_s);
+    json_copy_u16(root, "ambient_show_s",     &cfg->ambient_show_s);
+}
+
+// Push each state's updated duration/cooldown to the FSM scheduler.
+static void notify_schedule_config(const clock_settings_t *cfg)
+{
+    struct { display_state_id_t id; uint16_t show_s; uint16_t cooldown_s; } sched[] = {
+        { DISPLAY_STATE_WEATHER,   cfg->weather_show_s,   cfg->weather_cooldown_s },
+        { DISPLAY_STATE_RADAR,     cfg->radar_show_s,     cfg->radar_cooldown_s },
+        { DISPLAY_STATE_ASTRONOMY, cfg->astro_show_s,     cfg->astro_cooldown_s },
+        { DISPLAY_STATE_PHOTOS,    cfg->photos_show_s,    cfg->photos_interval_s },
+        { DISPLAY_STATE_AMBIENT,   cfg->ambient_show_s,   cfg->ambient_interval_s },
+    };
+    for (size_t i = 0; i < sizeof(sched) / sizeof(sched[0]); i++) {
+        display_event_t evt = {};
+        evt.type = DISPLAY_EVT_SCHEDULE_CONFIG;
+        evt.schedule.state = sched[i].id;
+        evt.schedule.display_duration_ms = (uint32_t)sched[i].show_s * 1000;
+        evt.schedule.cooldown_ms = (uint32_t)sched[i].cooldown_s * 1000;
+        evt.schedule.enabled = true;
+        display_fsm_send_event(&evt);
+    }
+}
+
 static esp_err_t schedule_post_handler(httpd_req_t *req)
 {
     char body[512];
@@ -1376,30 +1609,7 @@ static esp_err_t schedule_post_handler(httpd_req_t *req)
 
     clock_settings_t cfg;
     settings_load(&cfg);
-
-    // Update only fields present in JSON
-    const cJSON *j;
-    if ((j = cJSON_GetObjectItem(root, "weather_show_s")) && cJSON_IsNumber(j))
-        cfg.weather_show_s = (uint16_t)j->valueint;
-    if ((j = cJSON_GetObjectItem(root, "weather_cooldown_s")) && cJSON_IsNumber(j))
-        cfg.weather_cooldown_s = (uint16_t)j->valueint;
-    if ((j = cJSON_GetObjectItem(root, "radar_show_s")) && cJSON_IsNumber(j))
-        cfg.radar_show_s = (uint16_t)j->valueint;
-    if ((j = cJSON_GetObjectItem(root, "radar_cooldown_s")) && cJSON_IsNumber(j))
-        cfg.radar_cooldown_s = (uint16_t)j->valueint;
-    if ((j = cJSON_GetObjectItem(root, "astro_show_s")) && cJSON_IsNumber(j))
-        cfg.astro_show_s = (uint16_t)j->valueint;
-    if ((j = cJSON_GetObjectItem(root, "astro_cooldown_s")) && cJSON_IsNumber(j))
-        cfg.astro_cooldown_s = (uint16_t)j->valueint;
-    if ((j = cJSON_GetObjectItem(root, "photos_interval_s")) && cJSON_IsNumber(j))
-        cfg.photos_interval_s = (uint16_t)j->valueint;
-    if ((j = cJSON_GetObjectItem(root, "photos_show_s")) && cJSON_IsNumber(j))
-        cfg.photos_show_s = (uint16_t)j->valueint;
-    if ((j = cJSON_GetObjectItem(root, "ambient_interval_s")) && cJSON_IsNumber(j))
-        cfg.ambient_interval_s = (uint16_t)j->valueint;
-    if ((j = cJSON_GetObjectItem(root, "ambient_show_s")) && cJSON_IsNumber(j))
-        cfg.ambient_show_s = (uint16_t)j->valueint;
-
+    parse_schedule_fields(root, &cfg);
     cJSON_Delete(root);
 
     esp_err_t err = settings_save(&cfg);
@@ -1408,23 +1618,7 @@ static esp_err_t schedule_post_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    // Notify FSM scheduler of each state's updated config
-    struct { display_state_id_t id; uint16_t show_s; uint16_t cooldown_s; } sched[] = {
-        { DISPLAY_STATE_WEATHER,   cfg.weather_show_s,   cfg.weather_cooldown_s },
-        { DISPLAY_STATE_RADAR,     cfg.radar_show_s,     cfg.radar_cooldown_s },
-        { DISPLAY_STATE_ASTRONOMY, cfg.astro_show_s,     cfg.astro_cooldown_s },
-        { DISPLAY_STATE_PHOTOS,    cfg.photos_show_s,    cfg.photos_interval_s },
-        { DISPLAY_STATE_AMBIENT,   cfg.ambient_show_s,   cfg.ambient_interval_s },
-    };
-    for (size_t i = 0; i < sizeof(sched)/sizeof(sched[0]); i++) {
-        display_event_t evt = {};
-        evt.type = DISPLAY_EVT_SCHEDULE_CONFIG;
-        evt.schedule.state = sched[i].id;
-        evt.schedule.display_duration_ms = (uint32_t)sched[i].show_s * 1000;
-        evt.schedule.cooldown_ms = (uint32_t)sched[i].cooldown_s * 1000;
-        evt.schedule.enabled = true;
-        display_fsm_send_event(&evt);
-    }
+    notify_schedule_config(&cfg);
 
     ESP_LOGI(TAG, "Schedule config updated");
     httpd_resp_set_type(req, "application/json");
