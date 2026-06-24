@@ -25,13 +25,9 @@ void RadarOverlay::entry()
 
     s_rv = radar_view_create(s_screen, cfg.latitude, cfg.longitude);
 
-    // Load cached radar if available
+    // Apply pre-decoded radar if available (predecode runs outside LVGL lock)
     if (s_rv) {
-        size_t len = 0;
-        const uint8_t *png = nws_get_radar_png(&len);
-        if (png && len > 0) {
-            radar_view_set_radar(s_rv, png, len);
-        }
+        radar_view_apply_radar(s_rv);
         fade_in(radar_view_container(s_rv));
     }
     ESP_LOGI(TAG, "RadarOverlay: entry");
@@ -51,12 +47,9 @@ void RadarOverlay::react(EvDisplayTimeout const &)
 void RadarOverlay::react(EvRadarReady const &)
 {
     if (!s_rv) return;
-    size_t len = 0;
-    const uint8_t *png = nws_get_radar_png(&len);
-    if (png && len > 0) {
-        radar_view_set_radar(s_rv, png, len);
-        ESP_LOGI(TAG, "RadarOverlay: radar updated (%zu bytes)", len);
-    }
+    // Staged data was pre-decoded before LVGL lock — just swap it in
+    radar_view_apply_radar(s_rv);
+    ESP_LOGI(TAG, "RadarOverlay: radar applied");
 }
 
 void RadarOverlay::react(EvForceState const &e)

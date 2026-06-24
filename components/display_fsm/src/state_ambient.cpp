@@ -19,12 +19,14 @@ LV_FONT_DECLARE(nunito_48);
 // Static member definitions
 lv_obj_t *AmbientDashboard::s_container = nullptr;
 
-// Static meteor shower calendar (month, day, name)
-static const struct {
+typedef struct {
     int month;
     int day;
     const char *name;
-} meteor_showers[] = {
+} dated_event_t;
+
+// Static meteor shower calendar (month, day, name)
+static const dated_event_t meteor_showers[] = {
     {  1,  3, "Quadrantids" },
     {  4, 22, "Lyrids" },
     {  5,  6, "Eta Aquariids" },
@@ -37,11 +39,7 @@ static const struct {
 #define SHOWER_COUNT (sizeof(meteor_showers) / sizeof(meteor_showers[0]))
 
 // Solstice/equinox approximate dates (for current year — good enough)
-static const struct {
-    int month;
-    int day;
-    const char *name;
-} celestial_dates[] = {
+static const dated_event_t celestial_dates[] = {
     {  3, 20, "Vernal Equinox" },
     {  6, 20, "Summer Solstice" },
     {  9, 22, "Autumnal Equinox" },
@@ -66,6 +64,55 @@ static int get_tz_offset_minutes(time_t now)
     return offset;
 }
 
+// Normalize a minutes-of-day value into [0, 1440).
+static int wrap_day_minutes(int m)
+{
+    m %= 1440;
+    if (m < 0) m += 1440;
+    return m;
+}
+
+// Daylight progress percentage (0–100) for the current minute of day.
+static int daylight_progress(int now_min, int sr, int ss, int daylight_minutes)
+{
+    if (now_min > ss) return 100;
+    if (now_min < sr || daylight_minutes <= 0) return 0;
+    return (now_min - sr) * 100 / daylight_minutes;
+}
+
+// Qualitative aurora visibility label from a 0–1 probability.
+static const char *aurora_level(float prob)
+{
+    if (prob >= 0.7f) return "HIGH";
+    if (prob >= 0.4f) return "MODERATE";
+    if (prob >= 0.1f) return "LOW";
+    return "UNLIKELY";
+}
+
+// Soonest upcoming dated event (wrapping past year-end). Returns its name and
+// days-until, or NULL. Shared by the solstice/equinox and meteor-shower panels.
+static const char *next_event_after(const dated_event_t *events, int count,
+                                    int year, int cur_doy, int *days_out)
+{
+    const char *best = NULL;
+    int best_days = 999;
+    for (int i = 0; i < count; i++) {
+        struct tm ev = {};
+        ev.tm_year = year;
+        ev.tm_mon  = events[i].month - 1;
+        ev.tm_mday = events[i].day;
+        mktime(&ev);
+        int diff = ev.tm_yday - cur_doy;
+        if (diff < 0) diff += 365;
+        if (diff < best_days) {
+            best_days = diff;
+            best = events[i].name;
+        }
+    }
+    *days_out = best_days;
+    return best;
+}
+
 void AmbientDashboard::entry()
 {
     set_state_info(DISPLAY_STATE_AMBIENT, "ambient");
@@ -73,6 +120,10 @@ void AmbientDashboard::entry()
 
     clock_settings_t cfg;
     settings_load(&cfg);
+
+    // Fixed high-contrast palette for secondary screens (NVS text_color is clock-only)
+    lv_color_t primary = lv_color_white();
+    lv_color_t secondary = lv_color_hex(0xb0b0c0);
 
     time_t now;
     time(&now);
@@ -85,21 +136,20 @@ void AmbientDashboard::entry()
                          cfg.latitude, cfg.longitude, &sun);
 
     int tz_offset_min = get_tz_offset_minutes(now);
-    int sr_local = sun.sunrise_hour * 60 + sun.sunrise_min + tz_offset_min;
-    int ss_local = sun.sunset_hour * 60 + sun.sunset_min + tz_offset_min;
-    while (sr_local < 0) sr_local += 1440;
-    while (sr_local >= 1440) sr_local -= 1440;
-    while (ss_local < 0) ss_local += 1440;
-    while (ss_local >= 1440) ss_local -= 1440;
+    int sr_local = wrap_day_minutes(sun.sunrise_hour * 60 + sun.sunrise_min + tz_offset_min);
+    int ss_local = wrap_day_minutes(sun.sunset_hour * 60 + sun.sunset_min + tz_offset_min);
     int now_min = ti.tm_hour * 60 + ti.tm_min;
 
-    // Container
+    // Container with dark semi-opaque backdrop for contrast.
+    // Y=66: reserves 50px alert banner zone + 16px margin.
     s_container = lv_obj_create(s_screen);
-    lv_obj_set_size(s_container, 700, 520);
-    lv_obj_align(s_container, LV_ALIGN_TOP_LEFT, 16, 16);
-    lv_obj_set_style_bg_opa(s_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_size(s_container, 556, 470);
+    lv_obj_align(s_container, LV_ALIGN_TOP_LEFT, 16, ALERT_BANNER_HEIGHT + 16);
+    lv_obj_set_style_bg_color(s_container, lv_color_hex(0x0a0a1e), 0);
+    lv_obj_set_style_bg_opa(s_container, LV_OPA_70, 0);
+    lv_obj_set_style_radius(s_container, 12, 0);
     lv_obj_set_style_border_width(s_container, 0, 0);
-    lv_obj_set_style_pad_all(s_container, 0, 0);
+    lv_obj_set_style_pad_all(s_container, 16, 0);
     lv_obj_clear_flag(s_container, LV_OBJ_FLAG_SCROLLABLE);
 
     int y_pos = 0;
@@ -108,7 +158,7 @@ void AmbientDashboard::entry()
     // Title
     lv_obj_t *lbl_title = lv_label_create(s_container);
     lv_obj_set_style_text_font(lbl_title, &nunito_48, 0);
-    lv_obj_set_style_text_color(lbl_title, lv_color_white(), 0);
+    lv_obj_set_style_text_color(lbl_title, primary, 0);
     lv_obj_align(lbl_title, LV_ALIGN_TOP_LEFT, 0, y_pos);
     lv_label_set_text(lbl_title, "Dashboard");
     y_pos += 56;
@@ -136,32 +186,29 @@ void AmbientDashboard::entry()
     lv_obj_set_style_radius(bar, 8, LV_PART_INDICATOR);
     lv_bar_set_range(bar, 0, 100);
 
-    if (now_min >= sr_local && now_min <= ss_local && sun.daylight_minutes > 0) {
-        int progress = (now_min - sr_local) * 100 / sun.daylight_minutes;
-        lv_bar_set_value(bar, progress, LV_ANIM_OFF);
-    } else if (now_min > ss_local) {
-        lv_bar_set_value(bar, 100, LV_ANIM_OFF);
-    } else {
-        lv_bar_set_value(bar, 0, LV_ANIM_OFF);
-    }
+    lv_bar_set_value(bar, daylight_progress(now_min, sr_local, ss_local,
+                                            sun.daylight_minutes), LV_ANIM_OFF);
     y_pos += 30;
 
     // Golden hour info
     lv_obj_t *lbl_golden = lv_label_create(s_container);
     lv_obj_set_style_text_font(lbl_golden, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(lbl_golden, lv_color_hex(0x8888aa), 0);
+    lv_obj_set_style_text_color(lbl_golden, secondary, 0);
     lv_obj_align(lbl_golden, LV_ALIGN_TOP_LEFT, 0, y_pos);
     // Golden hour: ~1 hour after sunrise and ~1 hour before sunset
     int gh_morning_end = sr_local + 60;
     int gh_evening_start = ss_local - 60;
+    int gh_me_h = gh_morning_end / 60;
+    int gh_me_m = gh_morning_end % 60;
+    int gh_es_h = gh_evening_start / 60;
+    int gh_es_m = gh_evening_start % 60;
     snprintf(buf, sizeof(buf), "Golden hour: %d:%02d-%d:%02d %s, %d:%02d-%d:%02d %s",
-             sr_h % 12 == 0 ? 12 : sr_h % 12, sr_m, sr_h >= 12 ? "PM" : "AM",
-             (gh_morning_end / 60) % 12 == 0 ? 12 : (gh_morning_end / 60) % 12,
-             gh_morning_end % 60,
-             (gh_morning_end / 60) >= 12 ? "PM" : "AM",
-             (gh_evening_start / 60) % 12 == 0 ? 12 : (gh_evening_start / 60) % 12,
-             gh_evening_start % 60,
-             (gh_evening_start / 60) >= 12 ? "PM" : "AM");
+             sr_h % 12 == 0 ? 12 : sr_h % 12, sr_m,
+             gh_me_h % 12 == 0 ? 12 : gh_me_h % 12, gh_me_m,
+             gh_me_h >= 12 ? "PM" : "AM",
+             gh_es_h % 12 == 0 ? 12 : gh_es_h % 12, gh_es_m,
+             ss_h % 12 == 0 ? 12 : ss_h % 12, ss_m,
+             ss_h >= 12 ? "PM" : "AM");
     lv_label_set_text(lbl_golden, buf);
     y_pos += 32;
 
@@ -170,7 +217,7 @@ void AmbientDashboard::entry()
     if (cond && cond->valid) {
         lv_obj_t *lbl_wx = lv_label_create(s_container);
         lv_obj_set_style_text_font(lbl_wx, &lv_font_montserrat_20, 0);
-        lv_obj_set_style_text_color(lbl_wx, lv_color_hex(0xc0c0c0), 0);
+        lv_obj_set_style_text_color(lbl_wx, secondary, 0);
         lv_obj_align(lbl_wx, LV_ALIGN_TOP_LEFT, 0, y_pos);
         snprintf(buf, sizeof(buf), "%s  |  Humidity %d%%  |  Visibility %.0f mi",
                  cond->description, cond->humidity, cond->visibility_km * 0.621371f);
@@ -187,10 +234,8 @@ void AmbientDashboard::entry()
     lv_obj_set_style_text_color(lbl_aurora, lv_color_hex(0xa490c2), 0);
     lv_obj_align(lbl_aurora, LV_ALIGN_TOP_LEFT, 0, y_pos);
     if (kp > 0.0f) {
-        const char *level = aurora_prob >= 0.7f ? "HIGH" :
-                            aurora_prob >= 0.4f ? "MODERATE" :
-                            aurora_prob >= 0.1f ? "LOW" : "UNLIKELY";
-        snprintf(buf, sizeof(buf), "Aurora: Kp=%.1f  %s (%.0f%%)", kp, level, aurora_prob * 100);
+        snprintf(buf, sizeof(buf), "Aurora: Kp=%.1f  %s (%.0f%%)",
+                 kp, aurora_level(aurora_prob), aurora_prob * 100);
     } else {
         snprintf(buf, sizeof(buf), "Aurora: Kp data unavailable");
     }
@@ -199,25 +244,13 @@ void AmbientDashboard::entry()
 
     // Next celestial event (solstice/equinox)
     int cur_doy = ti.tm_yday;
-    const char *next_event = NULL;
     int days_until = 999;
-    for (int i = 0; i < (int)CELESTIAL_COUNT; i++) {
-        struct tm ev_tm = {};
-        ev_tm.tm_year = ti.tm_year;
-        ev_tm.tm_mon = celestial_dates[i].month - 1;
-        ev_tm.tm_mday = celestial_dates[i].day;
-        mktime(&ev_tm);
-        int diff = ev_tm.tm_yday - cur_doy;
-        if (diff < 0) diff += 365;
-        if (diff < days_until) {
-            days_until = diff;
-            next_event = celestial_dates[i].name;
-        }
-    }
+    const char *next_event = next_event_after(celestial_dates, (int)CELESTIAL_COUNT,
+                                              ti.tm_year, cur_doy, &days_until);
 
     lv_obj_t *lbl_event = lv_label_create(s_container);
     lv_obj_set_style_text_font(lbl_event, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(lbl_event, lv_color_hex(0x8888aa), 0);
+    lv_obj_set_style_text_color(lbl_event, secondary, 0);
     lv_obj_align(lbl_event, LV_ALIGN_TOP_LEFT, 0, y_pos);
     if (next_event) {
         snprintf(buf, sizeof(buf), "Next: %s in %d days", next_event, days_until);
@@ -228,25 +261,13 @@ void AmbientDashboard::entry()
     y_pos += 28;
 
     // Next meteor shower
-    const char *next_shower = NULL;
     int shower_days = 999;
-    for (int i = 0; i < (int)SHOWER_COUNT; i++) {
-        struct tm sh_tm = {};
-        sh_tm.tm_year = ti.tm_year;
-        sh_tm.tm_mon = meteor_showers[i].month - 1;
-        sh_tm.tm_mday = meteor_showers[i].day;
-        mktime(&sh_tm);
-        int diff = sh_tm.tm_yday - cur_doy;
-        if (diff < 0) diff += 365;
-        if (diff < shower_days) {
-            shower_days = diff;
-            next_shower = meteor_showers[i].name;
-        }
-    }
+    const char *next_shower = next_event_after(meteor_showers, (int)SHOWER_COUNT,
+                                               ti.tm_year, cur_doy, &shower_days);
 
     lv_obj_t *lbl_shower = lv_label_create(s_container);
     lv_obj_set_style_text_font(lbl_shower, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(lbl_shower, lv_color_hex(0x8888aa), 0);
+    lv_obj_set_style_text_color(lbl_shower, secondary, 0);
     lv_obj_align(lbl_shower, LV_ALIGN_TOP_LEFT, 0, y_pos);
     if (next_shower) {
         snprintf(buf, sizeof(buf), "Meteor shower: %s in %d days", next_shower, shower_days);
@@ -262,7 +283,7 @@ void AmbientDashboard::entry()
 
 void AmbientDashboard::exit()
 {
-    if (s_container) { lv_obj_del(s_container); s_container = NULL; }
+    if (s_container) { lv_anim_delete(s_container, NULL); lv_obj_delete(s_container); s_container = NULL; }
     ESP_LOGI(TAG, "AmbientDashboard: exit");
 }
 

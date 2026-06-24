@@ -7,6 +7,7 @@
 #define DISPLAY_FSM_BASE_H
 
 #include "tinyfsm.hpp"
+#include "display_fsm.h"
 #include "display_events.h"
 #include "display_widgets.h"
 
@@ -40,6 +41,7 @@ protected:
     static clock_widget_t      *s_clock;
     static alert_banner_t      *s_alert_banner;
     static lv_obj_t            *s_screen;
+    static lv_obj_t            *s_top_layer;   // lv_layer_top() — persistent UI here
     static display_state_id_t   s_state_id;
     static const char          *s_state_name;
 
@@ -47,21 +49,33 @@ protected:
     static const char          *s_surprise_json;
     static uint32_t             s_surprise_duration_s;
 
+    // Carousel dot indicator — persistent across all states
+    static lv_obj_t            *s_dot_container;
+
     // Helpers for concrete states
     void minimize_clock() {
         if (s_clock) clock_widget_set_mode(s_clock, CLOCK_MODE_MINIMIZED);
+        display_fsm_hide_clock_lottie();
     }
     void restore_clock() {
         if (s_clock) clock_widget_set_mode(s_clock, CLOCK_MODE_FULL);
+        display_fsm_show_clock_lottie();
+    }
+    void topbar_clock() {
+        if (s_clock) clock_widget_set_mode(s_clock, CLOCK_MODE_TOPBAR);
+        display_fsm_hide_clock_lottie();
     }
 
     void set_state_info(display_state_id_t id, const char *name);
 
-    /** Animate an LVGL object from transparent to fully opaque (300ms ease-out).
+    /** Navigate carousel by offset (-1 = prev, +1 = next). Wraps around. */
+    void carousel_navigate(int offset);
+
+    /** Animate an LVGL object from transparent to fully opaque (450ms ease-in-out).
      *  Caller must hold LVGL lock. */
     static void fade_in(lv_obj_t *obj);
 
-    /** Animate an LVGL object from opaque to transparent (200ms ease-in).
+    /** Animate an LVGL object from opaque to transparent (350ms ease-in-out).
      *  Does NOT destroy the object — use for visual effect before manual destroy.
      *  Caller must hold LVGL lock. */
     static void fade_out(lv_obj_t *obj);
@@ -101,6 +115,12 @@ public:
     static void                 set_clock(clock_widget_t *c) { s_clock = c; }
     static void                 set_alert_banner(alert_banner_t *b) { s_alert_banner = b; }
     static void                 set_screen(lv_obj_t *s) { s_screen = s; }
+    static void                 set_top_layer(lv_obj_t *t) { s_top_layer = t; }
+
+    /** Create the carousel dot indicator on the screen. Call once at init. */
+    static void                 create_dot_indicator();
+    /** Update dot indicator to reflect current carousel position. */
+    static void                 update_dot_indicator();
 };
 
 #endif // DISPLAY_FSM_BASE_H

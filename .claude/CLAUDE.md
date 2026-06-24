@@ -2,13 +2,6 @@
 
 ESP32-P4 smart clock. ESP-IDF v5.5, LVGL v9.3, 1024×600 MIPI DSI display, GT911 touchscreen.
 
-## Build Rules
-
-**Do NOT run `idf.py build` unless explicitly asked.**
-User controls the build and flash cycle. Make code changes, explain them, stop.
-
-Only build if user says: "build this", "run idf.py build", "compile it".
-
 ## Key Files
 
 | File | Purpose |
@@ -75,6 +68,7 @@ These patterns must be followed in all new code:
 2. **Error logging**: Every `esp_err_t` return must be logged before being ignored or returned
 3. **Heap checks**: Any new feature allocating >1 KB should log heap before and after
 4. **Watchdog safety**: Long operations (>1s) must call `esp_task_wdt_reset()` or run in a task
+5. **OTA safety window**: `boot_await_launch()` in `main.cpp` is the OTA recovery boundary. **NEVER** spawn tasks or run code that processes external data (network fetches, JSON, LVGL, file parsing) before this call returns. A crash before this point bricks the device — requiring physical access to recover. All feature initialization goes AFTER this call.
 
 ## Settings Schema
 

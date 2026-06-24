@@ -2,13 +2,14 @@
 
 #include "esp_log.h"
 #include "esp_err.h"
-#include "esp_spiffs.h"
 #include "esp_system.h"
 #include "esp_task_wdt.h"
 #include "esp_timer.h"
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
 #include "driver/gpio.h"
+#include "driver/temperature_sensor.h"
+#include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -19,7 +20,6 @@
 
 #include "network.h"
 #include "time_sync.h"
-#include "ui.h"
 #include "secrets.h"
 #include "settings.h"
 #include "ota.h"
@@ -32,11 +32,6 @@
 #include "lvgl.h"
 #include "libs/fsdrv/lv_fsdrv.h"
 
-#include <fcntl.h>
-#include <sys/types.h>
-#include <dirent.h>
-#include <unistd.h>
-#include <errno.h>
 #include <string.h>
 
 static const char* TAG = "main";
@@ -61,6 +56,7 @@ static RTC_NOINIT_ATTR uint32_t s_crash_pc;        // mepc at fault
 static RTC_NOINIT_ATTR uint32_t s_crash_ra;        // return address at fault
 static RTC_NOINIT_ATTR uint32_t s_crash_sp;        // stack pointer at fault
 static RTC_NOINIT_ATTR char     s_crash_reason[64];
+static RTC_NOINIT_ATTR char     s_crash_details[128]; // abort() details (file:line, assert expr)
 static RTC_NOINIT_ATTR char     s_boot_stage[32];  // last stage reached before crash
 static RTC_NOINIT_ATTR bool     s_panic_restart;   // skip SD I/O in shutdown handler
 
@@ -68,117 +64,6 @@ static inline void set_boot_stage(const char *stage)
 {
     strncpy(s_boot_stage, stage, sizeof(s_boot_stage) - 1);
     s_boot_stage[sizeof(s_boot_stage) - 1] = '\0';
-}
-
-// =============================================================================
-// SPIFFS filesystem driver for LVGL B: drive
-// =============================================================================
-
-static lv_fs_drv_t spiffs_fs_drv;
-static const char* spiffs_base_path = "/spiffs";
-
-static void * spiffs_fs_open(lv_fs_drv_t * drv, const char * path, lv_fs_mode_t mode)
-{
-    LV_UNUSED(drv);
-
-    ESP_LOGI(TAG, "[B: DRIVER] Open request: path='%s', mode=%d", path, mode);
-
-    int flags = 0;
-    if(mode == LV_FS_MODE_WR) flags = O_WRONLY | O_CREAT;
-    else if(mode == LV_FS_MODE_RD) flags = O_RDONLY;
-    else if(mode == (LV_FS_MODE_WR | LV_FS_MODE_RD)) flags = O_RDWR | O_CREAT;
-
-    char buf[256];
-    snprintf(buf, sizeof(buf), "%s%s", spiffs_base_path, path);
-    ESP_LOGI(TAG, "[B: DRIVER] Full path: %s", buf);
-
-    int fd = open(buf, flags, 0666);
-    if(fd < 0) {
-        ESP_LOGE(TAG, "[B: DRIVER] FAILED to open: %s, errno: %d (%s)", buf, errno, strerror(errno));
-        return NULL;
-    }
-
-    ESP_LOGI(TAG, "[B: DRIVER] Successfully opened fd=%d", fd);
-    return (void *)(intptr_t)(fd + 1);  // +1 because fd can be 0
-}
-
-static lv_fs_res_t spiffs_fs_close(lv_fs_drv_t * drv, void * file_p)
-{
-    LV_UNUSED(drv);
-    int fd = (intptr_t)file_p - 1;
-    close(fd);
-    return LV_FS_RES_OK;
-}
-
-static lv_fs_res_t spiffs_fs_read(lv_fs_drv_t * drv, void * file_p, void * buf, uint32_t btr, uint32_t * br)
-{
-    LV_UNUSED(drv);
-    int fd = (intptr_t)file_p - 1;
-    ssize_t ret = read(fd, buf, btr);
-    if(ret < 0) {
-        *br = 0;
-        return LV_FS_RES_UNKNOWN;
-    }
-    *br = ret;
-    return LV_FS_RES_OK;
-}
-
-static lv_fs_res_t spiffs_fs_write(lv_fs_drv_t * drv, void * file_p, const void * buf, uint32_t btw, uint32_t * bw)
-{
-    LV_UNUSED(drv);
-    int fd = (intptr_t)file_p - 1;
-    ssize_t ret = write(fd, buf, btw);
-    if(ret < 0) {
-        *bw = 0;
-        return LV_FS_RES_UNKNOWN;
-    }
-    *bw = ret;
-    return LV_FS_RES_OK;
-}
-
-static lv_fs_res_t spiffs_fs_seek(lv_fs_drv_t * drv, void * file_p, uint32_t pos, lv_fs_whence_t whence)
-{
-    LV_UNUSED(drv);
-    int fd = (intptr_t)file_p - 1;
-    int w;
-    if(whence == LV_FS_SEEK_SET) w = SEEK_SET;
-    else if(whence == LV_FS_SEEK_CUR) w = SEEK_CUR;
-    else if(whence == LV_FS_SEEK_END) w = SEEK_END;
-    else return LV_FS_RES_UNKNOWN;
-
-    if(lseek(fd, pos, w) < 0) return LV_FS_RES_UNKNOWN;
-    return LV_FS_RES_OK;
-}
-
-static lv_fs_res_t spiffs_fs_tell(lv_fs_drv_t * drv, void * file_p, uint32_t * pos_p)
-{
-    LV_UNUSED(drv);
-    int fd = (intptr_t)file_p - 1;
-    off_t pos = lseek(fd, 0, SEEK_CUR);
-    if(pos < 0) return LV_FS_RES_UNKNOWN;
-    *pos_p = pos;
-    return LV_FS_RES_OK;
-}
-
-static void lv_fs_spiffs_init(void)
-{
-    lv_fs_drv_init(&spiffs_fs_drv);
-
-    spiffs_fs_drv.letter = 'B';
-    spiffs_fs_drv.cache_size = 0;
-
-    spiffs_fs_drv.open_cb  = spiffs_fs_open;
-    spiffs_fs_drv.close_cb = spiffs_fs_close;
-    spiffs_fs_drv.read_cb  = spiffs_fs_read;
-    spiffs_fs_drv.write_cb = spiffs_fs_write;
-    spiffs_fs_drv.seek_cb  = spiffs_fs_seek;
-    spiffs_fs_drv.tell_cb  = spiffs_fs_tell;
-
-    spiffs_fs_drv.dir_close_cb = NULL;
-    spiffs_fs_drv.dir_open_cb  = NULL;
-    spiffs_fs_drv.dir_read_cb  = NULL;
-
-    lv_fs_drv_register(&spiffs_fs_drv);
 }
 
 // =============================================================================
@@ -194,11 +79,139 @@ static void lv_fs_spiffs_init(void)
 
 static volatile uint32_t s_lvgl_heartbeat_ms = 0;
 
+// =============================================================================
+// Internal chip-temperature sensor — sampled in boot_health_loop
+// =============================================================================
+static temperature_sensor_handle_t s_tsens_handle = NULL;
+static float s_tsens_min_c =  1000.0f;  // sentinel: any real read updates
+static float s_tsens_max_c = -1000.0f;
+static float s_tsens_last_c = 0.0f;
+
+static void tsens_init(void)
+{
+    temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 90);
+    if (temperature_sensor_install(&cfg, &s_tsens_handle) != ESP_OK) {
+        ESP_LOGW(TAG, "[BOOT] tsens install failed — chip-temp telemetry disabled");
+        s_tsens_handle = NULL;
+        return;
+    }
+    if (temperature_sensor_enable(s_tsens_handle) != ESP_OK) {
+        ESP_LOGW(TAG, "[BOOT] tsens enable failed");
+        temperature_sensor_uninstall(s_tsens_handle);
+        s_tsens_handle = NULL;
+        return;
+    }
+    ESP_LOGI(TAG, "[BOOT] tsens installed (range -10..90 °C)");
+}
+
+// Read once and update min/max trackers. Returns true on success.
+static bool tsens_sample(float *out_c)
+{
+    if (!s_tsens_handle) return false;
+    float c = 0.0f;
+    if (temperature_sensor_get_celsius(s_tsens_handle, &c) != ESP_OK) return false;
+    s_tsens_last_c = c;
+    if (c < s_tsens_min_c) s_tsens_min_c = c;
+    if (c > s_tsens_max_c) s_tsens_max_c = c;
+    if (out_c) *out_c = c;
+    return true;
+}
+
+// Public accessors for /api/status (extern "C" linkage matches http_api caller).
+extern "C" bool main_tsens_get_last(float *out_last, float *out_min, float *out_max)
+{
+    if (!s_tsens_handle) return false;
+    if (out_last) *out_last = s_tsens_last_c;
+    if (out_min)  *out_min  = s_tsens_min_c;
+    if (out_max)  *out_max  = s_tsens_max_c;
+    return true;
+}
+
+// =============================================================================
+// Boot history — circular buffer of last 16 boots persisted to NVS.
+// Lets us see reset_reason recurrence across power cycles without needing
+// to be watching live logs. Each entry is {reset_reason u8, timestamp u32}.
+// =============================================================================
+#define BOOT_HIST_NAMESPACE "boot_hist"
+#define BOOT_HIST_ENTRIES   16
+#define BOOT_HIST_KEY_HEAD  "head"
+
+struct boot_hist_entry_t {
+    uint8_t  reset_reason;   // esp_reset_reason_t cast to u8
+    uint8_t  _pad[3];
+    uint32_t timestamp;      // unix time at entry write (0 if SNTP not synced)
+};
+static_assert(sizeof(boot_hist_entry_t) == 8, "boot_hist_entry_t must be 8 bytes");
+
+static void boot_history_record(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(BOOT_HIST_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) {
+        ESP_LOGW(TAG, "[BOOT] boot_history: nvs_open failed — skipping record");
+        return;
+    }
+
+    uint8_t head = 0;
+    nvs_get_u8(h, BOOT_HIST_KEY_HEAD, &head);  // ok if missing — defaults 0
+
+    boot_hist_entry_t entry = {};
+    entry.reset_reason = (uint8_t)esp_reset_reason();
+    time_t now = 0;
+    time(&now);
+    entry.timestamp = (uint32_t)now;  // 0 if SNTP not yet synced
+
+    char key[8];
+    snprintf(key, sizeof(key), "h%u", (unsigned)head);
+    if (nvs_set_blob(h, key, &entry, sizeof(entry)) == ESP_OK) {
+        head = (uint8_t)((head + 1) % BOOT_HIST_ENTRIES);
+        nvs_set_u8(h, BOOT_HIST_KEY_HEAD, head);
+        nvs_commit(h);
+        ESP_LOGI(TAG, "[BOOT] boot_history: recorded reason=%u ts=%lu (head→%u)",
+                 entry.reset_reason, (unsigned long)entry.timestamp, head);
+    } else {
+        ESP_LOGW(TAG, "[BOOT] boot_history: set_blob failed");
+    }
+    nvs_close(h);
+}
+
+// Public read API used by /api/boot_history. Returns oldest-first chronological
+// order in @p out_entries (caller-provided buffer of capacity @p capacity).
+// @p out_count is set to the number of valid entries written. Entries whose
+// blob is missing in NVS are skipped (sparse buffer after fresh erase).
+extern "C" size_t main_boot_history_get(struct boot_hist_entry_t *out_entries, size_t capacity)
+{
+    if (!out_entries || capacity == 0) return 0;
+    nvs_handle_t h;
+    if (nvs_open(BOOT_HIST_NAMESPACE, NVS_READONLY, &h) != ESP_OK) return 0;
+
+    uint8_t head = 0;
+    nvs_get_u8(h, BOOT_HIST_KEY_HEAD, &head);
+
+    size_t written = 0;
+    // Walk oldest-first: starting from head (next-write slot) wrapping forward
+    for (size_t i = 0; i < BOOT_HIST_ENTRIES && written < capacity; i++) {
+        uint8_t idx = (uint8_t)((head + i) % BOOT_HIST_ENTRIES);
+        char key[8];
+        snprintf(key, sizeof(key), "h%u", (unsigned)idx);
+        size_t sz = sizeof(boot_hist_entry_t);
+        if (nvs_get_blob(h, key, &out_entries[written], &sz) == ESP_OK
+            && sz == sizeof(boot_hist_entry_t)) {
+            written++;
+        }
+    }
+    nvs_close(h);
+    return written;
+}
+
 static void heartbeat_cb(lv_timer_t *timer)
 {
     (void)timer;
     s_lvgl_heartbeat_ms = lv_tick_get();
 }
+
+// Log a self-heartbeat every Nth check cycle so we know the watchdog itself
+// is alive. At 5s check interval, every 12 cycles = once per minute.
+#define LVGL_WATCHDOG_SELF_LOG_EVERY  12
 
 static void display_watchdog_task(void *arg)
 {
@@ -206,12 +219,44 @@ static void display_watchdog_task(void *arg)
     // Grace period: give LVGL time to start before watching
     vTaskDelay(pdMS_TO_TICKS(LVGL_WATCHDOG_TIMEOUT_MS));
 
+    uint32_t cycle = 0;
+    UBaseType_t initial_hw_words = uxTaskGetStackHighWaterMark(NULL);
+    ESP_LOGI(TAG, "[wdog] alive (initial stack_hw=%u words = %u bytes)",
+             (unsigned)initial_hw_words,
+             (unsigned)(initial_hw_words * sizeof(StackType_t)));
+
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(LVGL_WATCHDOG_CHECK_MS));
+        cycle++;
         uint32_t elapsed = lv_tick_elaps(s_lvgl_heartbeat_ms);
+
+        // Periodic self-heartbeat — proves the watchdog task is still scheduled
+        // and reports its own stack high-water for early overflow detection.
+        if ((cycle % LVGL_WATCHDOG_SELF_LOG_EVERY) == 0) {
+            UBaseType_t hw_words = uxTaskGetStackHighWaterMark(NULL);
+            ESP_LOGI(TAG, "[wdog] tick cycle=%lu lvgl_elapsed=%lu ms stack_hw=%u bytes",
+                     (unsigned long)cycle, (unsigned long)elapsed,
+                     (unsigned)(hw_words * sizeof(StackType_t)));
+        }
+
         if (elapsed > LVGL_WATCHDOG_TIMEOUT_MS) {
             ESP_LOGE(TAG, "===== DISPLAY HANG DETECTED ===== (no LVGL heartbeat for %lu ms)",
                      (unsigned long)elapsed);
+
+            // Schedule unconditional restart via esp_timer (1s from now).
+            // This guarantees restart even if debug_log_flush() blocks on
+            // SD card I/O (which uses SDMMC DMA — fails when DRAM exhausted).
+            esp_timer_handle_t restart_timer;
+            esp_timer_create_args_t timer_args = {
+                .callback = [](void *) { esp_restart(); },
+                .name = "wdog_restart"
+            };
+            if (esp_timer_create(&timer_args, &restart_timer) == ESP_OK) {
+                esp_timer_start_once(restart_timer, 1000000); // 1 second
+            }
+
+            // Best-effort flush — may block if SD I/O is broken, but the
+            // timer above will force restart regardless.
             debug_log_flush();
             esp_restart();
         }
@@ -282,6 +327,19 @@ extern "C" void __wrap_esp_panic_handler(panic_info_t *info)
             info->reason ? info->reason : "unknown",
             sizeof(s_crash_reason) - 1);
     s_crash_reason[sizeof(s_crash_reason) - 1] = '\0';
+
+    // Capture abort() details — g_panic_abort_details contains the message
+    // from ESP_ERROR_CHECK, assert(), or abort() (file:line, expression, etc.)
+    // This is set by panic_abort() BEFORE the unimp trap that brings us here.
+    extern char *g_panic_abort_details;
+    extern bool  g_panic_abort;
+    if (g_panic_abort && g_panic_abort_details) {
+        strncpy(s_crash_details, g_panic_abort_details,
+                sizeof(s_crash_details) - 1);
+        s_crash_details[sizeof(s_crash_details) - 1] = '\0';
+    } else {
+        s_crash_details[0] = '\0';
+    }
     // s_boot_stage already set by the most-recent set_boot_stage() call
 
     // Real handler: serial register dump + backtrace + esp_restart()
@@ -298,9 +356,8 @@ extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskNa
     (void)xTask;
     set_boot_stage("stack_overflow");
     s_crash_magic = CRASH_MAGIC;
-    strncpy(s_crash_reason, "stack overflow", sizeof(s_crash_reason) - 1);
-    strncpy(s_crash_reason + 14, pcTaskName ? pcTaskName : "?",
-            sizeof(s_crash_reason) - 15);
+    snprintf(s_crash_reason, sizeof(s_crash_reason), "stack overflow: %s",
+             pcTaskName ? pcTaskName : "?");
     debug_log_reopen();
     ESP_LOGE(TAG, "===== STACK OVERFLOW: task='%s' =====", pcTaskName ? pcTaskName : "?");
     debug_log_flush();
@@ -330,57 +387,6 @@ static void panic_handler_hook(void) {
 }
 
 // =============================================================================
-// SPIFFS init helpers (required by BSP)
-// =============================================================================
-
-#define DEFAULT_FD_NUM      2
-#define DEFAULT_MOUNT_POINT "/spiffs"
-
-esp_err_t bsp_spiffs_init(const char *partition_label, const char *mount_point, size_t max_files)
-{
-    esp_vfs_spiffs_conf_t conf = {
-        .base_path = mount_point,
-        .partition_label = partition_label,
-        .max_files = max_files,
-        .format_if_mount_failed = false,
-    };
-
-    esp_err_t ret_val = esp_vfs_spiffs_register(&conf);
-
-    if (ESP_OK != ret_val) {
-        ESP_LOGE(TAG, "SPIFFS register failed: %d", ret_val);
-        return ret_val;
-    }
-
-    size_t total = 0, used = 0;
-
-    ret_val = esp_spiffs_info(conf.partition_label, &total, &used);
-    if (ret_val != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to get SPIFFS partition information (%s)", esp_err_to_name(ret_val));
-    }
-    else {
-        ESP_LOGI(TAG, "Partition size: total: %d, used: %d", total, used);
-    }
-
-    return ret_val;
-}
-
-esp_err_t bsp_spiffs_init_default(void)
-{
-    return bsp_spiffs_init(NULL, DEFAULT_MOUNT_POINT, DEFAULT_FD_NUM);
-}
-
-esp_err_t bsp_spiffs_deinit(const char *partition_label)
-{
-    return esp_vfs_spiffs_unregister(partition_label);
-}
-
-esp_err_t bsp_spiffs_deinit_default(void)
-{
-    return bsp_spiffs_deinit(NULL);
-}
-
-// =============================================================================
 // Boot stage functions
 // =============================================================================
 
@@ -407,33 +413,6 @@ static void boot_settings_init(clock_settings_t *cfg)
     ESP_LOGI(TAG, "[BOOT] settings_load: %s", err == ESP_OK ? "OK" : esp_err_to_name(err));
 }
 
-static void boot_spiffs_mount(void)
-{
-    set_boot_stage("spiffs_mount");
-    esp_err_t err = bsp_spiffs_init_default();
-    ESP_LOGI(TAG, "[BOOT] SPIFFS: %s", err == ESP_OK ? "mounted" : esp_err_to_name(err));
-
-    if (err != ESP_OK) return;
-
-    DIR* dir = opendir("/spiffs");
-    if (dir) {
-        struct dirent* entry;
-        while ((entry = readdir(dir)) != NULL) {
-            ESP_LOGI(TAG, "[BOOT] SPIFFS:   %s", entry->d_name);
-        }
-        closedir(dir);
-    }
-
-    FILE* f = fopen("/spiffs/splash.png", "r");
-    if (f) {
-        fseek(f, 0, SEEK_END);
-        long size = ftell(f);
-        fclose(f);
-        ESP_LOGI(TAG, "[BOOT] SPIFFS: ✓ splash.png (%ld bytes)", size);
-    } else {
-        ESP_LOGE(TAG, "[BOOT] SPIFFS: ✗ splash.png NOT FOUND");
-    }
-}
 
 // Crash context captured at the very top of app_main(), before any
 // set_boot_stage() call can clobber s_boot_stage.
@@ -444,6 +423,7 @@ typedef struct {
     uint32_t sp;
     char     reason[64];
     char     stage[32];
+    char     details[128];  // abort() message: file:line, assert expr, ESP_ERROR_CHECK msg
 } crash_ctx_t;
 
 static void boot_sdcard_init(const crash_ctx_t *ctx)
@@ -516,21 +496,15 @@ static void boot_sdcard_init(const crash_ctx_t *ctx)
                      (unsigned long)ctx->pc,
                      (unsigned long)ctx->ra,
                      (unsigned long)ctx->sp);
+            if (ctx->details[0]) {
+                ESP_LOGE(TAG, "  Details: %s", ctx->details);
+            }
             ESP_LOGE(TAG, "========================================");
         }
     } else {
         ESP_LOGW(TAG, "[BOOT] Debug log init failed: %s", esp_err_to_name(err));
     }
 
-    FILE* f = fopen("/sdcard/splash.png", "r");
-    if (f) {
-        fseek(f, 0, SEEK_END);
-        long size = ftell(f);
-        fclose(f);
-        ESP_LOGI(TAG, "[BOOT] SD: ✓ /sdcard/splash.png (%ld bytes)", size);
-    } else {
-        ESP_LOGW(TAG, "[BOOT] SD: ✗ /sdcard/splash.png not found (OK, will use SPIFFS)");
-    }
 }
 
 static void boot_network_early(const clock_settings_t *cfg)
@@ -608,7 +582,20 @@ static void boot_services(const clock_settings_t *cfg)
 }
 
 // =============================================================================
-// boot_await_launch — blocks until 60 s elapsed OR POST /debug/launch received
+// boot_await_launch — OTA SAFETY WINDOW
+//
+// Blocks until 60 s elapsed OR POST /debug/launch received.
+// This is the ONLY thing standing between a bad OTA and a bricked device.
+//
+// CONTRACT:
+//   - MUST be called AFTER boot_services() (HTTP API must be live)
+//   - MUST be called BEFORE any task that processes external data
+//   - NO tasks that could crash from bad data may be spawned before this returns
+//   - NO LVGL, no file parsing, no JSON, no network fetches before this returns
+//
+// If you are considering moving this call or adding code before it:
+//   DON'T. A crash before this window means the device is unrecoverable
+//   without physical access. This has already caused a wall-dismount incident.
 // =============================================================================
 
 static SemaphoreHandle_t s_launch_sem;
@@ -698,7 +685,10 @@ static void boot_display_init(const clock_settings_t *cfg)
     s_lvgl_heartbeat_ms = lv_tick_get();
     lv_timer_create(heartbeat_cb, 1000, NULL);
     lvgl_port_unlock();
-    xTaskCreate(display_watchdog_task, "disp_wdog", 2048, NULL, 3, NULL);
+    // 6 KB stack: ESP_LOGE varargs + esp_timer_create can push the original 2 KB
+    // over its limit if a hang is detected. Headroom > diagnostic value > minor
+    // internal-DRAM cost.
+    xTaskCreate(display_watchdog_task, "disp_wdog", 6144, NULL, 3, NULL);
     ESP_LOGI(TAG, "[BOOT] Display watchdog started (timeout %d ms)", LVGL_WATCHDOG_TIMEOUT_MS);
 
     bsp_display_backlight_on();
@@ -724,31 +714,10 @@ static void boot_display_init(const clock_settings_t *cfg)
     ESP_LOGI(TAG, "[BOOT] Buffer alignment: %d bytes", CONFIG_LV_DRAW_BUF_ALIGN);
     ESP_LOGI(TAG, "[BOOT] Stride alignment: %d bytes", CONFIG_LV_DRAW_BUF_STRIDE_ALIGN);
 
-    // LVGL filesystem drivers
+    // LVGL filesystem driver — A: drive maps to /sdcard/ via POSIX
     set_boot_stage("lvgl_fs_init");
-    ESP_LOGI(TAG, "[BOOT] Registering LVGL FS drivers");
     lv_fs_posix_init();
     ESP_LOGI(TAG, "[BOOT] A: drive registered (/sdcard)");
-    lv_fs_spiffs_init();
-    ESP_LOGI(TAG, "[BOOT] B: drive registered (/spiffs)");
-
-    // Smoke-test both drives
-    lv_fs_file_t f;
-    lv_fs_res_t res = lv_fs_open(&f, "B:/splash.png", LV_FS_MODE_RD);
-    if (res == LV_FS_RES_OK) {
-        ESP_LOGI(TAG, "[BOOT] ✓ B:/splash.png opened via LVGL");
-        lv_fs_close(&f);
-    } else {
-        ESP_LOGE(TAG, "[BOOT] ✗ B:/splash.png FAILED (res=%d)", res);
-    }
-
-    res = lv_fs_open(&f, "A:/splash.png", LV_FS_MODE_RD);
-    if (res == LV_FS_RES_OK) {
-        ESP_LOGI(TAG, "[BOOT] ✓ A:/splash.png opened via LVGL");
-        lv_fs_close(&f);
-    } else {
-        ESP_LOGW(TAG, "[BOOT] ⚠ A:/splash.png not found (res=%d) — OK if not on SD", res);
-    }
 
     if (lv_indev_t* t = lv_indev_get_next(NULL)) {
         lv_indev_enable(t, cfg->enable_touch);
@@ -770,14 +739,50 @@ static void boot_health_loop(void)
         vTaskDelay(pdMS_TO_TICKS(60000));
         loop_count++;
 
-        size_t free_heap = esp_get_free_heap_size();
-        size_t min_heap  = esp_get_minimum_free_heap_size();
+        size_t free_heap     = esp_get_free_heap_size();
+        size_t min_heap      = esp_get_minimum_free_heap_size();
+        size_t internal_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        size_t internal_min  = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+        size_t spiram_free   = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
 
-        ESP_LOGI(TAG, "[HEALTH] Loop %lu: free=%lu, min=%lu, delta=%ld",
-                 (unsigned long)loop_count,
-                 (unsigned long)free_heap,
-                 (unsigned long)min_heap,
-                 (long)(free_heap - last_free_heap));
+        float tsens_c = 0.0f;
+        bool  tsens_ok = tsens_sample(&tsens_c);
+
+        if (tsens_ok) {
+            ESP_LOGI(TAG, "[HEALTH] Loop %lu: free=%lu min=%lu internal=%lu int_lowwater=%lu spiram=%lu delta=%ld tsens=%.1fC (lo=%.1f hi=%.1f)",
+                     (unsigned long)loop_count,
+                     (unsigned long)free_heap,
+                     (unsigned long)min_heap,
+                     (unsigned long)internal_free,
+                     (unsigned long)internal_min,
+                     (unsigned long)spiram_free,
+                     (long)(free_heap - last_free_heap),
+                     tsens_c, s_tsens_min_c, s_tsens_max_c);
+        } else {
+            ESP_LOGI(TAG, "[HEALTH] Loop %lu: free=%lu min=%lu internal=%lu int_lowwater=%lu spiram=%lu delta=%ld",
+                     (unsigned long)loop_count,
+                     (unsigned long)free_heap,
+                     (unsigned long)min_heap,
+                     (unsigned long)internal_free,
+                     (unsigned long)internal_min,
+                     (unsigned long)spiram_free,
+                     (long)(free_heap - last_free_heap));
+        }
+
+        // Internal DRAM is the scarce pool (DMA/WiFi/LVGL contend for it). When it
+        // runs low, large allocations that REQUIRE internal memory stall or fail —
+        // the signature of display lag without a crash. Flag it distinctly.
+        if (internal_free < 12000) {
+            ESP_LOGW(TAG, "[HEALTH] LOW INTERNAL DRAM! free=%lu lowwater=%lu bytes",
+                     (unsigned long)internal_free, (unsigned long)internal_min);
+        }
+
+        // Log LVGL rendering stats if available
+        lv_display_t *disp = lv_display_get_default();
+        if (disp) {
+            uint32_t elapsed = lv_tick_get() - (loop_count > 1 ? 60000 : 0);
+            ESP_LOGI(TAG, "[HEALTH] LVGL tick=%lu", (unsigned long)lv_tick_get());
+        }
 
         if (free_heap < 20000) {
             ESP_LOGW(TAG, "[HEALTH] LOW HEAP! Free: %lu bytes", (unsigned long)free_heap);
@@ -801,10 +806,12 @@ extern "C" void app_main()
     ctx.pc    = s_crash_pc;
     ctx.ra    = s_crash_ra;
     ctx.sp    = s_crash_sp;
-    memcpy(ctx.reason, s_crash_reason, sizeof(ctx.reason));
-    memcpy(ctx.stage,  s_boot_stage,   sizeof(ctx.stage));
-    ctx.reason[sizeof(ctx.reason) - 1] = '\0';
-    ctx.stage[sizeof(ctx.stage)   - 1] = '\0';
+    memcpy(ctx.reason,  s_crash_reason,  sizeof(ctx.reason));
+    memcpy(ctx.stage,   s_boot_stage,    sizeof(ctx.stage));
+    memcpy(ctx.details, s_crash_details, sizeof(ctx.details));
+    ctx.reason[sizeof(ctx.reason)   - 1] = '\0';
+    ctx.stage[sizeof(ctx.stage)     - 1] = '\0';
+    ctx.details[sizeof(ctx.details) - 1] = '\0';
     s_crash_magic = 0;  // clear before this boot can produce a false re-report
 
     clock_settings_t cfg;
@@ -813,12 +820,36 @@ extern "C" void app_main()
 
     boot_settings_init(&cfg);
     boot_sdcard_init(&ctx);
+    tsens_init();               // ← internal chip-temp telemetry available from here
     boot_network_early(&cfg);   // ← ROLLBACK BOUNDARY: ota_mark_app_valid() fires here
     boot_sntp_wait(&cfg);
     boot_timezone(&cfg);
+    boot_history_record();      // ← persist reset_reason + boot timestamp to NVS
     boot_services(&cfg);        // HTTP API up, OTA pushable, UDP log streamable
 
-    // Start NWS weather polling (resolves location, then fetches in background)
+    // =================================================================
+    // OTA SAFETY WINDOW — DO NOT MOVE OR BYPASS
+    //
+    // boot_await_launch() blocks for 60 seconds (or until POST /debug/launch).
+    // During this window the device is:
+    //   - Reachable via HTTP API (OTA push, reboot, file ops)
+    //   - NOT running any user-facing features that could crash
+    //
+    // NOTHING that processes external data (network fetches, JSON parsing,
+    // LVGL rendering, file loading) may run before this call returns.
+    // If a crash occurs before this point, the device is OTA-recoverable.
+    // If a crash occurs after, the device may require physical access.
+    //
+    // This saved us from a wall-dismount once. Do not touch.
+    // =================================================================
+    boot_await_launch();
+    // =================================================================
+    // END OTA SAFETY WINDOW — features below here are crash-tolerant
+    // (device is already proven bootable + HTTP-reachable)
+    // =================================================================
+
+    // Start NWS weather polling AFTER the safety window.
+    // If this task crashes, HTTP API is still up — push a fix via OTA.
     if (cfg.wifi_configured && cfg.enable_weather) {
         esp_err_t nws_err = nws_init(cfg.latitude, cfg.longitude, display_fsm_send_event);
         if (nws_err == ESP_OK) {
@@ -831,15 +862,7 @@ extern "C" void app_main()
         ESP_LOGI(TAG, "[BOOT] NWS weather: %s",
                  !cfg.wifi_configured ? "skipped (no WiFi)" : "disabled in settings");
     }
-
-    boot_await_launch();        // blocks 60 s or until POST /debug/launch
-    boot_spiffs_mount();        // SPIFFS only needed for B:/splash.png — defer until here
-    boot_display_init(&cfg);    // LVGL init — after rollback boundary
-
-    set_boot_stage("ui_show_splash");
-    ESP_LOGI(TAG, "[BOOT] ui_show_splash...");
-    ui_show_splash();
-    ESP_LOGI(TAG, "[BOOT] ui_show_splash done");
+    boot_display_init(&cfg);    // LVGL init — after safety window
 
     // Display FSM takes ownership of the clock display.
     // Creates ClockWidget, loads background + Lottie, registers gestures,

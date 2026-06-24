@@ -14,8 +14,13 @@ image_rotator_t *PhotoSlideshow::s_rotator      = nullptr;
 lv_obj_t        *PhotoSlideshow::s_empty_label   = nullptr;
 lv_timer_t      *PhotoSlideshow::s_advance_timer = nullptr;
 
-// Auto-advance interval (milliseconds)
-#define PHOTO_ADVANCE_MS 15000
+// Auto-advance interval (milliseconds). At the default ~30s show duration this
+// yields several photos per visit instead of just two.
+#define PHOTO_ADVANCE_MS 7000
+
+// Next photo index to show, persisted across visits so the slideshow cycles
+// through the whole album over time instead of restarting at photo 0 each time.
+static int s_next_photo_index = 0;
 
 static void photo_advance_timer_cb(lv_timer_t *timer)
 {
@@ -30,16 +35,27 @@ void PhotoSlideshow::entry()
     set_state_info(DISPLAY_STATE_PHOTOS, "photos");
     minimize_clock();
 
-    s_rotator = image_rotator_create(s_screen, "A:/photos");
+    s_rotator = image_rotator_create(s_screen, "A:/photos", s_next_photo_index);
 
     if (!s_rotator || image_rotator_count(s_rotator) == 0) {
-        // No photos — show message
-        s_empty_label = lv_label_create(s_screen);
-        lv_label_set_text(s_empty_label, "No photos\nUpload via web control");
-        lv_obj_set_style_text_color(s_empty_label, lv_color_hex(0x808080), 0);
-        lv_obj_set_style_text_font(s_empty_label, &lv_font_montserrat_24, 0);
-        lv_obj_set_style_text_align(s_empty_label, LV_TEXT_ALIGN_CENTER, 0);
+        // No photos — show message with dark backdrop for contrast
+        s_empty_label = lv_obj_create(s_screen);
+        lv_obj_set_size(s_empty_label, 400, 120);
         lv_obj_align(s_empty_label, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_set_style_bg_color(s_empty_label, lv_color_hex(0x0a0a1e), 0);
+        lv_obj_set_style_bg_opa(s_empty_label, LV_OPA_70, 0);
+        lv_obj_set_style_radius(s_empty_label, 12, 0);
+        lv_obj_set_style_border_width(s_empty_label, 0, 0);
+        lv_obj_set_style_pad_all(s_empty_label, 16, 0);
+        lv_obj_clear_flag(s_empty_label, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *lbl = lv_label_create(s_empty_label);
+        lv_label_set_text(lbl, "No photos\nUpload via web control");
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0xb0b0c0), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_24, 0);
+        lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
+
         fade_in(s_empty_label);
         ESP_LOGW(TAG, "PhotoSlideshow: no images found");
     } else {
@@ -54,9 +70,18 @@ void PhotoSlideshow::entry()
 void PhotoSlideshow::exit()
 {
     if (s_advance_timer) { lv_timer_delete(s_advance_timer); s_advance_timer = NULL; }
-    if (s_empty_label) { lv_obj_del(s_empty_label); s_empty_label = NULL; }
-    if (s_rotator) { image_rotator_destroy(s_rotator); s_rotator = NULL; }
-    ESP_LOGI(TAG, "PhotoSlideshow: exit");
+    if (s_empty_label) { lv_obj_delete(s_empty_label); s_empty_label = NULL; }
+    if (s_rotator) {
+        // Resume after the last-shown photo on the next visit so the album
+        // cycles through over time instead of repeating the first two.
+        int count = image_rotator_count(s_rotator);
+        if (count > 0) {
+            s_next_photo_index = (image_rotator_index(s_rotator) + 1) % count;
+        }
+        image_rotator_destroy(s_rotator);
+        s_rotator = NULL;
+    }
+    ESP_LOGI(TAG, "PhotoSlideshow: exit (next start=%d)", s_next_photo_index);
 }
 
 void PhotoSlideshow::react(EvDisplayTimeout const &)

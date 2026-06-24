@@ -119,6 +119,69 @@ static lv_obj_t *create_image_child(lv_obj_t *parent, const cJSON *child)
     return img;
 }
 
+// Container geometry + background colour from the root object.
+static void setup_container(json_layout_t *jl, lv_obj_t *parent, const cJSON *root)
+{
+    jl->container = lv_obj_create(parent);
+    lv_obj_set_size(jl->container, 1024, 600);
+    lv_obj_align(jl->container, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_border_width(jl->container, 0, 0);
+    lv_obj_set_style_pad_all(jl->container, 0, 0);
+    lv_obj_set_style_radius(jl->container, 0, 0);
+    lv_obj_clear_flag(jl->container, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    const cJSON *bg_color = cJSON_GetObjectItem(root, "bg_color");
+    lv_color_t color = (bg_color && cJSON_IsString(bg_color))
+        ? parse_color(bg_color->valuestring) : lv_color_hex(0x1a1a2e);
+    lv_obj_set_style_bg_color(jl->container, color, 0);
+    lv_obj_set_style_bg_opa(jl->container, LV_OPA_COVER, 0);
+}
+
+// Append an object to the child list if there's room.
+static void layout_add_child(json_layout_t *jl, lv_obj_t *obj)
+{
+    if (obj && jl->child_count < MAX_CHILDREN) {
+        jl->children[jl->child_count++] = obj;
+    }
+}
+
+// Create a child object from its "type" field; NULL for unknown/handled types.
+static lv_obj_t *create_typed_child(lv_obj_t *parent, const cJSON *child)
+{
+    const cJSON *type = cJSON_GetObjectItem(child, "type");
+    if (!type || !cJSON_IsString(type)) return NULL;
+
+    const char *t = type->valuestring;
+    if (strcmp(t, "label") == 0) return create_label_child(parent, child);
+    if (strcmp(t, "image") == 0) return create_image_child(parent, child);
+    if (strcmp(t, "lottie") == 0) {
+        // Deferred — needs lv_lottie integration. Log and skip.
+        ESP_LOGW(TAG, "Lottie child type not yet implemented in JSON layout");
+    }
+    return NULL;
+}
+
+// Add the optional bg_image plus every entry in the "children" array.
+static void add_children(json_layout_t *jl, const cJSON *root)
+{
+    const cJSON *bg_image = cJSON_GetObjectItem(root, "bg_image");
+    if (bg_image && cJSON_IsString(bg_image)) {
+        lv_obj_t *bg = lv_image_create(jl->container);
+        lv_image_set_src(bg, bg_image->valuestring);
+        lv_obj_align(bg, LV_ALIGN_TOP_LEFT, 0, 0);
+        layout_add_child(jl, bg);
+    }
+
+    const cJSON *children = cJSON_GetObjectItem(root, "children");
+    if (!children || !cJSON_IsArray(children)) return;
+
+    const cJSON *child;
+    cJSON_ArrayForEach(child, children) {
+        if (jl->child_count >= MAX_CHILDREN) break;
+        layout_add_child(jl, create_typed_child(jl->container, child));
+    }
+}
+
 json_layout_t *json_layout_create(lv_obj_t *parent, const char *json_str)
 {
     if (!json_str) return NULL;
@@ -137,63 +200,8 @@ json_layout_t *json_layout_create(lv_obj_t *parent, const char *json_str)
     }
     memset(jl, 0, sizeof(*jl));
 
-    // Container
-    jl->container = lv_obj_create(parent);
-    lv_obj_set_size(jl->container, 1024, 600);
-    lv_obj_align(jl->container, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_border_width(jl->container, 0, 0);
-    lv_obj_set_style_pad_all(jl->container, 0, 0);
-    lv_obj_set_style_radius(jl->container, 0, 0);
-    lv_obj_clear_flag(jl->container, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-
-    // Background color
-    const cJSON *bg_color = cJSON_GetObjectItem(root, "bg_color");
-    if (bg_color && cJSON_IsString(bg_color)) {
-        lv_obj_set_style_bg_color(jl->container, parse_color(bg_color->valuestring), 0);
-        lv_obj_set_style_bg_opa(jl->container, LV_OPA_COVER, 0);
-    } else {
-        lv_obj_set_style_bg_color(jl->container, lv_color_hex(0x1a1a2e), 0);
-        lv_obj_set_style_bg_opa(jl->container, LV_OPA_COVER, 0);
-    }
-
-    // Background image
-    const cJSON *bg_image = cJSON_GetObjectItem(root, "bg_image");
-    if (bg_image && cJSON_IsString(bg_image)) {
-        lv_obj_t *bg = lv_image_create(jl->container);
-        lv_image_set_src(bg, bg_image->valuestring);
-        lv_obj_align(bg, LV_ALIGN_TOP_LEFT, 0, 0);
-        if (jl->child_count < MAX_CHILDREN) {
-            jl->children[jl->child_count++] = bg;
-        }
-    }
-
-    // Children
-    const cJSON *children = cJSON_GetObjectItem(root, "children");
-    if (children && cJSON_IsArray(children)) {
-        const cJSON *child;
-        cJSON_ArrayForEach(child, children) {
-            if (jl->child_count >= MAX_CHILDREN) break;
-
-            const cJSON *type = cJSON_GetObjectItem(child, "type");
-            if (!type || !cJSON_IsString(type)) continue;
-
-            lv_obj_t *obj = NULL;
-            if (strcmp(type->valuestring, "label") == 0) {
-                obj = create_label_child(jl->container, child);
-            } else if (strcmp(type->valuestring, "image") == 0) {
-                obj = create_image_child(jl->container, child);
-            }
-            // Note: "lottie" type deferred — requires lv_lottie integration
-            // which is complex. For now, log and skip.
-            else if (strcmp(type->valuestring, "lottie") == 0) {
-                ESP_LOGW(TAG, "Lottie child type not yet implemented in JSON layout");
-            }
-
-            if (obj) {
-                jl->children[jl->child_count++] = obj;
-            }
-        }
-    }
+    setup_container(jl, parent, root);
+    add_children(jl, root);
 
     cJSON_Delete(root);
     ESP_LOGI(TAG, "JsonLayout created: %d children", jl->child_count);
@@ -204,7 +212,10 @@ void json_layout_destroy(json_layout_t *jl)
 {
     if (!jl) return;
     // Deleting container deletes all children
-    if (jl->container) lv_obj_del(jl->container);
+    if (jl->container) {
+        lv_anim_delete(jl->container, NULL);
+        lv_obj_delete(jl->container);
+    }
     lv_free(jl);
     ESP_LOGI(TAG, "JsonLayout destroyed");
 }

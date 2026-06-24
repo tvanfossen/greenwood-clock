@@ -60,6 +60,51 @@ struct clock_widget_t *display_fsm_get_clock(void);
  */
 lv_obj_t *display_fsm_get_screen(void);
 
+/**
+ * @brief Reload the background image from current settings.
+ *
+ * Deletes the old background (if any), loads the new one from NVS path.
+ * Safe to call from LVGL callbacks (handles its own locking).
+ */
+void display_fsm_refresh_background(void);
+
+/**
+ * @brief Reload the text color from current settings.
+ *
+ * Updates the ClockWidget's text color from NVS.
+ * Safe to call from LVGL callbacks (handles its own locking).
+ */
+void display_fsm_refresh_text_color(void);
+
+/**
+ * @brief Submit a Lottie file for async loading on the shared loader task.
+ *
+ * The loader task has a 64KB SPIRAM stack for ThorVG's deep recursive
+ * JSON parse.  The widget must already be created and have its buffer set.
+ * Loading happens asynchronously — the widget will start animating once
+ * the parse completes.
+ *
+ * @param job  Load job descriptor (copied into queue).
+ * @return true if queued, false if queue full or Lottie not enabled.
+ */
+typedef struct {
+    lv_obj_t *widget;       // Lottie widget (already created, buffer set)
+    char      path[256];    // POSIX path to .json file
+    uint32_t  target_fps;   // 0 = use default animation speed
+} lottie_load_job_t;
+
+bool display_fsm_load_lottie(const lottie_load_job_t *job);
+
+/**
+ * @brief Show/hide the clock Lottie animation (hummingbird).
+ *
+ * The Lottie lives on the root screen and must be explicitly hidden
+ * when non-ClockFull states are active, otherwise it bleeds through.
+ * Caller must hold LVGL lock.
+ */
+void display_fsm_show_clock_lottie(void);
+void display_fsm_hide_clock_lottie(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -10,12 +10,10 @@ idf_component_register(
         esp_wifi_remote             # esp_wifi over RPC
         esp_lcd_ek79007             # panel driver
 
-        spiffs                      # for bsp_spiffs_init_default()
         lvgl_mem_esp                # LVGL SPIRAM memory allocator
 
         network                     # your network module
         time_sync                   # your SNTP/TZ module
-        ui                          # your LVGL splash & clock UI
         settings                    # persistent settings via NVS
         ota                         # OTA firmware updates
         sdcard                      # SD card support
@@ -25,7 +23,6 @@ idf_component_register(
         nws                         # NWS weather service
         mdns                        # mDNS service advertisement
 )
-spiffs_create_partition_image(storage ../spiffs FLASH_IN_PROJECT)
 
 # Intercept esp_panic_handler globally so we can log crash info to SD
 # before the real handler prints the backtrace to serial.

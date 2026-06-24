@@ -1,0 +1,19 @@
+# Log files (generated on device)
+logs/*.log
+
+# Large binary assets (managed via deploy_sdcard.py, not git)
+backgrounds/*.gif
+backgrounds/*.png
+maps/*.png
+maps/*.bin
+
+# Lottie animations (generated via tools/lottie_gen/)
+lottie/weather/
+lottie/astro/
+lottie/surprise/
+lottie/ui/
+lottie/ambient/
+
+# Photo slideshow (user content)
+photos/*
+!photos/.gitkeep

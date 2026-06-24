@@ -23,7 +23,7 @@ extern "C" {
 #include "network.h"
 #include "settings.h"
 #include "sdcard.h"
-#include "ui.h"             // ui_refresh_background, ui_refresh_text_color
+#include "display_fsm.h"    // display_fsm_refresh_background, display_fsm_refresh_text_color
 #include "bsp/display.h"    // bsp_display_brightness_set
 }
 
@@ -85,7 +85,7 @@ static void destroy_all_subs(void)
 {
     for (int i = 0; i < SUB_MAX; i++) {
         if (s_sub_containers[i]) {
-            lv_obj_del(s_sub_containers[i]);
+            lv_obj_delete(s_sub_containers[i]);
             s_sub_containers[i] = nullptr;
         }
     }
@@ -133,7 +133,7 @@ static void pop_sub(void)
     // Hide + destroy current
     settings_sub_screen_t cur = s_sub_stack[s_sub_top];
     if (s_sub_containers[cur]) {
-        lv_obj_del(s_sub_containers[cur]);
+        lv_obj_delete(s_sub_containers[cur]);
         s_sub_containers[cur] = nullptr;
     }
     s_sub_top--;
@@ -190,24 +190,28 @@ static lv_obj_t *make_sub_container(lv_obj_t *parent, const char *title)
     return cont;
 }
 
-/** Show success message box, wait briefly, then pop. */
+/** Dismiss callback — fired by lv_timer after 1.5 s.  Deletes the msgbox
+ *  and pops the sub-screen.  Runs inside lv_timer_handler() in the LVGL
+ *  task, so the lock is already held — no extra lock/unlock needed. */
+static void success_dismiss_cb(lv_timer_t *timer)
+{
+    lv_obj_t *mbox = (lv_obj_t *)lv_timer_get_user_data(timer);
+    if (mbox) lv_msgbox_close(mbox);  // deletes both msgbox AND its backdrop overlay
+    pop_sub();
+    lv_timer_delete(timer);
+}
+
+/** Show success message box, auto-dismiss after 1.5 s, then pop.
+ *  Non-blocking — returns immediately so the LVGL task keeps rendering. */
 static void show_success_and_pop(const char *msg)
 {
     lv_obj_t *mbox = lv_msgbox_create(NULL);
     lv_msgbox_add_title(mbox, "Success");
     lv_msgbox_add_text(mbox, msg);
-    lv_msgbox_add_close_button(mbox);
     lv_obj_center(mbox);
 
-    // Brief delay so user sees the message, then pop
-    // Note: we're in FSM task context with LVGL lock held.
-    // Release lock for delay, re-acquire.
-    lvgl_port_unlock();
-    vTaskDelay(pdMS_TO_TICKS(1500));
-    lvgl_port_lock(0);
-
-    if (mbox) lv_obj_del(mbox);
-    pop_sub();
+    lv_timer_t *t = lv_timer_create(success_dismiss_cb, 1500, mbox);
+    lv_timer_set_repeat_count(t, 1);
 }
 
 // ============================================================================
@@ -530,6 +534,11 @@ static bool bg_is_image_file(const char *ext)
     return (strcasecmp(ext, ".png") == 0 || strcasecmp(ext, ".gif") == 0);
 }
 
+static void bg_path_cleanup_cb(lv_event_t *e)
+{
+    free(lv_event_get_user_data(e));
+}
+
 static void background_select_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -552,15 +561,15 @@ static void background_select_cb(lv_event_t *e)
         return;
     }
     ESP_LOGI(TAG, "Background saved: A:%s", filename);
-    ui_refresh_background();
+    display_fsm_refresh_background();
     show_success_and_pop("Background updated!");
 }
 
 static int bg_scan_directory(lv_obj_t *list)
 {
-    DIR *dir = opendir("/sdcard");
+    DIR *dir = opendir("/sdcard/backgrounds");
     if (!dir) {
-        ESP_LOGE(TAG, "Failed to open /sdcard directory");
+        ESP_LOGE(TAG, "Failed to open /sdcard/backgrounds directory");
         return -1;
     }
     int count = 0;
@@ -573,11 +582,12 @@ static int bg_scan_directory(lv_obj_t *list)
         bool is_gif = (strcasecmp(ext, ".gif") == 0);
         const char *icon = is_gif ? LV_SYMBOL_LOOP : LV_SYMBOL_IMAGE;
         char filepath[256];
-        snprintf(filepath, sizeof(filepath), "/%s", entry->d_name);
+        snprintf(filepath, sizeof(filepath), "/backgrounds/%s", entry->d_name);
         lv_obj_t *btn = lv_list_add_button(list, icon, entry->d_name);
-        // strdup the path so callback has valid pointer
-        lv_obj_add_event_cb(btn, background_select_cb, LV_EVENT_CLICKED,
-                            (void *)strdup(filepath));
+        // strdup the path so callback has valid pointer; free on button delete
+        char *path = strdup(filepath);
+        lv_obj_add_event_cb(btn, background_select_cb, LV_EVENT_CLICKED, path);
+        lv_obj_add_event_cb(btn, bg_path_cleanup_cb, LV_EVENT_DELETE, path);
         count++;
     }
     closedir(dir);
@@ -655,7 +665,7 @@ static void color_select_cb(lv_event_t *e)
         return;
     }
     ESP_LOGI(TAG, "Text color saved: 0x%06lX", color_value);
-    ui_refresh_text_color();
+    display_fsm_refresh_text_color();
     show_success_and_pop("Text color updated!");
 }
 
@@ -692,45 +702,11 @@ static lv_obj_t *create_sub_text_color(lv_obj_t *parent)
 
 #if LV_USE_LOTTIE
 
-#define LOTTIE_FILE_PATH   "/sdcard/hummingbird.json"
-#define LOTTIE_LOAD_STACK  (64 * 1024)
+#define LOTTIE_FILE_PATH   "/sdcard/lottie/hummingbird.json"
 #define LOTTIE_W           200
 #define LOTTIE_H           200
 
 static uint8_t *s_lottie_buf = nullptr;
-
-struct lottie_load_arg_t {
-    lv_obj_t *widget;
-    char      path[256];
-};
-
-static void lottie_load_task(void *arg)
-{
-    auto *a = static_cast<lottie_load_arg_t *>(arg);
-    lv_obj_t *widget = a->widget;
-    char path[256];
-    strlcpy(path, a->path, sizeof(path));
-    free(a);
-
-    ESP_LOGI(TAG, "lottie_load_task: start path='%s'", path);
-
-    struct stat st;
-    if (stat(path, &st) != 0) {
-        ESP_LOGE(TAG, "lottie_load_task: file not found: '%s' (errno=%d %s)",
-                 path, errno, strerror(errno));
-        vTaskDeleteWithCaps(NULL);
-        return;
-    }
-    ESP_LOGI(TAG, "lottie_load_task: file found, size=%lld bytes", (long long)st.st_size);
-
-    lvgl_port_lock(0);
-    lv_lottie_set_src_file(widget, path);
-    ESP_LOGI(TAG, "lottie_load_task: lv_lottie_set_src_file returned, stack_hw=%lu",
-             (unsigned long)uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t));
-    lvgl_port_unlock();
-
-    vTaskDeleteWithCaps(NULL);
-}
 
 static lv_obj_t *anim_create_widget(lv_obj_t *scr)
 {
@@ -768,22 +744,12 @@ static lv_obj_t *anim_create_widget(lv_obj_t *scr)
 
 static void anim_spawn_load_task(lv_obj_t *widget, const char *path)
 {
-    auto *a = static_cast<lottie_load_arg_t *>(malloc(sizeof(lottie_load_arg_t)));
-    if (!a) {
-        ESP_LOGE(TAG, "anim: failed to alloc load task arg");
-        return;
-    }
-    a->widget = widget;
-    strlcpy(a->path, path, sizeof(a->path));
-
-    ESP_LOGI(TAG, "anim: spawning lottie_load_task (stack=%d B, DRAM-forced)", LOTTIE_LOAD_STACK);
-    BaseType_t ret = xTaskCreateWithCaps(lottie_load_task, "lottie_load",
-                                         LOTTIE_LOAD_STACK, a, 5, NULL,
-                                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (ret != pdPASS) {
-        ESP_LOGE(TAG, "anim: xTaskCreateWithCaps lottie_load FAILED (ret=%d)", (int)ret);
-        free(a);
-    }
+    lottie_load_job_t job = {};
+    job.widget     = widget;
+    job.target_fps = 0;  // use default animation speed
+    strlcpy(job.path, path, sizeof(job.path));
+    display_fsm_load_lottie(&job);
+    ESP_LOGI(TAG, "anim: Lottie load queued '%s'", path);
 }
 
 #endif // LV_USE_LOTTIE
@@ -884,7 +850,7 @@ static lv_obj_t *create_sub_about(lv_obj_t *parent)
 void Settings::entry()
 {
     set_state_info(DISPLAY_STATE_SETTINGS, "settings");
-    minimize_clock();
+    topbar_clock();
     display_scheduler_get()->pause();
 
     // Create root container (invisible, just a parent for sub-screens)
@@ -920,7 +886,7 @@ void Settings::exit()
     destroy_all_subs();
 
     if (s_settings_root) {
-        lv_obj_del(s_settings_root);
+        lv_obj_delete(s_settings_root);
         s_settings_root = nullptr;
     }
 

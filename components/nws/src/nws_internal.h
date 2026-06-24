@@ -9,6 +9,7 @@
 #include "esp_http_client.h"
 #include "http_client_utils.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_crt_bundle.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
@@ -22,7 +23,7 @@
 #define NWS_CONNECT_TIMEOUT_MS  5000
 #define NWS_READ_TIMEOUT_MS     10000
 #define NWS_MAX_RETRIES         3
-#define NWS_RETRY_DELAY_MS      2000
+#define NWS_RETRY_DELAY_MS      5000
 
 /**
  * @brief Fetch JSON from a URL with NWS-standard headers and retry logic.

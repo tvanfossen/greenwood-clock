@@ -96,9 +96,17 @@ static esp_err_t load_time_from_nvs(void) {
 /**
  * @brief Configure and start the SNTP client with all pool servers.
  *
- * Called once when the device receives an IP address.
+ * Fires on every IP_EVENT_STA_GOT_IP — including Wi-Fi reconnects. The lwip
+ * SNTP client asserts in sntp_setoperatingmode() if the operating mode is set
+ * while the client is already running, so re-init on reconnect would PANIC.
+ * Guard against that: if SNTP is already enabled, just force a resync.
  */
 static void network_start_sntp(void) {
+    if (esp_sntp_enabled()) {
+        ESP_LOGI(TAG, "SNTP already running — restarting sync (reconnect)");
+        esp_sntp_restart();
+        return;
+    }
     esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
     for (int i = 0; i < (int)NTP_SERVER_COUNT; i++) {
         esp_sntp_setservername(i, NTP_SERVERS[i]);

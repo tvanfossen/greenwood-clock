@@ -1,42 +1,20 @@
 // components/display_fsm/src/state_weather.cpp
 //
 // WeatherOverlay state — minimized clock + current conditions + forecast strip.
-// Optionally creates particle effects for precipitation conditions.
+// Condition Lottie animation fills the weather card background.
 
 #include "display_states.h"
 #include "display_scheduler.h"
 #include "display_widgets.h"
 #include "nws.h"
 #include "esp_log.h"
-#include <string.h>
+#include <time.h>
 
 static const char *TAG = "state_weather";
 
 // Static member definitions
 weather_card_t    *WeatherOverlay::s_card      = nullptr;
 forecast_strip_t  *WeatherOverlay::s_strip     = nullptr;
-particle_system_t *WeatherOverlay::s_particles = nullptr;
-
-// Map NWS description to particle config (NULL = no particles)
-static const particle_config_t *condition_to_particles(const char *desc)
-{
-    if (!desc) return NULL;
-
-    // Check for precipitation keywords (case-insensitive substring)
-    // Order matters: more specific matches first
-    if (strcasestr(desc, "Thunderstorm") || strcasestr(desc, "Thunder"))
-        return &PARTICLE_RAIN;  // rain + could add flash overlay later
-    if (strcasestr(desc, "Snow") || strcasestr(desc, "Flurries") || strcasestr(desc, "Blizzard"))
-        return &PARTICLE_SNOW;
-    if (strcasestr(desc, "Freezing") || strcasestr(desc, "Ice") || strcasestr(desc, "Sleet"))
-        return &PARTICLE_ICE;
-    if (strcasestr(desc, "Drizzle") || strcasestr(desc, "Light Rain"))
-        return &PARTICLE_DRIZZLE;
-    if (strcasestr(desc, "Rain") || strcasestr(desc, "Showers"))
-        return &PARTICLE_RAIN;
-
-    return NULL;
-}
 
 void WeatherOverlay::entry()
 {
@@ -50,21 +28,21 @@ void WeatherOverlay::entry()
     s_card = weather_card_create(s_screen);
     if (s_card && cond) {
         weather_card_update(s_card, cond);
+        // Load condition Lottie animation as card background
+        if (cond->valid) {
+            time_t now;
+            time(&now);
+            struct tm ti;
+            localtime_r(&now, &ti);
+            bool is_daytime = (ti.tm_hour >= 6 && ti.tm_hour < 20);
+            weather_card_load_condition_lottie(s_card, cond->description, is_daytime);
+        }
     }
 
     // Create forecast strip (bottom)
     s_strip = forecast_strip_create(s_screen);
     if (s_strip && fc) {
         forecast_strip_update(s_strip, fc);
-    }
-
-    // Create particle effects if precipitation
-    if (cond && cond->valid) {
-        const particle_config_t *pcfg = condition_to_particles(cond->description);
-        if (pcfg) {
-            s_particles = particle_system_create(s_screen, pcfg);
-            ESP_LOGI(TAG, "Particles active for: %s", cond->description);
-        }
     }
 
     // Fade in weather widgets
@@ -77,7 +55,6 @@ void WeatherOverlay::entry()
 
 void WeatherOverlay::exit()
 {
-    if (s_particles) { particle_system_destroy(s_particles); s_particles = NULL; }
     if (s_strip)     { forecast_strip_destroy(s_strip);      s_strip = NULL; }
     if (s_card)      { weather_card_destroy(s_card);         s_card = NULL; }
     ESP_LOGI(TAG, "WeatherOverlay: exit");
@@ -93,17 +70,6 @@ void WeatherOverlay::react(EvWeatherUpdate const &)
     const nws_conditions_t *cond = nws_get_conditions();
     if (s_card && cond) {
         weather_card_update(s_card, cond);
-    }
-
-    // Update particles if condition changed
-    if (cond && cond->valid) {
-        const particle_config_t *pcfg = condition_to_particles(cond->description);
-        if (pcfg && !s_particles) {
-            s_particles = particle_system_create(s_screen, pcfg);
-        } else if (!pcfg && s_particles) {
-            particle_system_destroy(s_particles);
-            s_particles = NULL;
-        }
     }
 }
 

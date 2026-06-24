@@ -11,7 +11,7 @@ extern "C" {
 #include <stdbool.h>
 #include "esp_err.h"
 
-#define SETTINGS_VERSION 5  // Incremented: added display schedule fields
+#define SETTINGS_VERSION 6  // Bumped: device NVS now stores v6 blobs
 
 typedef struct {
     uint32_t version;  // Settings schema version
