@@ -11,6 +11,7 @@ idf_component_register(
         "src/alert_banner.c"
         "src/radar_view.c"
         "src/image_decode.c"
+        "src/ui_contrast.c"
         "src/astro_calc.c"
         "src/image_rotator.c"
         "src/json_layout.c"

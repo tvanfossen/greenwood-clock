@@ -277,6 +277,18 @@ static void mode_geometry(clock_mode_t mode, int32_t *x, int32_t *y, int32_t *w,
     }
 }
 
+// Effective label colour for the current mode: the user's NVS text_color only
+// on the FULL clock screen (sized to its background image); a fixed, legible
+// white once minimized over the dark state screens, where the user's chosen
+// colour — which may be dark — is not guaranteed to contrast.
+static void apply_effective_color(clock_widget_t *w)
+{
+    lv_color_t c = (w->mode == CLOCK_MODE_FULL) ? w->color : lv_color_white();
+    lv_obj_set_style_text_color(w->lbl_time, c, 0);
+    lv_obj_set_style_text_color(w->lbl_ampm, c, 0);
+    lv_obj_set_style_text_color(w->lbl_date, c, 0);
+}
+
 void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
 {
     if (!w || w->mode == mode) return;
@@ -300,6 +312,7 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
     animate_container(w->container, ox, oy, ow, oh, nx, ny, nw, nh);
 
     w->mode = mode;
+    apply_effective_color(w);   // FULL → user colour; minimized → legible white
     static const char *mode_names[] = {"FULL", "MINIMIZED", "TOPBAR"};
     ESP_LOGI(TAG, "ClockWidget mode → %s (animated)", mode_names[mode]);
 }
@@ -308,9 +321,7 @@ void clock_widget_set_color(clock_widget_t *w, lv_color_t color)
 {
     if (!w) return;
     w->color = color;
-    lv_obj_set_style_text_color(w->lbl_time, color, 0);
-    lv_obj_set_style_text_color(w->lbl_ampm, color, 0);
-    lv_obj_set_style_text_color(w->lbl_date, color, 0);
+    apply_effective_color(w);   // honours current mode (only FULL uses it)
 }
 
 clock_mode_t clock_widget_get_mode(const clock_widget_t *w)

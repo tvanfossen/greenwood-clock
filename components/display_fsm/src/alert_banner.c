@@ -5,6 +5,7 @@
 // Caller must hold LVGL lock for all functions.
 
 #include "display_widgets.h"
+#include "ui_contrast.h"
 #include "nws.h"
 #include "esp_log.h"
 #include <string.h>
@@ -40,10 +41,11 @@ alert_banner_t *alert_banner_create(lv_obj_t *parent)
     memset(b, 0, sizeof(*b));
 
     // Full-width banner at top of screen
+    lv_color_t default_bg = lv_color_hex(0xE76F51);
     b->container = lv_obj_create(parent);
     lv_obj_set_size(b->container, 1024, BANNER_HEIGHT);
     lv_obj_align(b->container, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(b->container, lv_color_hex(0xE76F51), 0);
+    lv_obj_set_style_bg_color(b->container, default_bg, 0);
     lv_obj_set_style_bg_opa(b->container, LV_OPA_90, 0);
     lv_obj_set_style_border_width(b->container, 0, 0);
     lv_obj_set_style_pad_all(b->container, 0, 0);
@@ -51,10 +53,10 @@ alert_banner_t *alert_banner_create(lv_obj_t *parent)
     lv_obj_clear_flag(b->container, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(b->container, LV_OBJ_FLAG_HIDDEN);
 
-    // Scrolling headline label
+    // Scrolling headline label — colour chosen for contrast vs the banner bg.
     b->lbl_headline = lv_label_create(b->container);
     lv_obj_set_style_text_font(b->lbl_headline, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(b->lbl_headline, lv_color_white(), 0);
+    lv_obj_set_style_text_color(b->lbl_headline, ui_text_on(default_bg), 0);
     lv_label_set_long_mode(b->lbl_headline, LV_LABEL_LONG_SCROLL_CIRCULAR);
     // LVGL 9 uses anim_duration with speed-encoded value (lv_anim_speed converts
     // px/sec → internal representation resolved by lv_anim_resolve_speed at runtime).
@@ -83,8 +85,11 @@ void alert_banner_show(alert_banner_t *b, const nws_alert_t *alert)
 {
     if (!b || !alert) return;
 
-    // Set severity color
-    lv_obj_set_style_bg_color(b->container, severity_color(alert->severity), 0);
+    // Set severity color + a contrast-matched headline colour (yellow/Moderate
+    // needs black text; the dark severities need white).
+    lv_color_t bg = severity_color(alert->severity);
+    lv_obj_set_style_bg_color(b->container, bg, 0);
+    lv_obj_set_style_text_color(b->lbl_headline, ui_text_on(bg), 0);
 
     // Set headline text — circular scroll handles overflow
     char text[320];
