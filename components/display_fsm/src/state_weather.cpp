@@ -8,6 +8,7 @@
 #include "display_widgets.h"
 #include "nws.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include <time.h>
 
 static const char *TAG = "state_weather";
@@ -35,14 +36,19 @@ static void deferred_lottie_cb(lv_timer_t *t)
 
 void WeatherOverlay::entry()
 {
+    // Per-phase timing — entry() runs under the LVGL lock, so every phase here
+    // blocks rendering. Find what eats the transition budget.
+    int64_t t0 = esp_timer_get_time();
     set_state_info(DISPLAY_STATE_WEATHER, "weather");
     minimize_clock();
+    int64_t t_min = esp_timer_get_time();
 
     const nws_conditions_t *cond = nws_get_conditions();
     const nws_forecast_t   *fc   = nws_get_forecast();
 
     // Create weather card (left region)
     s_card = weather_card_create(s_screen);
+    int64_t t_card_c = esp_timer_get_time();
     if (s_card && cond) {
         weather_card_update(s_card, cond);
         // Defer the condition Lottie until ~after the fade settles (see above).
@@ -58,18 +64,28 @@ void WeatherOverlay::entry()
         }
     }
 
+    int64_t t_card_u = esp_timer_get_time();
+
     // Create forecast strip (bottom)
     s_strip = forecast_strip_create(s_screen);
+    int64_t t_strip_c = esp_timer_get_time();
     if (s_strip && fc) {
         forecast_strip_update(s_strip, fc);
     }
+    int64_t t_strip_u = esp_timer_get_time();
 
     // Fade in weather widgets
     if (s_card) fade_in(weather_card_container(s_card));
     if (s_strip) fade_in(forecast_strip_container(s_strip));
+    int64_t t_end = esp_timer_get_time();
 
     ESP_LOGI(TAG, "WeatherOverlay: entry (conditions=%s)",
              cond && cond->valid ? "valid" : "none");
+    ESP_LOGI(TAG, "[TIMING] entry us: minimize=%lld card_create=%lld card_upd=%lld "
+                  "strip_create=%lld strip_upd=%lld fades=%lld TOTAL=%lld",
+             t_min - t0, t_card_c - t_min, t_card_u - t_card_c,
+             t_strip_c - t_card_u, t_strip_u - t_strip_c, t_end - t_strip_u,
+             t_end - t0);
 }
 
 void WeatherOverlay::exit()

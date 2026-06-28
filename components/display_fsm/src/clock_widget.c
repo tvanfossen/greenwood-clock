@@ -232,37 +232,50 @@ void clock_widget_update(clock_widget_t *w, const struct tm *ti)
     }
 }
 
-static void anim_x_cb(void *obj, int32_t v) { lv_obj_set_x((lv_obj_t *)obj, v); }
-static void anim_y_cb(void *obj, int32_t v) { lv_obj_set_y((lv_obj_t *)obj, v); }
-static void anim_w_cb(void *obj, int32_t v) { lv_obj_set_width((lv_obj_t *)obj, v); }
-static void anim_h_cb(void *obj, int32_t v) { lv_obj_set_height((lv_obj_t *)obj, v); }
+// GPU-transform morph: the container is already snapped to the NEW geometry +
+// target layout. We make it *appear* at the OLD geometry via a render-time
+// scale (around the top-left pivot) + translate, then animate that transform to
+// identity. This replaces animating width/height, which forced a per-frame
+// relayout and a full-screen ARGB8888->RGB565 re-blit of the 256pt time label —
+// the source of the morph jitter. Trade-off: the big digits are slightly soft
+// while in motion, crisp at both ends.
+static int32_t s_morph_sx0, s_morph_sy0, s_morph_tx0, s_morph_ty0;
+
+static void morph_exec_cb(void *var, int32_t prog)   // prog: 0 (start) .. 256 (identity)
+{
+    lv_obj_t *c = (lv_obj_t *)var;
+    int32_t inv = 256 - prog;   // remaining fraction, x/256
+    int32_t sx = 256 + (int32_t)((int64_t)(s_morph_sx0 - 256) * inv / 256);
+    int32_t sy = 256 + (int32_t)((int64_t)(s_morph_sy0 - 256) * inv / 256);
+    int32_t tx = (int32_t)((int64_t)s_morph_tx0 * inv / 256);
+    int32_t ty = (int32_t)((int64_t)s_morph_ty0 * inv / 256);
+    lv_obj_set_style_transform_scale_x(c, sx, 0);
+    lv_obj_set_style_transform_scale_y(c, sy, 0);
+    lv_obj_set_style_translate_x(c, tx, 0);
+    lv_obj_set_style_translate_y(c, ty, 0);
+}
 
 static void animate_container(lv_obj_t *cont,
                                int32_t x0, int32_t y0, int32_t w0, int32_t h0,
                                int32_t x1, int32_t y1, int32_t w1, int32_t h1)
 {
-    lv_anim_t a;
-    uint32_t dur = 750;   // longer + ease_in_out for a smoother, less abrupt morph
+    lv_obj_set_style_transform_pivot_x(cont, 0, 0);   // top-left pivot
+    lv_obj_set_style_transform_pivot_y(cont, 0, 0);
 
+    s_morph_sx0 = (w1 > 0) ? (256 * w0 / w1) : 256;   // 256 = 1.0x
+    s_morph_sy0 = (h1 > 0) ? (256 * h0 / h1) : 256;
+    s_morph_tx0 = x0 - x1;
+    s_morph_ty0 = y0 - y1;
+
+    morph_exec_cb(cont, 0);   // apply OLD appearance immediately (no first-frame flash)
+
+    lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, cont);
-    lv_anim_set_duration(&a, dur);
+    lv_anim_set_duration(&a, 750);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
-
-    lv_anim_set_values(&a, x0, x1);
-    lv_anim_set_exec_cb(&a, anim_x_cb);
-    lv_anim_start(&a);
-
-    lv_anim_set_values(&a, y0, y1);
-    lv_anim_set_exec_cb(&a, anim_y_cb);
-    lv_anim_start(&a);
-
-    lv_anim_set_values(&a, w0, w1);
-    lv_anim_set_exec_cb(&a, anim_w_cb);
-    lv_anim_start(&a);
-
-    lv_anim_set_values(&a, h0, h1);
-    lv_anim_set_exec_cb(&a, anim_h_cb);
+    lv_anim_set_values(&a, 0, 256);
+    lv_anim_set_exec_cb(&a, morph_exec_cb);
     lv_anim_start(&a);
 }
 
