@@ -254,12 +254,11 @@ static lv_image_dsc_t *predecode_bg(const char *path)
 {
     char fs_path[160];
     bg_lvgl_to_fs_path(path, fs_path, sizeof(fs_path));
+    // No flip: the ARGB8888 dsc render path is identity (verified by the radar
+    // colour-card test). image_decode produces upright top-down pixels, which
+    // display upright. (A flip here renders the background upside down.)
     lv_image_dsc_t *dsc = image_decode_png_file(fs_path);
-    if (dsc) {
-        // PPA blit renders a raw dsc vertically flipped vs LVGL's own decoder;
-        // flip so the background matches the upright lv_img_set_src(path) path.
-        image_decode_flip_vertical(dsc);
-    } else {
+    if (!dsc) {
         ESP_LOGW(TAG, "bg: predecode failed for '%s' (%s) — on-demand fallback",
                  path, fs_path);
     }
