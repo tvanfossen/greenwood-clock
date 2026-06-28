@@ -262,7 +262,7 @@ void DisplayFsm::fade_in(lv_obj_t *obj)
     lv_anim_init(&a);
     lv_anim_set_var(&a, obj);
     lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
-    lv_anim_set_duration(&a, 450);
+    lv_anim_set_duration(&a, 900);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
     lv_anim_set_exec_cb(&a, fade_anim_opa_cb);
     lv_anim_start(&a);
@@ -275,7 +275,7 @@ void DisplayFsm::fade_out(lv_obj_t *obj)
     lv_anim_init(&a);
     lv_anim_set_var(&a, obj);
     lv_anim_set_values(&a, LV_OPA_COVER, LV_OPA_TRANSP);
-    lv_anim_set_duration(&a, 350);
+    lv_anim_set_duration(&a, 600);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
     lv_anim_set_exec_cb(&a, fade_anim_opa_cb);
     lv_anim_start(&a);
