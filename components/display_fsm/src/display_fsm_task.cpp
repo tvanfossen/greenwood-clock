@@ -27,6 +27,7 @@
 
 #include <string.h>
 #include <strings.h>
+#include <stdio.h>
 #include <sys/stat.h>
 #include <errno.h>
 
@@ -51,6 +52,49 @@ static QueueHandle_t s_event_queue = NULL;
 
 static QueueHandle_t s_loader_queue = NULL;
 
+// Read a Lottie JSON file into a fresh SPIRAM buffer (off the LVGL lock).
+static uint8_t *read_lottie_file(const char *path, size_t *size_out)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        ESP_LOGE(TAG, "lottie_load: open failed '%s' errno=%d", path, errno);
+        return NULL;
+    }
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t *buf = (n > 0) ? (uint8_t *)heap_caps_malloc((size_t)n, MALLOC_CAP_SPIRAM) : NULL;
+    if (buf && fread(buf, 1, (size_t)n, f) == (size_t)n) {
+        *size_out = (size_t)n;
+    } else {
+        heap_caps_free(buf);   // free(NULL) safe
+        buf = NULL;
+        ESP_LOGE(TAG, "lottie_load: read failed '%s' (size=%ld)", path, n);
+    }
+    fclose(f);
+    return buf;
+}
+
+// Attach already-read Lottie data and retime to the target FPS. Holds the LVGL
+// lock: the ThorVG parse + initial frame render happen inside set_src_data and
+// are unavoidable with lv_lottie's API. ThorVG copies the buffer (copy=true),
+// so the caller frees it afterwards.
+static void apply_lottie_src(const lottie_load_job_t *job, const uint8_t *data, size_t size)
+{
+    lvgl_port_lock(0);
+    lv_lottie_set_src_data(job->widget, data, size);
+    if (job->target_fps > 0) {
+        lv_anim_t *anim = lv_lottie_get_anim(job->widget);
+        if (anim) {
+            uint32_t dur = lv_anim_get_time(anim);
+            lv_anim_set_duration(anim, dur * 60 / job->target_fps);
+            anim->act_time = 0;
+            lv_anim_start(anim);
+        }
+    }
+    lvgl_port_unlock();
+}
+
 static void lottie_loader_task(void *arg)
 {
     (void)arg;
@@ -63,24 +107,15 @@ static void lottie_loader_task(void *arg)
 
         ESP_LOGI(TAG, "lottie_load: path='%s'", job.path);
 
-        struct stat st;
-        if (stat(job.path, &st) != 0) {
-            ESP_LOGE(TAG, "lottie_load: file not found '%s' errno=%d", job.path, errno);
-            continue;
-        }
+        // Read off-lock so the SD read (large for the 742KB hummingbird) is out
+        // of the LVGL critical section; only parse+render hold the lock.
+        size_t size = 0;
+        uint8_t *data = read_lottie_file(job.path, &size);
+        if (!data) continue;
 
-        lvgl_port_lock(0);
-        lv_lottie_set_src_file(job.widget, job.path);
-        if (job.target_fps > 0) {
-            lv_anim_t *anim = lv_lottie_get_anim(job.widget);
-            if (anim) {
-                uint32_t dur = lv_anim_get_time(anim);
-                lv_anim_set_duration(anim, dur * 60 / job.target_fps);
-                anim->act_time = 0;
-                lv_anim_start(anim);
-            }
-        }
-        lvgl_port_unlock();
+        apply_lottie_src(&job, data, size);
+        heap_caps_free(data);
+
         ESP_LOGI(TAG, "lottie_load: done '%s' (stack_hw=%lu B)",
                  job.path,
                  (unsigned long)uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t));

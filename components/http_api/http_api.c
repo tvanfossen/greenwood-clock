@@ -14,6 +14,8 @@
 #include "settings.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
+#include "esp_core_dump.h"
+#include "esp_partition.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -572,9 +574,84 @@ static esp_err_t settings_post_handler(httpd_req_t *req);
 static void http_api_configure_server(httpd_config_t* config)
 {
     config->server_port     = 80;
-    config->max_uri_handlers = 30;
+    config->max_uri_handlers = 36;
     config->stack_size      = 8192;
     config->uri_match_fn    = httpd_uri_match_wildcard;
+}
+
+// ---------------------------------------------------------------------------
+// Core dump retrieval — Bearer-auth'd (the dump contains RAM: keys, tokens).
+// Decode the served blob with: esp-coredump info_corefile -c core.elf <elf>
+// ---------------------------------------------------------------------------
+
+static const esp_partition_t *coredump_partition(void)
+{
+    return esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+                                    ESP_PARTITION_SUBTYPE_DATA_COREDUMP, NULL);
+}
+
+// GET /api/coredump/info → {"present":bool,"size":N,"partition":bool}
+static esp_err_t coredump_info_handler(httpd_req_t *req)
+{
+    if (ota_push_check_auth(req) != ESP_OK) return ESP_FAIL;
+
+    size_t addr = 0, size = 0;
+    bool present = (esp_core_dump_image_get(&addr, &size) == ESP_OK && size > 0);
+
+    char body[128];
+    snprintf(body, sizeof(body), "{\"present\":%s,\"size\":%u,\"partition\":%s}\n",
+             present ? "true" : "false", (unsigned)size,
+             coredump_partition() ? "true" : "false");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+// GET /api/coredump → raw ELF coredump blob.
+static esp_err_t coredump_get_handler(httpd_req_t *req)
+{
+    if (ota_push_check_auth(req) != ESP_OK) return ESP_FAIL;
+
+    const esp_partition_t *part = coredump_partition();
+    size_t addr = 0, size = 0;
+    if (!part || esp_core_dump_image_get(&addr, &size) != ESP_OK || size == 0) {
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "No coredump present");
+        return ESP_FAIL;
+    }
+
+    uint8_t *buf = (uint8_t *)malloc(2048);
+    if (!buf) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/octet-stream");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"core.elf\"");
+
+    esp_err_t err = ESP_OK;
+    for (size_t off = 0; off < size && err == ESP_OK; off += 2048) {
+        size_t chunk = (size - off > 2048) ? 2048 : (size - off);
+        if (esp_partition_read(part, off, buf, chunk) != ESP_OK ||
+            httpd_resp_send_chunk(req, (char *)buf, chunk) != ESP_OK) {
+            err = ESP_FAIL;
+        }
+    }
+    free(buf);
+    httpd_resp_send_chunk(req, NULL, 0);   // terminate response
+    return err;
+}
+
+// POST /api/coredump/erase → clear the stored coredump.
+static esp_err_t coredump_erase_handler(httpd_req_t *req)
+{
+    if (ota_push_check_auth(req) != ESP_OK) return ESP_FAIL;
+
+    if (esp_core_dump_image_erase() != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "erase failed");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"status\":\"erased\"}\n", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
 }
 
 /**
@@ -603,6 +680,21 @@ static void http_api_register_file_handlers(httpd_handle_t srv)
         .uri     = "/api/sdcard/format",
         .method  = HTTP_POST,
         .handler = sdcard_format_handler,
+    };
+    static const httpd_uri_t uri_cd_info = {
+        .uri     = "/api/coredump/info",
+        .method  = HTTP_GET,
+        .handler = coredump_info_handler,
+    };
+    static const httpd_uri_t uri_cd_get = {
+        .uri     = "/api/coredump",
+        .method  = HTTP_GET,
+        .handler = coredump_get_handler,
+    };
+    static const httpd_uri_t uri_cd_erase = {
+        .uri     = "/api/coredump/erase",
+        .method  = HTTP_POST,
+        .handler = coredump_erase_handler,
     };
     static const httpd_uri_t uri_logs = {
         .uri     = "/api/logs/download",
@@ -633,6 +725,9 @@ static void http_api_register_file_handlers(httpd_handle_t srv)
     httpd_register_uri_handler(srv, &uri_boot_hist);
     httpd_register_uri_handler(srv, &uri_disk);
     httpd_register_uri_handler(srv, &uri_sd_format);
+    httpd_register_uri_handler(srv, &uri_cd_info);
+    httpd_register_uri_handler(srv, &uri_cd_get);
+    httpd_register_uri_handler(srv, &uri_cd_erase);
     httpd_register_uri_handler(srv, &uri_logs);
     httpd_register_uri_handler(srv, &uri_logs_test);
     httpd_register_uri_handler(srv, &uri_upload);

@@ -242,7 +242,7 @@ static void animate_container(lv_obj_t *cont,
                                int32_t x1, int32_t y1, int32_t w1, int32_t h1)
 {
     lv_anim_t a;
-    uint32_t dur = 420;   // longer + ease_in_out for a smoother, less abrupt morph
+    uint32_t dur = 750;   // longer + ease_in_out for a smoother, less abrupt morph
 
     lv_anim_init(&a);
     lv_anim_set_var(&a, cont);

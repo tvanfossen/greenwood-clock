@@ -71,11 +71,11 @@ protected:
     /** Navigate carousel by offset (-1 = prev, +1 = next). Wraps around. */
     void carousel_navigate(int offset);
 
-    /** Animate an LVGL object from transparent to fully opaque (450ms ease-in-out).
+    /** Animate an LVGL object from transparent to fully opaque (900ms ease-in-out).
      *  Caller must hold LVGL lock. */
     static void fade_in(lv_obj_t *obj);
 
-    /** Animate an LVGL object from opaque to transparent (350ms ease-in-out).
+    /** Animate an LVGL object from opaque to transparent (600ms ease-in-out).
      *  Does NOT destroy the object — use for visual effect before manual destroy.
      *  Caller must hold LVGL lock. */
     static void fade_out(lv_obj_t *obj);

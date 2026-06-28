@@ -14,4 +14,6 @@ idf_component_register(
         nws
         settings
         cjson
+        espcoredump
+        esp_partition
 )
