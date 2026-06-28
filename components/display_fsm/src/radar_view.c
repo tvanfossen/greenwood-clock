@@ -254,7 +254,15 @@ radar_view_t *radar_view_create(lv_obj_t *parent, float lat, float lon)
     // "Last updated" label
     rv->lbl_updated = lv_label_create(rv->container);
     lv_obj_set_style_text_font(rv->lbl_updated, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(rv->lbl_updated, lv_color_hex(0x808080), 0);
+    lv_obj_set_style_text_color(rv->lbl_updated, lv_color_hex(0xe0e0e0), 0);
+    // Dark semi-opaque backing chip: the map (and bright precip cells) are an
+    // image, so no single text colour is guaranteed — the chip is. Padding +
+    // radius make it a readable pill.
+    lv_obj_set_style_bg_color(rv->lbl_updated, lv_color_hex(0x0a0a1e), 0);
+    lv_obj_set_style_bg_opa(rv->lbl_updated, LV_OPA_70, 0);
+    lv_obj_set_style_pad_hor(rv->lbl_updated, 8, 0);
+    lv_obj_set_style_pad_ver(rv->lbl_updated, 4, 0);
+    lv_obj_set_style_radius(rv->lbl_updated, 6, 0);
     lv_obj_align(rv->lbl_updated, LV_ALIGN_BOTTOM_LEFT, 16, -12);
     lv_label_set_text(rv->lbl_updated, "Radar loading...");
 
