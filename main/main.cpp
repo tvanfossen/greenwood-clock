@@ -733,6 +733,7 @@ static void boot_display_init(const clock_settings_t *cfg)
 static void boot_health_loop(void)
 {
     size_t last_free_heap = esp_get_free_heap_size();
+    size_t warned_lowwater = SIZE_MAX;   // last internal-DRAM low-water we warned on
     uint32_t loop_count = 0;
 
     while (true) {
@@ -769,12 +770,14 @@ static void boot_health_loop(void)
                      (long)(free_heap - last_free_heap));
         }
 
-        // Internal DRAM is the scarce pool (DMA/WiFi/LVGL contend for it). When it
-        // runs low, large allocations that REQUIRE internal memory stall or fail —
-        // the signature of display lag without a crash. Flag it distinctly.
-        if (internal_free < 12000) {
-            ESP_LOGW(TAG, "[HEALTH] LOW INTERNAL DRAM! free=%lu lowwater=%lu bytes",
-                     (unsigned long)internal_free, (unsigned long)internal_min);
+        // Internal DRAM is the scarce pool (DMA/WiFi/LVGL contend for it). The
+        // 60s instantaneous samples miss the transient dips that precede an
+        // out-of-internal-DRAM abort — warn on each NEW low-water low under the
+        // threshold instead (the mark is monotonic, so this fires once per dip).
+        if (internal_min < 10240 && internal_min < warned_lowwater) {
+            ESP_LOGW(TAG, "[HEALTH] LOW INTERNAL DRAM low-water=%lu B (free now=%lu)",
+                     (unsigned long)internal_min, (unsigned long)internal_free);
+            warned_lowwater = internal_min;
         }
 
         // Log LVGL rendering stats if available
