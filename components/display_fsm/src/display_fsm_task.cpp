@@ -401,7 +401,7 @@ static void reload_background_from_settings(void)
 
 #define CLOCK_LOTTIE_W          200
 #define CLOCK_LOTTIE_H          200
-#define CLOCK_LOTTIE_FPS        15
+#define CLOCK_LOTTIE_FPS        20
 #define CLOCK_LOTTIE_PATH       "/sdcard/lottie/hummingbird.json"
 
 static lv_obj_t *s_clock_lottie_widget = NULL;
