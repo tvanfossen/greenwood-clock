@@ -14,6 +14,7 @@
 #include "lvgl.h"
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -59,6 +60,18 @@ lv_image_dsc_t *image_decode_png_file_rgb565(const char *path);
  * map + overlay) call this after decode. Re-syncs the cache.
  */
 void image_decode_flip_vertical(lv_image_dsc_t *dsc);
+
+/**
+ * @brief Load a raw RGB565 cache file ([u16 w][u16 h][u32 stride][data]) into a
+ * persistent SPIRAM descriptor. Fast (fread, no decode). Returns NULL if the
+ * file is missing/invalid — caller should then decode the PNG and save a cache.
+ */
+lv_image_dsc_t *image_decode_load_raw_rgb565(const char *path);
+
+/**
+ * @brief Write an RGB565 descriptor to a raw cache file (atomic via temp+rename).
+ */
+bool image_decode_save_raw_rgb565(const char *path, const lv_image_dsc_t *dsc);
 
 /**
  * @brief Free a descriptor (and its pixel buffer) returned by the above.
