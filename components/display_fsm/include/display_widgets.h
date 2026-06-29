@@ -166,6 +166,12 @@ typedef struct radar_view_t radar_view_t;
 radar_view_t *radar_view_create(lv_obj_t *parent, float lat, float lon);
 void radar_view_destroy(radar_view_t *rv);
 
+// Preload the static map background (~2.4 MB SD read) into the module cache.
+// MUST be called OUTSIDE the LVGL lock, once, at startup. Without it the first
+// radar_view_create() does the SD read under the LVGL lock and stalls the
+// transition into the radar screen.
+void radar_view_preload_map(void);
+
 // Two-phase radar overlay: predecode runs without LVGL lock (~500ms),
 // apply_radar runs with LVGL lock (instant pointer swap).
 void radar_view_predecode(const uint8_t *png_data, size_t len);

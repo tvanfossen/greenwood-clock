@@ -144,8 +144,11 @@ static void publish_map_dsc(uint8_t *mpix, uint16_t mw, uint16_t mh,
 
 // Load /sdcard/maps/local.bin into s_map_dsc (once). Raw BGRA, bypasses lodepng.
 // Format: [u16 width][u16 height][u32 stride][BGRA pixel data].
+// Does SD I/O + a multi-MB SPIRAM fill — callers must NOT hold the LVGL lock.
 static void load_map_dsc(void)
 {
+    if (s_map_dsc) return;  // already cached
+
     FILE *f = fopen("/sdcard/maps/local.bin", "rb");
     if (!f) {
         ESP_LOGI(TAG, "No map background (/sdcard/maps/local.bin not found)");
@@ -181,6 +184,13 @@ static void load_map_dsc(void)
         return;
     }
     publish_map_dsc(mpix, mw, mh, mstride, mbuf_sz);
+}
+
+void radar_view_preload_map(void)
+{
+    // Off-lock startup preload so the first radar transition doesn't pay the
+    // ~2.4 MB SD read under the LVGL lock. Idempotent (load_map_dsc no-ops if cached).
+    load_map_dsc();
 }
 
 radar_view_t *radar_view_create(lv_obj_t *parent, float lat, float lon)
