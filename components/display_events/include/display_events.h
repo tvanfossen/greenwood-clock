@@ -42,6 +42,7 @@ typedef enum {
     DISPLAY_EVT_RADAR_READY,         // decoded radar PNG available
     DISPLAY_EVT_ASTRO_TRIGGER,       // dawn/dusk/midnight trigger
     DISPLAY_EVT_PHOTO_TRIGGER,       // periodic photo rotation
+    DISPLAY_EVT_PHOTO_ADVANCE,       // slideshow tick: decode next off-lock + swap
     DISPLAY_EVT_AMBIENT_TRIGGER,     // periodic ambient info
     DISPLAY_EVT_GESTURE,             // touch gesture detected
     DISPLAY_EVT_SETTINGS_BACK,       // back from settings → clock

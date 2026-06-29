@@ -231,7 +231,8 @@ static void dispatch_event(const display_event_t *evt)
             break;
         }
         case DISPLAY_EVT_REFRESH_BG:
-            // Handled in the fsm_task loop before dispatch; nothing to do here.
+        case DISPLAY_EVT_PHOTO_ADVANCE:
+            // Handled in process_event before dispatch; nothing to do here.
             break;
     }
 }
@@ -627,6 +628,15 @@ static void process_event(const display_event_t *evt)
     if (evt->type == DISPLAY_EVT_REFRESH_BG) {
         reload_background_from_settings();
         return;   // not a state event — no FSM dispatch
+    }
+    if (evt->type == DISPLAY_EVT_PHOTO_ADVANCE) {
+        // Decode the next photo OFF the LVGL lock (slow PNG decode), then swap
+        // it in under the lock (fast). No-op if the photo state has exited.
+        PhotoSlideshow::decode_next();
+        lvgl_port_lock(0);
+        PhotoSlideshow::present();
+        lvgl_port_unlock();
+        return;   // not an FSM state event
     }
 
     lvgl_port_lock(0);

@@ -5,14 +5,18 @@
 #include "display_states.h"
 #include "display_scheduler.h"
 #include "display_widgets.h"
+#include "display_fsm.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/timers.h"
 
 static const char *TAG = "state_photos";
 
 // Static member definitions
 image_rotator_t *PhotoSlideshow::s_rotator      = nullptr;
 lv_obj_t        *PhotoSlideshow::s_empty_label   = nullptr;
-lv_timer_t      *PhotoSlideshow::s_advance_timer = nullptr;
+void            *PhotoSlideshow::s_advance_timer = nullptr;
+bool             PhotoSlideshow::s_first_shown   = false;
 
 // Auto-advance interval (milliseconds). At the default ~30s show duration this
 // yields several photos per visit instead of just two.
@@ -22,12 +26,30 @@ lv_timer_t      *PhotoSlideshow::s_advance_timer = nullptr;
 // through the whole album over time instead of restarting at photo 0 each time.
 static int s_next_photo_index = 0;
 
-static void photo_advance_timer_cb(lv_timer_t *timer)
+// FreeRTOS timer callback (timer-service task context) — just posts an event to
+// the FSM queue. The decode (off-lock) and swap (under lock) happen on the FSM
+// task in process_event, so the LVGL render task is never stalled by a decode.
+static void photo_advance_timer_cb(TimerHandle_t)
 {
-    image_rotator_t *rotator = (image_rotator_t *)lv_timer_get_user_data(timer);
-    if (rotator) {
-        image_rotator_advance(rotator);
-    }
+    display_event_t evt = {};
+    evt.type = DISPLAY_EVT_PHOTO_ADVANCE;
+    display_fsm_send_event(&evt);
+}
+
+// OFF-lock: advance the index (after the first photo) and decode it. Runs on the
+// FSM task before the LVGL lock is taken — the slow PNG decode never blocks render.
+void PhotoSlideshow::decode_next()
+{
+    if (!s_rotator) return;
+    if (s_first_shown) image_rotator_step(s_rotator);
+    else               s_first_shown = true;
+    image_rotator_decode_current(s_rotator);
+}
+
+// UNDER lock: swap to the decoded descriptor (fast).
+void PhotoSlideshow::present()
+{
+    if (s_rotator) image_rotator_present(s_rotator);
 }
 
 void PhotoSlideshow::entry()
@@ -35,6 +57,7 @@ void PhotoSlideshow::entry()
     set_state_info(DISPLAY_STATE_PHOTOS, "photos");
     minimize_clock();
 
+    s_first_shown = false;
     s_rotator = image_rotator_create(s_screen, "A:/photos", s_next_photo_index);
 
     if (!s_rotator || image_rotator_count(s_rotator) == 0) {
@@ -59,9 +82,18 @@ void PhotoSlideshow::entry()
         fade_in(s_empty_label);
         ESP_LOGW(TAG, "PhotoSlideshow: no images found");
     } else {
-        // Start auto-advance timer (runs in LVGL context, already under lock)
-        s_advance_timer = lv_timer_create(photo_advance_timer_cb,
-                                           PHOTO_ADVANCE_MS, s_rotator);
+        // Periodic advance via a FreeRTOS timer (posts PHOTO_ADVANCE to the FSM
+        // queue). Post one now so the first photo decodes off-lock and appears
+        // without stalling this transition.
+        TimerHandle_t t = xTimerCreate("photo_adv", pdMS_TO_TICKS(PHOTO_ADVANCE_MS),
+                                       pdTRUE, nullptr, photo_advance_timer_cb);
+        s_advance_timer = t;
+        if (t) xTimerStart(t, 0);
+
+        display_event_t evt = {};
+        evt.type = DISPLAY_EVT_PHOTO_ADVANCE;
+        display_fsm_send_event(&evt);
+
         ESP_LOGI(TAG, "PhotoSlideshow: entry (%d images, advance every %dms)",
                  image_rotator_count(s_rotator), PHOTO_ADVANCE_MS);
     }
@@ -69,7 +101,10 @@ void PhotoSlideshow::entry()
 
 void PhotoSlideshow::exit()
 {
-    if (s_advance_timer) { lv_timer_delete(s_advance_timer); s_advance_timer = NULL; }
+    if (s_advance_timer) {
+        xTimerDelete((TimerHandle_t)s_advance_timer, 0);
+        s_advance_timer = nullptr;
+    }
     if (s_empty_label) { lv_obj_delete(s_empty_label); s_empty_label = NULL; }
     if (s_rotator) {
         // Resume after the last-shown photo on the next visit so the album
