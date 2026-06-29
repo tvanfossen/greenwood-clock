@@ -62,9 +62,9 @@ static void swizzle_rgba_to_bgra(uint8_t *dst, uint32_t dstride,
     }
 }
 
-// Allocate + fill an ARGB8888 descriptor pointing at a ready pixel buffer.
+// Allocate + fill an image descriptor pointing at a ready pixel buffer.
 static lv_image_dsc_t *make_dsc(uint8_t *pixels, int w, int h,
-                                uint32_t stride, uint32_t size)
+                                uint32_t stride, uint32_t size, lv_color_format_t cf)
 {
     lv_image_dsc_t *dsc = (lv_image_dsc_t *)heap_caps_malloc(
             sizeof(lv_image_dsc_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -74,7 +74,7 @@ static lv_image_dsc_t *make_dsc(uint8_t *pixels, int w, int h,
     }
     memset(dsc, 0, sizeof(*dsc));
     dsc->header.magic  = LV_IMAGE_HEADER_MAGIC;
-    dsc->header.cf     = LV_COLOR_FORMAT_ARGB8888;
+    dsc->header.cf     = cf;
     dsc->header.w      = (uint32_t)w;
     dsc->header.h      = (uint32_t)h;
     dsc->header.stride = stride;
@@ -83,7 +83,7 @@ static lv_image_dsc_t *make_dsc(uint8_t *pixels, int w, int h,
     return dsc;
 }
 
-// Build a persistent SPIRAM descriptor from decoded RGBA pixels.
+// Build a persistent SPIRAM ARGB8888 descriptor from decoded RGBA pixels.
 static lv_image_dsc_t *build_dsc_from_raw(const unsigned char *raw, int w, int h)
 {
     uint32_t stride = lv_draw_buf_width_to_stride((uint32_t)w, LV_COLOR_FORMAT_ARGB8888);
@@ -99,7 +99,45 @@ static lv_image_dsc_t *build_dsc_from_raw(const unsigned char *raw, int w, int h
     esp_cache_msync(pixels, buf_size,
                     ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
 
-    lv_image_dsc_t *dsc = make_dsc(pixels, w, h, stride, buf_size);
+    lv_image_dsc_t *dsc = make_dsc(pixels, w, h, stride, buf_size, LV_COLOR_FORMAT_ARGB8888);
+    if (!dsc) heap_caps_free(pixels);
+    return dsc;
+}
+
+// RGBA -> RGB565 pack into a stride-aligned buffer (drops alpha; opaque images).
+static void pack_rgba_to_rgb565(uint8_t *dst, uint32_t dstride,
+                                const unsigned char *raw, int w, int h)
+{
+    uint32_t src_stride = (uint32_t)w * 4;
+    for (int y = 0; y < h; y++) {
+        uint16_t *drow = (uint16_t *)(dst + (uint32_t)y * dstride);
+        const uint8_t *srow = raw + (uint32_t)y * src_stride;
+        for (int x = 0; x < w; x++) {
+            uint8_t r = srow[x * 4 + 0], g = srow[x * 4 + 1], b = srow[x * 4 + 2];
+            drow[x] = (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+        }
+    }
+}
+
+// Build a persistent SPIRAM RGB565 descriptor (opaque images only). RGB565
+// matches the framebuffer, so redraws during animation are straight copies with
+// no per-pixel conversion — far cheaper than ARGB8888 for a full-screen image.
+static lv_image_dsc_t *build_dsc_rgb565(const unsigned char *raw, int w, int h)
+{
+    uint32_t stride = lv_draw_buf_width_to_stride((uint32_t)w, LV_COLOR_FORMAT_RGB565);
+    uint32_t buf_size = stride * (uint32_t)h;
+    uint8_t *pixels = (uint8_t *)heap_caps_aligned_alloc(64, buf_size,
+                                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!pixels) {
+        ESP_LOGE(TAG, "SPIRAM RGB565 alloc failed (%lu B)", (unsigned long)buf_size);
+        return NULL;
+    }
+    memset(pixels, 0, buf_size);
+    pack_rgba_to_rgb565(pixels, stride, raw, w, h);
+    esp_cache_msync(pixels, buf_size,
+                    ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+
+    lv_image_dsc_t *dsc = make_dsc(pixels, w, h, stride, buf_size, LV_COLOR_FORMAT_RGB565);
     if (!dsc) heap_caps_free(pixels);
     return dsc;
 }
@@ -161,6 +199,28 @@ lv_image_dsc_t *image_decode_png_file(const char *path)
 
     lv_image_dsc_t *dsc = image_decode_png_buf(png, len);
     heap_caps_free(png);
+    return dsc;
+}
+
+lv_image_dsc_t *image_decode_png_file_rgb565(const char *path)
+{
+    if (!path) return NULL;
+
+    size_t len = 0;
+    uint8_t *png = read_file_spiram(path, &len);
+    if (!png) return NULL;
+
+    int w = 0, h = 0;
+    unsigned char *raw = decode_rgba(png, len, &w, &h);
+    heap_caps_free(png);
+    if (!raw) return NULL;
+
+    lv_image_dsc_t *dsc = build_dsc_rgb565(raw, w, h);
+    stbi_image_free(raw);
+    if (dsc) {
+        ESP_LOGI(TAG, "Decoded %dx%d RGB565 (%lu B) from %s", w, h,
+                 (unsigned long)dsc->data_size, path);
+    }
     return dsc;
 }
 

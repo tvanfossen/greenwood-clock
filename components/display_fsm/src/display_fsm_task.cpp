@@ -81,8 +81,13 @@ static uint8_t *read_lottie_file(const char *path, size_t *size_out)
 // so the caller frees it afterwards.
 static void apply_lottie_src(const lottie_load_job_t *job, const uint8_t *data, size_t size)
 {
+    // Heavy ThorVG parse OFF the LVGL lock (a dedicated ThorVG mutex serializes
+    // it vs the render task), so it no longer freezes the UI. Only the fast
+    // attach + inline first render run under the lock.
+    lv_lottie_parse_src_data(job->widget, data, size);
+
     lvgl_port_lock(0);
-    lv_lottie_set_src_data(job->widget, data, size);
+    lv_lottie_finalize_src(job->widget);
     if (job->target_fps > 0) {
         lv_anim_t *anim = lv_lottie_get_anim(job->widget);
         if (anim) {
@@ -254,11 +259,15 @@ static lv_image_dsc_t *predecode_bg(const char *path)
 {
     char fs_path[160];
     bg_lvgl_to_fs_path(path, fs_path, sizeof(fs_path));
-    // No flip: the ARGB8888 dsc render path is identity (verified by the radar
-    // colour-card test). image_decode produces upright top-down pixels, which
-    // display upright. (A flip here renders the background upside down.)
-    lv_image_dsc_t *dsc = image_decode_png_file(fs_path);
-    if (!dsc) {
+    // RGB565 (opaque): matches the framebuffer so the full-screen background
+    // redraws as a straight copy during animations — no per-frame ARGB->RGB565
+    // conversion.
+    lv_image_dsc_t *dsc = image_decode_png_file_rgb565(fs_path);
+    if (dsc) {
+        // The RGB565 full-screen blit renders vertically flipped on this panel;
+        // flip so the background is upright (confirmed on hardware).
+        image_decode_flip_vertical(dsc);
+    } else {
         ESP_LOGW(TAG, "bg: predecode failed for '%s' (%s) — on-demand fallback",
                  path, fs_path);
     }

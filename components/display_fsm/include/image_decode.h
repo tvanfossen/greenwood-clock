@@ -42,6 +42,15 @@ lv_image_dsc_t *image_decode_png_buf(const uint8_t *png, size_t len);
 lv_image_dsc_t *image_decode_png_file(const char *path);
 
 /**
+ * @brief Like image_decode_png_file but produces an opaque RGB565 descriptor.
+ *
+ * RGB565 matches the framebuffer, so a full-screen background redraws as a
+ * straight copy (no per-pixel ARGB->RGB565 conversion) — much cheaper during
+ * animations. Drops alpha; use only for opaque images.
+ */
+lv_image_dsc_t *image_decode_png_file_rgb565(const char *path);
+
+/**
  * @brief Flip a decoded ARGB8888 descriptor vertically, in place.
  *
  * The ESP32-P4 PPA blit path renders a raw pre-decoded descriptor vertically
