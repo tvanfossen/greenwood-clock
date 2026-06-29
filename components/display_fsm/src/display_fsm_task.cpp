@@ -76,17 +76,28 @@ static uint8_t *read_lottie_file(const char *path, size_t *size_out)
 }
 
 // Attach already-read Lottie data and retime to the target FPS. Holds the LVGL
-// lock: the ThorVG parse + initial frame render happen inside set_src_data and
-// are unavoidable with lv_lottie's API. ThorVG copies the buffer (copy=true),
-// so the caller frees it afterwards.
+// lock across BOTH parse and finalize: the widget may be destroyed (e.g. user
+// swipes away from the weather screen) while we read the file off-lock. Widget
+// destruction runs under the LVGL lock on the FSM task, so taking the lock here
+// and validating the widget BEFORE touching it makes the parse+finalize atomic
+// w.r.t. deletion — closing the use-after-free where the loader called
+// tvg_animation_get_total_frame on a freed widget (this=0x1f8 crash).
+// ThorVG copies the buffer (copy=true), so the caller frees it afterwards.
 static void apply_lottie_src(const lottie_load_job_t *job, const uint8_t *data, size_t size)
 {
-    // Heavy ThorVG parse OFF the LVGL lock (a dedicated ThorVG mutex serializes
-    // it vs the render task), so it no longer freezes the UI. Only the fast
-    // attach + inline first render run under the lock.
-    lv_lottie_parse_src_data(job->widget, data, size);
-
     lvgl_port_lock(0);
+
+    // lv_obj_is_valid walks the live object tree, so a freed/dangling widget
+    // pointer is rejected safely (no deref of freed memory).
+    if (!lv_obj_is_valid(job->widget)) {
+        lvgl_port_unlock();
+        ESP_LOGW(TAG, "lottie_load: widget gone before apply — skipping '%s'", job->path);
+        return;
+    }
+
+    // ThorVG parse (a dedicated ThorVG mutex serializes it vs the render task)
+    // then the fast attach + inline first render. Both under the LVGL lock.
+    lv_lottie_parse_src_data(job->widget, data, size);
     lv_lottie_finalize_src(job->widget);
     if (job->target_fps > 0) {
         lv_anim_t *anim = lv_lottie_get_anim(job->widget);
