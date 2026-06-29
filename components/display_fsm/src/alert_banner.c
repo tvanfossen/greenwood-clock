@@ -14,7 +14,7 @@ static const char *TAG = "alert_banner";
 
 // Local alias — canonical value is ALERT_BANNER_HEIGHT in display_widgets.h
 #define BANNER_HEIGHT   ALERT_BANNER_HEIGHT
-#define SCROLL_SPEED_PX_SEC 8   // pixels/second for circular scroll (slow, readable)
+#define SCROLL_SPEED_PX_SEC 20  // pixels/second for circular scroll (readable, not crawling)
 
 struct alert_banner_t {
     lv_obj_t *container;

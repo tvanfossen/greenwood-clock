@@ -644,6 +644,10 @@ static void fsm_task(void *arg)
     load_clock_lottie(scr);
 #endif
 
+    // Preload the radar basemap off-lock so the first radar transition doesn't
+    // stall on a ~2.4 MB SD read while holding the LVGL lock.
+    radar_view_preload_map();
+
     display_scheduler_get()->init();
 
     lvgl_port_lock(0);
