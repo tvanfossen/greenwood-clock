@@ -16,4 +16,6 @@ idf_component_register(
         cjson
         espcoredump
         esp_partition
+        lvgl
+        esp_lvgl_port
 )
