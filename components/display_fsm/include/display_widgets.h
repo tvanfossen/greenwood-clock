@@ -190,7 +190,15 @@ typedef struct image_rotator_t image_rotator_t;
 image_rotator_t *image_rotator_create(lv_obj_t *parent, const char *dir_path,
                                       int start_index);
 void image_rotator_destroy(image_rotator_t *r);
-void image_rotator_advance(image_rotator_t *r);
+
+// Two-phase advance for zero-lag transitions. The 1024x600 PNG decode is the
+// expensive part and MUST run off the LVGL lock (otherwise it stalls rendering
+// when LVGL lazily decodes on first draw). Call decode_current() off-lock, then
+// present() under the LVGL lock (a fast descriptor swap + opaque RGB565 blit).
+void image_rotator_step(image_rotator_t *r);            // advance index (no I/O)
+void image_rotator_decode_current(image_rotator_t *r);  // OFF-lock: decode to pending
+void image_rotator_present(image_rotator_t *r);         // UNDER lock: swap to pending
+
 int  image_rotator_count(const image_rotator_t *r);
 int  image_rotator_index(const image_rotator_t *r);
 

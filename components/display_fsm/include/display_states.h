@@ -82,12 +82,19 @@ struct PhotoSlideshow : DisplayFsm
 {
     static image_rotator_t *s_rotator;
     static lv_obj_t        *s_empty_label;
-    static lv_timer_t      *s_advance_timer;
+    static void            *s_advance_timer;   // FreeRTOS TimerHandle_t
+    static bool             s_first_shown;
 
     void entry() override;
     void exit() override;
 
     void react(EvDisplayTimeout const &) override;
+
+    // Slideshow tick (DISPLAY_EVT_PHOTO_ADVANCE), driven by the FreeRTOS timer.
+    // decode_next() runs OFF the LVGL lock (the slow PNG decode); present() runs
+    // UNDER the lock (fast descriptor swap). Both no-op if not in the photo state.
+    static void decode_next();
+    static void present();
 };
 
 // ---------------------------------------------------------------------------
