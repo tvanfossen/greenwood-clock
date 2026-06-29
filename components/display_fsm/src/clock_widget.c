@@ -233,24 +233,27 @@ void clock_widget_update(clock_widget_t *w, const struct tm *ti)
     }
 }
 
-// Unified transform morph. The container renders the FULL (256pt) layout for the
-// ENTIRE morph and is scaled (around the top-left pivot) between the source and
-// target geometry; only at completion does it snap to the target layout/font.
-// This always DOWNSCALES the high-res 256pt font (crisp) instead of upscaling the
-// small 128pt one — which looked thin/translucent with a ghost echo. Endpoints
-// are crisp (native font + identity transform); mid-morph is a clean downscale.
-static int32_t s_msx0, s_msy0, s_mtx0, s_mty0;   // source appearance (rel. FULL geom)
-static int32_t s_msx1, s_msy1, s_mtx1, s_mty1;   // target appearance (rel. FULL geom)
+// Snapshot morph. LVGL re-rasterizes a transform layer every frame, so scaling
+// the live 256pt clock was jagged. Instead we rasterize the full clock to an
+// image ONCE, then animate a scaled lv_image of that static bitmap — the source
+// pixels never change, so each frame is just a (PPA-accelerated) scale-blit, no
+// re-raster. Crisp (high-res snapshot, only ever downscaled) AND smooth.
+static lv_obj_t      *s_morph_img;     // temporary scaled image of the snapshot
+static lv_draw_buf_t *s_morph_snap;    // the snapshot buffer (freed at completion)
 static clock_widget_t *s_morph_w;
 static clock_mode_t    s_morph_target;
+static int32_t s_mx0, s_my0, s_msc0;   // source pos + scale (256 = 1.0x)
+static int32_t s_mx1, s_my1, s_msc1;   // target pos + scale
 
 static void morph_exec_cb(void *var, int32_t prog)   // prog: 0 (source) .. 256 (target)
 {
-    lv_obj_t *c = (lv_obj_t *)var;
-    lv_obj_set_style_transform_scale_x(c, s_msx0 + (int32_t)((int64_t)(s_msx1 - s_msx0) * prog / 256), 0);
-    lv_obj_set_style_transform_scale_y(c, s_msy0 + (int32_t)((int64_t)(s_msy1 - s_msy0) * prog / 256), 0);
-    lv_obj_set_style_translate_x(c, s_mtx0 + (int32_t)((int64_t)(s_mtx1 - s_mtx0) * prog / 256), 0);
-    lv_obj_set_style_translate_y(c, s_mty0 + (int32_t)((int64_t)(s_mty1 - s_mty0) * prog / 256), 0);
+    lv_obj_t *img = (lv_obj_t *)var;
+    int32_t x  = s_mx0  + (int32_t)((int64_t)(s_mx1  - s_mx0)  * prog / 256);
+    int32_t y  = s_my0  + (int32_t)((int64_t)(s_my1  - s_my0)  * prog / 256);
+    int32_t sc = s_msc0 + (int32_t)((int64_t)(s_msc1 - s_msc0) * prog / 256);
+    if(sc < 1) sc = 1;
+    lv_obj_set_pos(img, x, y);
+    lv_image_set_scale(img, (uint32_t)sc);
 }
 
 static void apply_layout_for_mode(clock_widget_t *w, clock_mode_t mode)
@@ -263,17 +266,16 @@ static void apply_layout_for_mode(clock_widget_t *w, clock_mode_t mode)
     }
 }
 
-// At morph end: drop the transform and snap to the target layout/font at identity
-// (visually the same size as the last scaled frame, so no jump).
+// At morph end: drop the snapshot image and restore the real clock at the target
+// layout (visually the same size as the last scaled frame, so no jump).
 static void morph_done_cb(lv_anim_t *a)
 {
     LV_UNUSED(a);
     clock_widget_t *w = s_morph_w;
     if (!w) return;
-    lv_obj_set_style_transform_scale_x(w->container, 256, 0);
-    lv_obj_set_style_transform_scale_y(w->container, 256, 0);
-    lv_obj_set_style_translate_x(w->container, 0, 0);
-    lv_obj_set_style_translate_y(w->container, 0, 0);
+    if (s_morph_img)  { lv_obj_delete(s_morph_img); s_morph_img = NULL; }
+    if (s_morph_snap) { lv_draw_buf_destroy(s_morph_snap); s_morph_snap = NULL; }
+    lv_obj_remove_flag(w->container, LV_OBJ_FLAG_HIDDEN);
     snap_to(w, s_morph_target);
     apply_layout_for_mode(w, s_morph_target);
     apply_effective_color(w);
@@ -313,37 +315,46 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
     mode_geometry(mode,             &nx, &ny, &nw, &nh);
     mode_geometry(CLOCK_MODE_FULL,  &fx, &fy, &fw, &fh);
 
-    // Render the FULL (256pt) layout at FULL geometry for the whole morph, then
-    // scale it to appear at the source geometry and animate to the target. The
-    // high-res font is only ever downscaled (crisp), never upscaled.
+    LV_UNUSED(fx); LV_UNUSED(fy); LV_UNUSED(fh);
+    // Render the real clock at FULL (256pt) and snapshot it once. The morph then
+    // scales that static bitmap (no per-frame re-raster) between source & target
+    // geometry. Full colour for the snapshot — legible over the clock background.
     snap_to(w, CLOCK_MODE_FULL);
     apply_full_layout(w);
-    w->mode = mode;
-    // Keep the full (background-tuned) colour DURING the morph: the clock is
-    // scaling over its own bright background, where the minimized white washes
-    // out. morph_done_cb switches to the final colour once it settles on the
-    // dark state screen.
     lv_obj_set_style_text_color(w->lbl_time, w->color, 0);
     lv_obj_set_style_text_color(w->lbl_ampm, w->color, 0);
     lv_obj_set_style_text_color(w->lbl_date, w->color, 0);
+    lv_obj_update_layout(w->container);
 
-    lv_obj_set_style_transform_pivot_x(w->container, 0, 0);   // top-left pivot
-    lv_obj_set_style_transform_pivot_y(w->container, 0, 0);
-    s_msx0 = (fw > 0) ? 256 * ow / fw : 256;   // source appearance, rel. FULL geom
-    s_msy0 = (fh > 0) ? 256 * oh / fh : 256;
-    s_mtx0 = ox - fx;
-    s_mty0 = oy - fy;
-    s_msx1 = (fw > 0) ? 256 * nw / fw : 256;   // target appearance
-    s_msy1 = (fh > 0) ? 256 * nh / fh : 256;
-    s_mtx1 = nx - fx;
-    s_mty1 = ny - fy;
+    s_morph_snap = lv_snapshot_take(w->container, LV_COLOR_FORMAT_ARGB8888);
+    w->mode = mode;
+    if (!s_morph_snap) {
+        // Snapshot failed (OOM) — fall back to an instant snap, no animation.
+        snap_to(w, mode);
+        apply_layout_for_mode(w, mode);
+        apply_effective_color(w);
+        ESP_LOGW(TAG, "morph: snapshot failed, snapping to mode %d", mode);
+        return;
+    }
+
+    // Hide the real clock; animate a scaled image of the snapshot in its place.
+    lv_obj_add_flag(w->container, LV_OBJ_FLAG_HIDDEN);
+    s_morph_img = lv_image_create(lv_obj_get_parent(w->container));
+    lv_image_set_src(s_morph_img, s_morph_snap);
+    lv_image_set_pivot(s_morph_img, 0, 0);            // scale about top-left
+    lv_obj_remove_flag(s_morph_img, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+
+    // The snapshot's natural size is the FULL container; scale 256 = full size at
+    // FULL position. Source/target appearance = each mode's pos + size ratio.
+    s_mx0 = ox; s_my0 = oy; s_msc0 = (fw > 0) ? 256 * ow / fw : 256;
+    s_mx1 = nx; s_my1 = ny; s_msc1 = (fw > 0) ? 256 * nw / fw : 256;
     s_morph_w      = w;
     s_morph_target = mode;
-    morph_exec_cb(w->container, 0);   // source appearance immediately (no flash)
+    morph_exec_cb(s_morph_img, 0);   // source appearance immediately (no flash)
 
     lv_anim_t a;
     lv_anim_init(&a);
-    lv_anim_set_var(&a, w->container);
+    lv_anim_set_var(&a, s_morph_img);
     lv_anim_set_duration(&a, 500);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
     lv_anim_set_values(&a, 0, 256);
@@ -352,7 +363,7 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
     lv_anim_start(&a);
 
     static const char *mode_names[] = {"FULL", "MINIMIZED", "TOPBAR"};
-    ESP_LOGI(TAG, "ClockWidget mode → %s (animated)", mode_names[mode]);
+    ESP_LOGI(TAG, "ClockWidget mode → %s (snapshot morph)", mode_names[mode]);
 }
 
 void clock_widget_set_color(clock_widget_t *w, lv_color_t color)
