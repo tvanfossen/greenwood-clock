@@ -319,7 +319,13 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
     snap_to(w, CLOCK_MODE_FULL);
     apply_full_layout(w);
     w->mode = mode;
-    apply_effective_color(w);   // target colour for the morph (white once minimized)
+    // Keep the full (background-tuned) colour DURING the morph: the clock is
+    // scaling over its own bright background, where the minimized white washes
+    // out. morph_done_cb switches to the final colour once it settles on the
+    // dark state screen.
+    lv_obj_set_style_text_color(w->lbl_time, w->color, 0);
+    lv_obj_set_style_text_color(w->lbl_ampm, w->color, 0);
+    lv_obj_set_style_text_color(w->lbl_date, w->color, 0);
 
     lv_obj_set_style_transform_pivot_x(w->container, 0, 0);   // top-left pivot
     lv_obj_set_style_transform_pivot_y(w->container, 0, 0);
