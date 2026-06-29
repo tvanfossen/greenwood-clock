@@ -78,7 +78,7 @@ static void build_condition_lottie_path(const char *desc, bool is_daytime,
 
 #define WX_LOTTIE_W          300
 #define WX_LOTTIE_H          300
-#define WX_LOTTIE_FPS        15
+#define WX_LOTTIE_FPS        20
 
 #endif // LV_USE_LOTTIE
 

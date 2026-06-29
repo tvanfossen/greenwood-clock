@@ -31,6 +31,13 @@ static void opa_anim_cb(void *obj, int32_t v)
     lv_obj_set_style_opa((lv_obj_t *)obj, (lv_opa_t)v, 0);
 }
 
+// Cross-visit RAM cache: the last-shown decoded photo is kept in PSRAM after the
+// rotator is destroyed, so re-entering the album shows it INSTANTLY instead of
+// paying the ~1s SD read again. Single entry; ownership moves cleanly between
+// the static slot and the live rotator (no double-free).
+static lv_image_dsc_t *s_persist_dsc;
+static int             s_persist_index = -1;
+
 struct image_rotator_t {
     lv_obj_t       *container;
     lv_obj_t       *img_current;
@@ -38,6 +45,7 @@ struct image_rotator_t {
     int             count;
     int             current_index;
     lv_image_dsc_t *shown_dsc;     // descriptor currently set on img_current
+    int             shown_index;   // which image shown_dsc holds (-1 = none)
     lv_image_dsc_t *pending_dsc;   // decoded off-lock, awaiting present()
     int             pending_index; // which image pending_dsc holds (-1 = none)
     bool            faded_in;      // first present() fades the container in
@@ -122,6 +130,7 @@ image_rotator_t *image_rotator_create(lv_obj_t *parent, const char *dir_path,
     }
     memset(r, 0, sizeof(*r));
     r->pending_index = -1;
+    r->shown_index   = -1;
 
     r->container = make_container(parent);
     r->img_current = lv_image_create(r->container);
@@ -137,6 +146,12 @@ image_rotator_t *image_rotator_create(lv_obj_t *parent, const char *dir_path,
     // Resume from the requested index (wrap/clamp into range). The image is NOT
     // decoded here — the caller drives decode_current() off-lock then present().
     r->current_index = ((start_index % r->count) + r->count) % r->count;
+
+    // If the last-shown photo is still cached in RAM, re-show it instantly on
+    // re-entry: start there so the first decode_current() is a zero-cost hit.
+    if (s_persist_dsc && s_persist_index >= 0 && s_persist_index < r->count) {
+        r->current_index = s_persist_index;
+    }
     ESP_LOGI(TAG, "ImageRotator created: %d PNG images from %s (start=%d)",
              r->count, dir_path, r->current_index);
     return r;
@@ -152,10 +167,17 @@ void image_rotator_destroy(image_rotator_t *r)
         if (r->img_current) lv_image_set_src(r->img_current, NULL);
         lv_obj_delete(r->container);
     }
-    if (r->shown_dsc)   image_decode_free(r->shown_dsc);
+    // Keep the last-shown photo in RAM for an instant re-entry next visit;
+    // free whatever was previously persisted. pending (prefetched next) is
+    // discarded — it would be re-prefetched after the persisted one shows.
+    if (r->shown_dsc) {
+        if (s_persist_dsc) image_decode_free(s_persist_dsc);
+        s_persist_dsc   = r->shown_dsc;
+        s_persist_index = r->shown_index;
+    }
     if (r->pending_dsc) image_decode_free(r->pending_dsc);
     lv_free(r);
-    ESP_LOGI(TAG, "ImageRotator destroyed");
+    ESP_LOGI(TAG, "ImageRotator destroyed (persisted [%d])", s_persist_index);
 }
 
 void image_rotator_step(image_rotator_t *r)
@@ -170,6 +192,19 @@ static void decode_into_pending(image_rotator_t *r, int idx)
 {
     if (!r || r->count == 0) return;
     if (r->pending_dsc && r->pending_index == idx) return;   // already prefetched
+
+    // Cross-visit RAM hit: reuse the persisted descriptor (ownership moves to
+    // pending; the static slot is cleared so it isn't double-freed).
+    if (s_persist_dsc && s_persist_index == idx) {
+        if (r->pending_dsc) image_decode_free(r->pending_dsc);
+        r->pending_dsc   = s_persist_dsc;
+        r->pending_index = idx;
+        s_persist_dsc    = NULL;
+        s_persist_index  = -1;
+        ESP_LOGI(TAG, "RAM-cache hit [%d] %s", idx, r->paths[idx]);
+        return;
+    }
+
     if (r->pending_dsc) { image_decode_free(r->pending_dsc); r->pending_dsc = NULL; }
     r->pending_index = -1;
 
@@ -226,6 +261,7 @@ void image_rotator_present(image_rotator_t *r)
     lv_image_set_src(r->img_current, r->pending_dsc);
     if (r->shown_dsc) image_decode_free(r->shown_dsc);
     r->shown_dsc     = r->pending_dsc;
+    r->shown_index   = r->pending_index;
     r->pending_dsc   = NULL;
     r->pending_index = -1;
     lv_obj_align(r->img_current, LV_ALIGN_CENTER, 0, 0);
