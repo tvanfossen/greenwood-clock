@@ -134,6 +134,7 @@ static void apply_topbar_layout(clock_widget_t *w)
 }
 
 static void mode_geometry(clock_mode_t mode, int32_t *x, int32_t *y, int32_t *w, int32_t *h);
+static void apply_effective_color(clock_widget_t *w);
 
 // Snap container to a mode's target position/size immediately (no animation).
 static void snap_to(clock_widget_t *w, clock_mode_t mode)
@@ -232,53 +233,50 @@ void clock_widget_update(clock_widget_t *w, const struct tm *ti)
     }
 }
 
-// GPU-transform morph: the container is already snapped to the NEW geometry +
-// target layout. We make it *appear* at the OLD geometry via a render-time
-// scale (around the top-left pivot) + translate, then animate that transform to
-// identity. This replaces animating width/height, which forced a per-frame
-// relayout and a full-screen ARGB8888->RGB565 re-blit of the 256pt time label —
-// the source of the morph jitter. Trade-off: the big digits are slightly soft
-// while in motion, crisp at both ends.
-static int32_t s_morph_sx0, s_morph_sy0, s_morph_tx0, s_morph_ty0;
+// Unified transform morph. The container renders the FULL (256pt) layout for the
+// ENTIRE morph and is scaled (around the top-left pivot) between the source and
+// target geometry; only at completion does it snap to the target layout/font.
+// This always DOWNSCALES the high-res 256pt font (crisp) instead of upscaling the
+// small 128pt one — which looked thin/translucent with a ghost echo. Endpoints
+// are crisp (native font + identity transform); mid-morph is a clean downscale.
+static int32_t s_msx0, s_msy0, s_mtx0, s_mty0;   // source appearance (rel. FULL geom)
+static int32_t s_msx1, s_msy1, s_mtx1, s_mty1;   // target appearance (rel. FULL geom)
+static clock_widget_t *s_morph_w;
+static clock_mode_t    s_morph_target;
 
-static void morph_exec_cb(void *var, int32_t prog)   // prog: 0 (start) .. 256 (identity)
+static void morph_exec_cb(void *var, int32_t prog)   // prog: 0 (source) .. 256 (target)
 {
     lv_obj_t *c = (lv_obj_t *)var;
-    int32_t inv = 256 - prog;   // remaining fraction, x/256
-    int32_t sx = 256 + (int32_t)((int64_t)(s_morph_sx0 - 256) * inv / 256);
-    int32_t sy = 256 + (int32_t)((int64_t)(s_morph_sy0 - 256) * inv / 256);
-    int32_t tx = (int32_t)((int64_t)s_morph_tx0 * inv / 256);
-    int32_t ty = (int32_t)((int64_t)s_morph_ty0 * inv / 256);
-    lv_obj_set_style_transform_scale_x(c, sx, 0);
-    lv_obj_set_style_transform_scale_y(c, sy, 0);
-    lv_obj_set_style_translate_x(c, tx, 0);
-    lv_obj_set_style_translate_y(c, ty, 0);
+    lv_obj_set_style_transform_scale_x(c, s_msx0 + (int32_t)((int64_t)(s_msx1 - s_msx0) * prog / 256), 0);
+    lv_obj_set_style_transform_scale_y(c, s_msy0 + (int32_t)((int64_t)(s_msy1 - s_msy0) * prog / 256), 0);
+    lv_obj_set_style_translate_x(c, s_mtx0 + (int32_t)((int64_t)(s_mtx1 - s_mtx0) * prog / 256), 0);
+    lv_obj_set_style_translate_y(c, s_mty0 + (int32_t)((int64_t)(s_mty1 - s_mty0) * prog / 256), 0);
 }
 
-static void animate_container(lv_obj_t *cont,
-                               int32_t x0, int32_t y0, int32_t w0, int32_t h0,
-                               int32_t x1, int32_t y1, int32_t w1, int32_t h1)
+static void apply_layout_for_mode(clock_widget_t *w, clock_mode_t mode)
 {
-    lv_obj_set_style_transform_pivot_x(cont, 0, 0);   // top-left pivot
-    lv_obj_set_style_transform_pivot_y(cont, 0, 0);
+    switch (mode) {
+        case CLOCK_MODE_FULL:      apply_full_layout(w);      break;
+        case CLOCK_MODE_TOPBAR:    apply_topbar_layout(w);    break;
+        case CLOCK_MODE_MINIMIZED:
+        default:                   apply_minimized_layout(w); break;
+    }
+}
 
-    s_morph_sx0 = (w1 > 0) ? (256 * w0 / w1) : 256;   // 256 = 1.0x
-    s_morph_sy0 = (h1 > 0) ? (256 * h0 / h1) : 256;
-    s_morph_tx0 = x0 - x1;
-    s_morph_ty0 = y0 - y1;
-
-    morph_exec_cb(cont, 0);   // apply OLD appearance immediately (no first-frame flash)
-
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, cont);
-    // 500ms: PPA accelerates the scale-blit (SRM+blend); the residual SW cost is
-    // LVGL re-rasterizing the glyph layer each frame. Smooth enough at 500ms.
-    lv_anim_set_duration(&a, 500);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
-    lv_anim_set_values(&a, 0, 256);
-    lv_anim_set_exec_cb(&a, morph_exec_cb);
-    lv_anim_start(&a);
+// At morph end: drop the transform and snap to the target layout/font at identity
+// (visually the same size as the last scaled frame, so no jump).
+static void morph_done_cb(lv_anim_t *a)
+{
+    LV_UNUSED(a);
+    clock_widget_t *w = s_morph_w;
+    if (!w) return;
+    lv_obj_set_style_transform_scale_x(w->container, 256, 0);
+    lv_obj_set_style_transform_scale_y(w->container, 256, 0);
+    lv_obj_set_style_translate_x(w->container, 0, 0);
+    lv_obj_set_style_translate_y(w->container, 0, 0);
+    snap_to(w, s_morph_target);
+    apply_layout_for_mode(w, s_morph_target);
+    apply_effective_color(w);
 }
 
 // Get position/size for a mode (avoids repeating constants in animation logic).
@@ -310,24 +308,43 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
 
     clock_mode_t old_mode = w->mode;
 
-    // Snap container to target size FIRST so align_to resolves correctly
-    // against the final geometry. Then apply fonts + alignment.
-    int32_t ox, oy, ow, oh, nx, ny, nw, nh;
-    mode_geometry(old_mode, &ox, &oy, &ow, &oh);
-    mode_geometry(mode,     &nx, &ny, &nw, &nh);
-    snap_to(w, mode);
+    int32_t ox, oy, ow, oh, nx, ny, nw, nh, fx, fy, fw, fh;
+    mode_geometry(old_mode,         &ox, &oy, &ow, &oh);
+    mode_geometry(mode,             &nx, &ny, &nw, &nh);
+    mode_geometry(CLOCK_MODE_FULL,  &fx, &fy, &fw, &fh);
 
-    switch (mode) {
-        case CLOCK_MODE_FULL:      apply_full_layout(w);      break;
-        case CLOCK_MODE_TOPBAR:    apply_topbar_layout(w);    break;
-        case CLOCK_MODE_MINIMIZED: apply_minimized_layout(w); break;
-    }
-
-    // Animate container position/size from old → new (visual transition)
-    animate_container(w->container, ox, oy, ow, oh, nx, ny, nw, nh);
-
+    // Render the FULL (256pt) layout at FULL geometry for the whole morph, then
+    // scale it to appear at the source geometry and animate to the target. The
+    // high-res font is only ever downscaled (crisp), never upscaled.
+    snap_to(w, CLOCK_MODE_FULL);
+    apply_full_layout(w);
     w->mode = mode;
-    apply_effective_color(w);   // FULL → user colour; minimized → legible white
+    apply_effective_color(w);   // target colour for the morph (white once minimized)
+
+    lv_obj_set_style_transform_pivot_x(w->container, 0, 0);   // top-left pivot
+    lv_obj_set_style_transform_pivot_y(w->container, 0, 0);
+    s_msx0 = (fw > 0) ? 256 * ow / fw : 256;   // source appearance, rel. FULL geom
+    s_msy0 = (fh > 0) ? 256 * oh / fh : 256;
+    s_mtx0 = ox - fx;
+    s_mty0 = oy - fy;
+    s_msx1 = (fw > 0) ? 256 * nw / fw : 256;   // target appearance
+    s_msy1 = (fh > 0) ? 256 * nh / fh : 256;
+    s_mtx1 = nx - fx;
+    s_mty1 = ny - fy;
+    s_morph_w      = w;
+    s_morph_target = mode;
+    morph_exec_cb(w->container, 0);   // source appearance immediately (no flash)
+
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, w->container);
+    lv_anim_set_duration(&a, 500);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+    lv_anim_set_values(&a, 0, 256);
+    lv_anim_set_exec_cb(&a, morph_exec_cb);
+    lv_anim_set_completed_cb(&a, morph_done_cb);
+    lv_anim_start(&a);
+
     static const char *mode_names[] = {"FULL", "MINIMIZED", "TOPBAR"};
     ESP_LOGI(TAG, "ClockWidget mode → %s (animated)", mode_names[mode]);
 }
