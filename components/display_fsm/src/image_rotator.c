@@ -12,6 +12,7 @@
 #include "display_widgets.h"
 #include "image_decode.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include <string.h>
 #include <strings.h>
 #include <dirent.h>
@@ -38,6 +39,7 @@ struct image_rotator_t {
     int             current_index;
     lv_image_dsc_t *shown_dsc;     // descriptor currently set on img_current
     lv_image_dsc_t *pending_dsc;   // decoded off-lock, awaiting present()
+    int             pending_index; // which image pending_dsc holds (-1 = none)
     bool            faded_in;      // first present() fades the container in
 };
 
@@ -119,6 +121,7 @@ image_rotator_t *image_rotator_create(lv_obj_t *parent, const char *dir_path,
         return NULL;
     }
     memset(r, 0, sizeof(*r));
+    r->pending_index = -1;
 
     r->container = make_container(parent);
     r->img_current = lv_image_create(r->container);
@@ -161,30 +164,56 @@ void image_rotator_step(image_rotator_t *r)
     r->current_index = (r->current_index + 1) % r->count;
 }
 
-void image_rotator_decode_current(image_rotator_t *r)
+// Decode image `idx` into pending_dsc (off-lock). No-op if pending already holds
+// it (prefetch hit) — that makes the next present() an instant swap.
+static void decode_into_pending(image_rotator_t *r, int idx)
 {
     if (!r || r->count == 0) return;
-    // Drop any unconsumed prior decode, then decode the current image off-lock.
+    if (r->pending_dsc && r->pending_index == idx) return;   // already prefetched
     if (r->pending_dsc) { image_decode_free(r->pending_dsc); r->pending_dsc = NULL; }
+    r->pending_index = -1;
 
     char posix[MAX_PATH_LEN];
-    lvgl_to_posix(r->paths[r->current_index], posix, sizeof(posix));
-    r->pending_dsc = image_decode_png_file_rgb565(posix);
-    if (!r->pending_dsc) {
-        ESP_LOGW(TAG, "decode failed [%d] %s", r->current_index, posix);
+    lvgl_to_posix(r->paths[idx], posix, sizeof(posix));
+    int64_t t0 = esp_timer_get_time();
+    lv_image_dsc_t *dsc = image_decode_png_file_rgb565(posix);
+    if (!dsc) {
+        ESP_LOGW(TAG, "decode failed [%d] %s", idx, posix);
+        return;
     }
+    // stb-decoded images render vertically flipped on this device (same as the
+    // clock background); flip to upright before display.
+    image_decode_flip_vertical(dsc);
+    r->pending_dsc   = dsc;
+    r->pending_index = idx;
+    ESP_LOGI(TAG, "Decoded [%d] %s (%lld ms)", idx, r->paths[idx],
+             (esp_timer_get_time() - t0) / 1000);
+}
+
+void image_rotator_decode_current(image_rotator_t *r)
+{
+    if (r) decode_into_pending(r, r->current_index);
+}
+
+// Prefetch the NEXT image (off-lock) so the upcoming advance is an instant swap.
+void image_rotator_prefetch_next(image_rotator_t *r)
+{
+    if (!r || r->count == 0) return;
+    decode_into_pending(r, (r->current_index + 1) % r->count);
 }
 
 void image_rotator_present(image_rotator_t *r)
 {
-    if (!r || !r->pending_dsc) return;
+    // Only present if pending holds the image we currently want to show.
+    if (!r || !r->pending_dsc || r->pending_index != r->current_index) return;
 
     // Swap in the freshly decoded descriptor; free the previously shown one only
     // after LVGL is pointed at the new buffer.
     lv_image_set_src(r->img_current, r->pending_dsc);
     if (r->shown_dsc) image_decode_free(r->shown_dsc);
-    r->shown_dsc   = r->pending_dsc;
-    r->pending_dsc = NULL;
+    r->shown_dsc     = r->pending_dsc;
+    r->pending_dsc   = NULL;
+    r->pending_index = -1;
     lv_obj_align(r->img_current, LV_ALIGN_CENTER, 0, 0);
 
     if (!r->faded_in) {

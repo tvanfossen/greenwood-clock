@@ -52,6 +52,12 @@ void PhotoSlideshow::present()
     if (s_rotator) image_rotator_present(s_rotator);
 }
 
+// OFF-lock: decode the NEXT image ahead of time so the next advance is instant.
+void PhotoSlideshow::prefetch()
+{
+    if (s_rotator) image_rotator_prefetch_next(s_rotator);
+}
+
 void PhotoSlideshow::entry()
 {
     set_state_info(DISPLAY_STATE_PHOTOS, "photos");
