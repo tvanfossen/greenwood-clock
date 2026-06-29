@@ -632,10 +632,11 @@ static void process_event(const display_event_t *evt)
     if (evt->type == DISPLAY_EVT_PHOTO_ADVANCE) {
         // Decode the next photo OFF the LVGL lock (slow PNG decode), then swap
         // it in under the lock (fast). No-op if the photo state has exited.
-        PhotoSlideshow::decode_next();
+        PhotoSlideshow::decode_next();    // off-lock (instant if prefetched)
         lvgl_port_lock(0);
-        PhotoSlideshow::present();
+        PhotoSlideshow::present();        // under lock: fast swap
         lvgl_port_unlock();
+        PhotoSlideshow::prefetch();       // off-lock: decode next ahead
         return;   // not an FSM state event
     }
 

@@ -95,6 +95,7 @@ struct PhotoSlideshow : DisplayFsm
     // UNDER the lock (fast descriptor swap). Both no-op if not in the photo state.
     static void decode_next();
     static void present();
+    static void prefetch();
 };
 
 // ---------------------------------------------------------------------------
