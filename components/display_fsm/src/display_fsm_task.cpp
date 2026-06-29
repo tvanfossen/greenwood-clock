@@ -14,6 +14,7 @@
 #include "esp_lvgl_port.h"
 #include "esp_heap_caps.h"
 #include "esp_random.h"
+#include "esp_timer.h"
 #include "bsp/display.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -613,6 +614,9 @@ static void start_periodic_timers(void)
 
 // Handle one dequeued event. Radar pre-decode and background reload run OUTSIDE
 // the LVGL lock (slow stb_image work); everything else dispatches to the FSM.
+// The [XFER] log reports how long the FSM held the LVGL lock during a transition
+// — i.e. how long the display could not render. Useful for catching regressions
+// where a heavy entry() builds too much under the lock.
 static void process_event(const display_event_t *evt)
 {
     if (evt->type == DISPLAY_EVT_RADAR_READY) {
@@ -624,9 +628,17 @@ static void process_event(const display_event_t *evt)
         reload_background_from_settings();
         return;   // not a state event — no FSM dispatch
     }
+
     lvgl_port_lock(0);
+    int64_t t0 = esp_timer_get_time();   // measure HOLD only (post-acquire)
     dispatch_event(evt);
+    int64_t hold = esp_timer_get_time() - t0;
     lvgl_port_unlock();
+
+    if (hold > 20000) {
+        ESP_LOGW(TAG, "[XFER] lock-hold=%lld us evt=%d — display could not render this long",
+                 (long long)hold, evt->type);
+    }
 }
 
 static void fsm_run_event_loop(void)

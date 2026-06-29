@@ -272,7 +272,10 @@ static void animate_container(lv_obj_t *cont,
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, cont);
-    lv_anim_set_duration(&a, 750);
+    // 350ms (was 750): PPA accelerates the scale-blit but LVGL still re-rasterizes
+    // the glyph layer in SW each frame (cost ~ clock area), so a shorter morph
+    // means fewer of the expensive frames — less perceived stutter.
+    lv_anim_set_duration(&a, 350);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
     lv_anim_set_values(&a, 0, 256);
     lv_anim_set_exec_cb(&a, morph_exec_cb);
