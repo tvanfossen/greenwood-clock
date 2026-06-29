@@ -176,14 +176,28 @@ static void decode_into_pending(image_rotator_t *r, int idx)
     char posix[MAX_PATH_LEN];
     lvgl_to_posix(r->paths[idx], posix, sizeof(posix));
     int64_t t0 = esp_timer_get_time();
-    lv_image_dsc_t *dsc = image_decode_png_file_rgb565(posix);
+
+    // Fast path: a previously-cached, already-flipped RGB565 .r565 file.
+    char cache[MAX_PATH_LEN + 8];
+    snprintf(cache, sizeof(cache), "%s.r565", posix);
+    lv_image_dsc_t *dsc = image_decode_load_raw_rgb565(cache);
+    if (dsc) {
+        r->pending_dsc   = dsc;
+        r->pending_index = idx;
+        ESP_LOGI(TAG, "Loaded cache [%d] %s (%lld ms)", idx, r->paths[idx],
+                 (esp_timer_get_time() - t0) / 1000);
+        return;
+    }
+
+    // Slow path: decode the PNG (~2s), flip upright (stb row order, same as the
+    // clock background), then write the .r565 cache so future loads are fast.
+    dsc = image_decode_png_file_rgb565(posix);
     if (!dsc) {
         ESP_LOGW(TAG, "decode failed [%d] %s", idx, posix);
         return;
     }
-    // stb-decoded images render vertically flipped on this device (same as the
-    // clock background); flip to upright before display.
     image_decode_flip_vertical(dsc);
+    image_decode_save_raw_rgb565(cache, dsc);
     r->pending_dsc   = dsc;
     r->pending_index = idx;
     ESP_LOGI(TAG, "Decoded [%d] %s (%lld ms)", idx, r->paths[idx],

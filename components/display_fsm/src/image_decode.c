@@ -250,6 +250,72 @@ void image_decode_flip_vertical(lv_image_dsc_t *dsc)
                     ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
 }
 
+// Raw RGB565 cache file format: [u16 w][u16 h][u32 stride][RGB565 pixel data].
+// Lets a one-time ~2s PNG decode be replaced by a fast fread on later loads.
+#define R565_MAGIC_HDR 8
+
+lv_image_dsc_t *image_decode_load_raw_rgb565(const char *path)
+{
+    if (!path) return NULL;
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+
+    uint16_t w = 0, h = 0;
+    uint32_t stride = 0;
+    if (fread(&w, sizeof(w), 1, f) != 1 || fread(&h, sizeof(h), 1, f) != 1 ||
+        fread(&stride, sizeof(stride), 1, f) != 1 ||
+        w == 0 || h == 0 || w > IMG_MAX_W || h > IMG_MAX_H ||
+        stride < (uint32_t)w * 2) {
+        fclose(f);
+        return NULL;
+    }
+    uint32_t buf_size = stride * h;
+    uint8_t *pixels = (uint8_t *)heap_caps_aligned_alloc(64, buf_size,
+                                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!pixels) { fclose(f); return NULL; }
+
+    if (fread(pixels, 1, buf_size, f) != buf_size) {
+        heap_caps_free(pixels);
+        fclose(f);
+        ESP_LOGW(TAG, "r565 short read: %s", path);
+        return NULL;
+    }
+    fclose(f);
+    esp_cache_msync(pixels, buf_size,
+                    ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+
+    lv_image_dsc_t *dsc = make_dsc(pixels, w, h, stride, buf_size, LV_COLOR_FORMAT_RGB565);
+    if (!dsc) heap_caps_free(pixels);
+    return dsc;
+}
+
+bool image_decode_save_raw_rgb565(const char *path, const lv_image_dsc_t *dsc)
+{
+    if (!path || !dsc || !dsc->data || dsc->header.cf != LV_COLOR_FORMAT_RGB565) return false;
+
+    // Write to a temp file then rename, so an interrupted write never leaves a
+    // half-written cache file that would later load as garbage.
+    char tmp[160];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    FILE *f = fopen(tmp, "wb");
+    if (!f) { ESP_LOGW(TAG, "r565 cache create failed: %s", tmp); return false; }
+
+    uint16_t w = (uint16_t)dsc->header.w, h = (uint16_t)dsc->header.h;
+    uint32_t stride = dsc->header.stride;
+    bool ok = fwrite(&w, sizeof(w), 1, f) == 1 &&
+              fwrite(&h, sizeof(h), 1, f) == 1 &&
+              fwrite(&stride, sizeof(stride), 1, f) == 1 &&
+              fwrite(dsc->data, 1, dsc->data_size, f) == dsc->data_size;
+    fclose(f);
+    if (!ok || rename(tmp, path) != 0) {
+        remove(tmp);
+        ESP_LOGW(TAG, "r565 cache write failed: %s", path);
+        return false;
+    }
+    ESP_LOGI(TAG, "r565 cache written: %s (%lu B)", path, (unsigned long)dsc->data_size);
+    return true;
+}
+
 void image_decode_free(lv_image_dsc_t *dsc)
 {
     if (!dsc) return;
