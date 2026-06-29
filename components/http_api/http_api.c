@@ -23,6 +23,8 @@
 #include <dirent.h>
 #include "esp_vfs_fat.h"
 #include "bsp/esp32_p4_function_ev_board.h"
+#include "lvgl.h"
+#include "esp_lvgl_port.h"
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
@@ -574,7 +576,7 @@ static esp_err_t settings_post_handler(httpd_req_t *req);
 static void http_api_configure_server(httpd_config_t* config)
 {
     config->server_port     = 80;
-    config->max_uri_handlers = 36;
+    config->max_uri_handlers = 40;
     config->stack_size      = 8192;
     config->uri_match_fn    = httpd_uri_match_wildcard;
 }
@@ -640,6 +642,58 @@ static esp_err_t coredump_get_handler(httpd_req_t *req)
     return err;
 }
 
+// GET /api/screenshot → grab the active display framebuffer (the REAL on-screen
+// pixels, including any SW/PPA composite artifacts) and stream it. Response:
+// an ASCII header line "w h stride cf\n" followed by the raw pixel data.
+// Decode + view with tools/screenshot.py.
+static esp_err_t screenshot_get_handler(httpd_req_t *req)
+{
+    lv_display_t *disp = lv_display_get_default();
+    if (!disp) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no display");
+        return ESP_FAIL;
+    }
+
+    uint32_t w = 0, h = 0, stride = 0, size = 0, cf = 0;
+    uint8_t *copy = NULL;
+
+    // Copy the framebuffer under the LVGL lock (the panel DMA reads it
+    // concurrently; a quick memcpy gives a coherent snapshot).
+    lvgl_port_lock(0);
+    lv_draw_buf_t *fb = lv_display_get_buf_active(disp);
+    if (fb && fb->data) {
+        w      = lv_display_get_horizontal_resolution(disp);
+        h      = lv_display_get_vertical_resolution(disp);
+        stride = fb->header.stride;
+        cf     = fb->header.cf;
+        size   = stride * h;
+        copy   = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (copy) memcpy(copy, fb->data, size);
+    }
+    lvgl_port_unlock();
+
+    if (!copy) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "capture failed");
+        return ESP_FAIL;
+    }
+
+    char hdr[64];
+    int hlen = snprintf(hdr, sizeof(hdr), "%lu %lu %lu %lu\n",
+                        (unsigned long)w, (unsigned long)h,
+                        (unsigned long)stride, (unsigned long)cf);
+    httpd_resp_set_type(req, "application/octet-stream");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"screen.raw\"");
+
+    esp_err_t err = httpd_resp_send_chunk(req, hdr, hlen);
+    for (size_t off = 0; off < size && err == ESP_OK; off += 4096) {
+        size_t chunk = (size - off > 4096) ? 4096 : (size - off);
+        err = httpd_resp_send_chunk(req, (char *)copy + off, chunk);
+    }
+    heap_caps_free(copy);
+    httpd_resp_send_chunk(req, NULL, 0);
+    return err;
+}
+
 // POST /api/coredump/erase → clear the stored coredump.
 static esp_err_t coredump_erase_handler(httpd_req_t *req)
 {
@@ -696,6 +750,11 @@ static void http_api_register_file_handlers(httpd_handle_t srv)
         .method  = HTTP_POST,
         .handler = coredump_erase_handler,
     };
+    static const httpd_uri_t uri_screenshot = {
+        .uri     = "/api/screenshot",
+        .method  = HTTP_GET,
+        .handler = screenshot_get_handler,
+    };
     static const httpd_uri_t uri_logs = {
         .uri     = "/api/logs/download",
         .method  = HTTP_GET,
@@ -728,6 +787,7 @@ static void http_api_register_file_handlers(httpd_handle_t srv)
     httpd_register_uri_handler(srv, &uri_cd_info);
     httpd_register_uri_handler(srv, &uri_cd_get);
     httpd_register_uri_handler(srv, &uri_cd_erase);
+    httpd_register_uri_handler(srv, &uri_screenshot);
     httpd_register_uri_handler(srv, &uri_logs);
     httpd_register_uri_handler(srv, &uri_logs_test);
     httpd_register_uri_handler(srv, &uri_upload);

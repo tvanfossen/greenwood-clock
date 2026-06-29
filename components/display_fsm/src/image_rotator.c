@@ -268,10 +268,13 @@ void image_rotator_present(image_rotator_t *r)
 
     if (!r->faded_in) {
         r->faded_in = true;
-        lv_obj_set_style_opa(r->container, LV_OPA_TRANSP, 0);
+        // Fade the IMAGE in over the opaque black container — NOT the container
+        // itself. Fading the container would make it transparent and briefly
+        // reveal the clock background behind it ("black → clock bg → photo").
+        lv_obj_set_style_opa(r->img_current, LV_OPA_TRANSP, 0);
         lv_anim_t a;
         lv_anim_init(&a);
-        lv_anim_set_var(&a, r->container);
+        lv_anim_set_var(&a, r->img_current);
         lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
         lv_anim_set_duration(&a, 600);
         lv_anim_set_exec_cb(&a, opa_anim_cb);
