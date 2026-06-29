@@ -129,7 +129,10 @@ static void publish_map_dsc(uint8_t *mpix, uint16_t mw, uint16_t mh,
     }
     memset(mdsc, 0, sizeof(*mdsc));
     mdsc->header.magic  = LV_IMAGE_HEADER_MAGIC;
-    mdsc->header.cf     = LV_COLOR_FORMAT_ARGB8888;
+    // Opaque base map: the raw binary's alpha byte is 0, so it must be treated as
+    // XRGB8888 (alpha ignored). As ARGB8888 the PPA alpha-blend path would honor
+    // the 0 alpha and render it fully transparent (map vanishes).
+    mdsc->header.cf     = LV_COLOR_FORMAT_XRGB8888;
     mdsc->header.w      = mw;
     mdsc->header.h      = mh;
     mdsc->header.stride = mstride;
