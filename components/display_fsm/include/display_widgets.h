@@ -60,10 +60,17 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode);
 void clock_widget_set_color(clock_widget_t *w, lv_color_t color);
 
 /**
- * @brief Full-clock screen rectangle (where the big digits sit). Used to sample
- * the background underneath for contrast. Coords are screen-space.
+ * @brief Minimized-mode text colour (legible over the state screen behind it).
+ * Defaults to white; set from a sample of the direct background.
+ */
+void clock_widget_set_minimized_color(clock_widget_t *w, lv_color_t color);
+
+/**
+ * @brief Full-clock / minimized-clock screen rectangles (where the digits sit).
+ * Used to sample the background underneath for contrast. Coords are screen-space.
  */
 void clock_widget_full_area(lv_area_t *out);
+void clock_widget_min_area(lv_area_t *out);
 
 /**
  * @brief Get the current mode.
@@ -208,6 +215,10 @@ void image_rotator_present(image_rotator_t *r);         // UNDER lock: swap to p
 
 int  image_rotator_count(const image_rotator_t *r);
 int  image_rotator_index(const image_rotator_t *r);
+
+// Descriptor of the photo currently displayed (RGB565, vertically flipped like
+// the clock background). NULL if none. For sampling the bg behind the clock.
+const lv_image_dsc_t *image_rotator_shown_dsc(const image_rotator_t *r);
 
 // ---------------------------------------------------------------------------
 // JsonLayout — creates LVGL widgets from JSON DSL

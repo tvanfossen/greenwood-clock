@@ -96,6 +96,9 @@ struct PhotoSlideshow : DisplayFsm
     static void decode_next();
     static void present();
     static void prefetch();
+    // Sample the shown photo behind the minimized clock and set a legible
+    // (OKLCH) clock colour. Call under the LVGL lock after present().
+    static void apply_clock_contrast();
 };
 
 // ---------------------------------------------------------------------------
