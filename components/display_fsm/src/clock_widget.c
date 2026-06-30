@@ -26,7 +26,8 @@ struct clock_widget_t {
     lv_obj_t    *lbl_ampm;      // AM/PM
     lv_obj_t    *lbl_date;      // Day, Month DD
     clock_mode_t mode;
-    lv_color_t   color;
+    lv_color_t   color;       // FULL-mode colour (legible over the bg image)
+    lv_color_t   min_color;   // MINIMIZED-mode colour (legible over the state bg)
 };
 
 // ---------------------------------------------------------------------------
@@ -95,9 +96,11 @@ static void apply_full_layout(clock_widget_t *w)
 // Does NOT touch container position/size — that's handled by animation or snap_to().
 static void apply_minimized_layout(clock_widget_t *w)
 {
-    // Time: 128pt
+    // Time: 128pt. Shift left so the time + AM/PM *group* is centred in the
+    // container — otherwise centring the time alone pushes the 48pt AM/PM past
+    // the right screen edge (only "P"/"A" visible).
     lv_obj_set_style_text_font(w->lbl_time, &nunito_128, 0);
-    lv_obj_align(w->lbl_time, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_align(w->lbl_time, LV_ALIGN_TOP_MID, -40, 0);
 
     // AM/PM: 48pt, visual text-bottom aligned with time.
     // y_ofs = -(nunito_128.base_line - nunito_48.base_line) = -(27 - 10) = -17
@@ -166,8 +169,9 @@ clock_widget_t *clock_widget_create(lv_obj_t *parent)
         return NULL;
     }
     memset(w, 0, sizeof(*w));
-    w->color = lv_color_white();
-    w->mode  = CLOCK_MODE_FULL;
+    w->color     = lv_color_white();
+    w->min_color = lv_color_white();   // legible default until sampled
+    w->mode      = CLOCK_MODE_FULL;
 
     // Transparent container — groups labels for easy repositioning.
     // OVERFLOW_VISIBLE: AM/PM is positioned LV_ALIGN_OUT_RIGHT_BOTTOM past
@@ -320,7 +324,7 @@ static void mode_geometry(clock_mode_t mode, int32_t *x, int32_t *y, int32_t *w,
 // colour — which may be dark — is not guaranteed to contrast.
 static void apply_effective_color(clock_widget_t *w)
 {
-    lv_color_t c = (w->mode == CLOCK_MODE_FULL) ? w->color : lv_color_white();
+    lv_color_t c = (w->mode == CLOCK_MODE_FULL) ? w->color : w->min_color;
     lv_obj_set_style_text_color(w->lbl_time, c, 0);
     lv_obj_set_style_text_color(w->lbl_ampm, c, 0);
     lv_obj_set_style_text_color(w->lbl_date, c, 0);
@@ -395,6 +399,22 @@ void clock_widget_set_color(clock_widget_t *w, lv_color_t color)
     if (!w) return;
     w->color = color;
     apply_effective_color(w);   // honours current mode (only FULL uses it)
+}
+
+void clock_widget_set_minimized_color(clock_widget_t *w, lv_color_t color)
+{
+    if (!w) return;
+    w->min_color = color;
+    apply_effective_color(w);   // applies immediately if currently minimized
+}
+
+void clock_widget_min_area(lv_area_t *out)
+{
+    if (!out) return;
+    out->x1 = MIN_X;
+    out->y1 = MIN_Y;
+    out->x2 = MIN_X + MIN_W - 1;
+    out->y2 = MIN_Y + MIN_H - 1;
 }
 
 clock_mode_t clock_widget_get_mode(const clock_widget_t *w)

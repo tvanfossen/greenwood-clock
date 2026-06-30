@@ -283,6 +283,11 @@ void image_rotator_present(image_rotator_t *r)
     ESP_LOGI(TAG, "Present [%d] %s", r->current_index, r->paths[r->current_index]);
 }
 
+const lv_image_dsc_t *image_rotator_shown_dsc(const image_rotator_t *r)
+{
+    return r ? r->shown_dsc : NULL;
+}
+
 int image_rotator_count(const image_rotator_t *r)
 {
     return r ? r->count : 0;

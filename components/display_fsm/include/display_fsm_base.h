@@ -54,7 +54,13 @@ protected:
 
     // Helpers for concrete states
     void minimize_clock() {
-        if (s_clock) clock_widget_set_mode(s_clock, CLOCK_MODE_MINIMIZED);
+        if (s_clock) {
+            // Default white — correct over the dark state screens (radar map,
+            // weather/astro/ambient panels). PhotoSlideshow refines this from the
+            // actual photo, the only bright/variable minimized background.
+            clock_widget_set_minimized_color(s_clock, lv_color_white());
+            clock_widget_set_mode(s_clock, CLOCK_MODE_MINIMIZED);
+        }
         display_fsm_hide_clock_lottie();
     }
     void restore_clock() {

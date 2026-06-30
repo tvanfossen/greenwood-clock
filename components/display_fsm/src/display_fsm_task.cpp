@@ -670,7 +670,8 @@ static void process_event(const display_event_t *evt)
         // it in under the lock (fast). No-op if the photo state has exited.
         PhotoSlideshow::decode_next();    // off-lock (instant if prefetched)
         lvgl_port_lock(0);
-        PhotoSlideshow::present();        // under lock: fast swap
+        PhotoSlideshow::present();          // under lock: fast swap
+        PhotoSlideshow::apply_clock_contrast();  // legible clock over this photo
         lvgl_port_unlock();
         PhotoSlideshow::prefetch();       // off-lock: decode next ahead
         return;   // not an FSM state event
