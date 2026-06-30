@@ -266,19 +266,32 @@ static void apply_layout_for_mode(clock_widget_t *w, clock_mode_t mode)
     }
 }
 
-// At morph end: drop the snapshot image and restore the real clock at the target
-// layout (visually the same size as the last scaled frame, so no jump).
-static void morph_done_cb(lv_anim_t *a)
+// Settle the in-flight morph: drop the snapshot image and restore the real clock
+// at the target layout (visually the same size as the last scaled frame → no
+// jump). Idempotent. Called both on natural completion AND at the start of a new
+// morph — so morphs are strictly serial and an interrupted one can never orphan
+// its snapshot image on the layer (which left stale ghost clocks on screen).
+static void finalize_morph(void)
 {
-    LV_UNUSED(a);
     clock_widget_t *w = s_morph_w;
     if (!w) return;
-    if (s_morph_img)  { lv_obj_delete(s_morph_img); s_morph_img = NULL; }
+    if (s_morph_img) {
+        lv_anim_delete(s_morph_img, NULL);   // stop its anim without re-entering done_cb
+        lv_obj_delete(s_morph_img);
+        s_morph_img = NULL;
+    }
     if (s_morph_snap) { lv_draw_buf_destroy(s_morph_snap); s_morph_snap = NULL; }
     lv_obj_remove_flag(w->container, LV_OBJ_FLAG_HIDDEN);
     snap_to(w, s_morph_target);
     apply_layout_for_mode(w, s_morph_target);
     apply_effective_color(w);
+    s_morph_w = NULL;
+}
+
+static void morph_done_cb(lv_anim_t *a)
+{
+    LV_UNUSED(a);
+    finalize_morph();
 }
 
 // Get position/size for a mode (avoids repeating constants in animation logic).
@@ -306,7 +319,9 @@ static void apply_effective_color(clock_widget_t *w)
 
 void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
 {
-    if (!w || w->mode == mode) return;
+    if (!w) return;
+    finalize_morph();   // settle any in-flight morph first — morphs are serial
+    if (w->mode == mode) return;
 
     clock_mode_t old_mode = w->mode;
 
