@@ -60,6 +60,12 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode);
 void clock_widget_set_color(clock_widget_t *w, lv_color_t color);
 
 /**
+ * @brief Full-clock screen rectangle (where the big digits sit). Used to sample
+ * the background underneath for contrast. Coords are screen-space.
+ */
+void clock_widget_full_area(lv_area_t *out);
+
+/**
  * @brief Get the current mode.
  */
 clock_mode_t clock_widget_get_mode(const clock_widget_t *w);

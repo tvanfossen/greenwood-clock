@@ -136,6 +136,15 @@ static void apply_topbar_layout(clock_widget_t *w)
 static void mode_geometry(clock_mode_t mode, int32_t *x, int32_t *y, int32_t *w, int32_t *h);
 static void apply_effective_color(clock_widget_t *w);
 
+void clock_widget_full_area(lv_area_t *out)
+{
+    if (!out) return;
+    out->x1 = FULL_X;
+    out->y1 = FULL_Y;
+    out->x2 = FULL_X + FULL_W - 1;
+    out->y2 = FULL_Y + FULL_H - 1;
+}
+
 // Snap container to a mode's target position/size immediately (no animation).
 static void snap_to(clock_widget_t *w, clock_mode_t mode)
 {

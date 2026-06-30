@@ -97,10 +97,72 @@ lv_color_t ui_legible(lv_color_t desired, lv_color_t bg)
     srgb_to_oklab(desired, &L, &a, &b);
 
     // Raise lightness toward white (keeping chroma direction a/b) until legible.
+    float bgL, bga, bgb;
+    srgb_to_oklab(bg, &bgL, &bga, &bgb);
+
+    // Move the hue's lightness AWAY from the background's: darken over a light
+    // bg, lighten over a dark one (keeping chroma direction a/b) until legible.
     for (int i = 1; i <= 20; i++) {
-        float try_L = L + (1.0f - L) * (i / 20.0f);
+        float t = i / 20.0f;
+        float try_L = (bgL > 0.5f) ? (L * (1.0f - t))         // darken toward black
+                                   : (L + (1.0f - L) * t);    // lighten toward white
         lv_color_t c = oklab_to_srgb(try_L, a, b);
         if (ui_contrast_ratio(c, bg) >= UI_CONTRAST_AA) return c;
     }
     return ui_text_on(bg);  // guarantee a legible result regardless of hue
+}
+
+// Add one pixel's 8-bit R/G/B to the running sums (RGB565 or ARGB/XRGB byte
+// order). Pulled out of the sample loop to keep its cognitive complexity down.
+static void accum_pixel(const uint8_t *row, int32_t xx, lv_color_format_t cf,
+                        uint32_t *sr, uint32_t *sg, uint32_t *sb)
+{
+    if (cf == LV_COLOR_FORMAT_RGB565) {
+        uint16_t p = ((const uint16_t *)row)[xx];
+        uint8_t r5 = (p >> 11) & 0x1F, g6 = (p >> 5) & 0x3F, b5 = p & 0x1F;
+        *sr += (uint32_t)((r5 << 3) | (r5 >> 2));
+        *sg += (uint32_t)((g6 << 2) | (g6 >> 4));
+        *sb += (uint32_t)((b5 << 3) | (b5 >> 2));
+    } else {   // ARGB8888 / XRGB8888 — BGRA byte order
+        const uint8_t *px = row + (uint32_t)xx * 4;
+        *sb += px[0]; *sg += px[1]; *sr += px[2];
+    }
+}
+
+// Clamp a region to the image bounds; returns false if nothing remains.
+static bool clamp_region(const lv_image_dsc_t *img,
+                         int32_t *x, int32_t *y, int32_t *w, int32_t *h)
+{
+    if (*x < 0) { *w += *x; *x = 0; }
+    if (*y < 0) { *h += *y; *y = 0; }
+    if (*x + *w > (int32_t)img->header.w) *w = (int32_t)img->header.w - *x;
+    if (*y + *h > (int32_t)img->header.h) *h = (int32_t)img->header.h - *y;
+    return (*w > 0 && *h > 0);
+}
+
+// Mean colour of a rectangular region of an RGB565/ARGB8888 image buffer
+// (coords in BUFFER space). Coarse grid sample (~64x64) for speed.
+lv_color_t ui_image_region_mean(const lv_image_dsc_t *img,
+                                int32_t x, int32_t y, int32_t w, int32_t h)
+{
+    lv_color_t fallback = lv_color_make(128, 128, 128);
+    if (!img || !img->data || w <= 0 || h <= 0) return fallback;
+    if (!clamp_region(img, &x, &y, &w, &h)) return fallback;
+
+    const uint8_t *data = (const uint8_t *)img->data;
+    lv_color_format_t cf = img->header.cf;
+    uint32_t stride = img->header.stride;
+    uint32_t sr = 0, sg = 0, sb = 0, n = 0;
+    int32_t step_x = (w > 64) ? (w / 64) : 1;
+    int32_t step_y = (h > 64) ? (h / 64) : 1;
+
+    for (int32_t yy = y; yy < y + h; yy += step_y) {
+        const uint8_t *row = data + (uint32_t)yy * stride;
+        for (int32_t xx = x; xx < x + w; xx += step_x) {
+            accum_pixel(row, xx, cf, &sr, &sg, &sb);
+            n++;
+        }
+    }
+    if (!n) return fallback;
+    return lv_color_make((uint8_t)(sr / n), (uint8_t)(sg / n), (uint8_t)(sb / n));
 }

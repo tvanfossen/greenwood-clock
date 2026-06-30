@@ -9,6 +9,7 @@
 #include "display_widgets.h"
 #include "display_scheduler.h"
 #include "image_decode.h"
+#include "ui_contrast.h"
 
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
@@ -362,6 +363,40 @@ static void load_background(lv_obj_t *scr, const clock_settings_t *cfg)
     lvgl_port_unlock();
 }
 
+// Sample the (predecoded) background under the full clock and set the clock text
+// colour to a guaranteed-legible variant of the user's chosen colour (keep hue,
+// adjust OKLCH lightness). The bg buffer is vertically flipped vs the screen
+// (the panel flips the RGB565 blit), so the clock's top screen region maps to the
+// bottom of the buffer. GIF backgrounds have no sampleable buffer → use the raw
+// colour.
+static void apply_clock_bg_contrast(const clock_settings_t *cfg)
+{
+    clock_widget_t *clk = DisplayFsm::get_clock();
+    if (!clk || !cfg) return;
+
+    lv_color_t user = lv_color_make((cfg->text_color >> 16) & 0xFF,
+                                    (cfg->text_color >> 8) & 0xFF,
+                                    cfg->text_color & 0xFF);
+    lvgl_port_lock(0);
+    if (s_bg_dsc) {
+        lv_area_t a;
+        clock_widget_full_area(&a);
+        int32_t ih = (int32_t)s_bg_dsc->header.h;
+        int32_t rh = a.y2 - a.y1 + 1;
+        int32_t by1 = ih - 1 - a.y2;            // screen-Y → buffer-Y (vertical flip)
+        if (by1 < 0) by1 = 0;
+        lv_color_t bg = ui_image_region_mean(s_bg_dsc, a.x1, by1, a.x2 - a.x1 + 1, rh);
+        lv_color_t legible = ui_legible(user, bg);
+        clock_widget_set_color(clk, legible);
+        ESP_LOGI(TAG, "clock bg-contrast: bg=#%02X%02X%02X user=#%02X%02X%02X -> #%02X%02X%02X",
+                 bg.red, bg.green, bg.blue, user.red, user.green, user.blue,
+                 legible.red, legible.green, legible.blue);
+    } else {
+        clock_widget_set_color(clk, user);
+    }
+    lvgl_port_unlock();
+}
+
 // Delete the current background (object + persistent descriptor) and reload from
 // settings. MUST run in fsm_task — load_background() decodes with a deep stack
 // outside the LVGL lock.
@@ -390,6 +425,7 @@ static void reload_background_from_settings(void)
     clock_settings_t cfg;
     if (settings_load(&cfg) == ESP_OK) {
         load_background(scr, &cfg);
+        apply_clock_bg_contrast(&cfg);   // re-derive legible clock colour for new bg
     }
 }
 
@@ -674,6 +710,7 @@ static void fsm_task(void *arg)
 
     // Background + Lottie manage their own LVGL lock.
     load_background(scr, &cfg);
+    apply_clock_bg_contrast(&cfg);   // legible clock colour over the bg image
 #if LV_USE_LOTTIE
     load_clock_lottie(scr);
 #endif
