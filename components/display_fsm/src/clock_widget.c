@@ -26,8 +26,11 @@ struct clock_widget_t {
     lv_obj_t    *lbl_ampm;      // AM/PM
     lv_obj_t    *lbl_date;      // Day, Month DD
     clock_mode_t mode;
+    lv_color_t   user_color;  // raw NVS text colour — the OKLCH base for all modes
     lv_color_t   color;       // FULL-mode colour (legible over the bg image)
-    lv_color_t   min_color;   // MINIMIZED-mode colour (legible over the state bg)
+    lv_color_t   min_color;   // MINIMIZED-mode colour (current; states may override)
+    lv_color_t   min_base;    // default MINIMIZED colour (legible over the bg image,
+                              // used by states that show the clock bg behind the clock)
 };
 
 // ---------------------------------------------------------------------------
@@ -169,9 +172,11 @@ clock_widget_t *clock_widget_create(lv_obj_t *parent)
         return NULL;
     }
     memset(w, 0, sizeof(*w));
-    w->color     = lv_color_white();
-    w->min_color = lv_color_white();   // legible default until sampled
-    w->mode      = CLOCK_MODE_FULL;
+    w->user_color = lv_color_white();
+    w->color      = lv_color_white();
+    w->min_color  = lv_color_white();   // legible default until sampled
+    w->min_base   = lv_color_white();
+    w->mode       = CLOCK_MODE_FULL;
 
     // Transparent container — groups labels for easy repositioning.
     // OVERFLOW_VISIBLE: AM/PM is positioned LV_ALIGN_OUT_RIGHT_BOTTOM past
@@ -356,6 +361,9 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
 
     s_morph_snap = lv_snapshot_take(w->container, LV_COLOR_FORMAT_ARGB8888);
     w->mode = mode;
+    // Reset minimized colour to the bg-image default; states whose own content
+    // covers the bg (radar, photos) override it after with their own sample.
+    if (mode == CLOCK_MODE_MINIMIZED) w->min_color = w->min_base;
     if (!s_morph_snap) {
         // Snapshot failed (OOM) — fall back to an instant snap, no animation.
         snap_to(w, mode);
@@ -406,6 +414,21 @@ void clock_widget_set_minimized_color(clock_widget_t *w, lv_color_t color)
     if (!w) return;
     w->min_color = color;
     apply_effective_color(w);   // applies immediately if currently minimized
+}
+
+void clock_widget_set_minimized_base_color(clock_widget_t *w, lv_color_t color)
+{
+    if (w) w->min_base = color;   // default applied on the next minimize
+}
+
+void clock_widget_set_user_color(clock_widget_t *w, lv_color_t color)
+{
+    if (w) w->user_color = color;   // OKLCH base hue; effective colours derived from it
+}
+
+lv_color_t clock_widget_user_color(const clock_widget_t *w)
+{
+    return w ? w->user_color : lv_color_white();
 }
 
 void clock_widget_min_area(lv_area_t *out)

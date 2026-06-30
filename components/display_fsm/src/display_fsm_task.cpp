@@ -369,6 +369,23 @@ static void load_background(lv_obj_t *scr, const clock_settings_t *cfg)
 // (the panel flips the RGB565 blit), so the clock's top screen region maps to the
 // bottom of the buffer. GIF backgrounds have no sampleable buffer → use the raw
 // colour.
+// Legible version of `user` over the (vertically-flipped) background image in the
+// given screen-space area. The RGB565 bg buffer is pre-flipped vs the screen, so
+// screen-Y maps to buffer-Y as h-1-y.
+static lv_color_t bg_legible_at(lv_color_t user, const lv_area_t *a)
+{
+    int32_t ih  = (int32_t)s_bg_dsc->header.h;
+    int32_t by1 = ih - 1 - a->y2;
+    if (by1 < 0) by1 = 0;
+    lv_color_t mean = ui_image_region_mean(s_bg_dsc, a->x1, by1,
+                                           a->x2 - a->x1 + 1, a->y2 - a->y1 + 1);
+    return ui_legible(user, mean);
+}
+
+// Derive the full- and minimized-clock colours from the background image, using
+// the user's NVS text colour as the OKLCH base. Minimized states that show this
+// same bg behind the clock (weather/astro/ambient) use the minimized result;
+// radar/photos override it from their own background.
 static void apply_clock_bg_contrast(const clock_settings_t *cfg)
 {
     clock_widget_t *clk = DisplayFsm::get_clock();
@@ -377,22 +394,18 @@ static void apply_clock_bg_contrast(const clock_settings_t *cfg)
     lv_color_t user = lv_color_make((cfg->text_color >> 16) & 0xFF,
                                     (cfg->text_color >> 8) & 0xFF,
                                     cfg->text_color & 0xFF);
+    clock_widget_set_user_color(clk, user);
+
     lvgl_port_lock(0);
     if (s_bg_dsc) {
-        lv_area_t a;
-        clock_widget_full_area(&a);
-        int32_t ih = (int32_t)s_bg_dsc->header.h;
-        int32_t rh = a.y2 - a.y1 + 1;
-        int32_t by1 = ih - 1 - a.y2;            // screen-Y → buffer-Y (vertical flip)
-        if (by1 < 0) by1 = 0;
-        lv_color_t bg = ui_image_region_mean(s_bg_dsc, a.x1, by1, a.x2 - a.x1 + 1, rh);
-        lv_color_t legible = ui_legible(user, bg);
-        clock_widget_set_color(clk, legible);
-        ESP_LOGI(TAG, "clock bg-contrast: bg=#%02X%02X%02X user=#%02X%02X%02X -> #%02X%02X%02X",
-                 bg.red, bg.green, bg.blue, user.red, user.green, user.blue,
-                 legible.red, legible.green, legible.blue);
+        lv_area_t fa, ma;
+        clock_widget_full_area(&fa);
+        clock_widget_min_area(&ma);
+        clock_widget_set_color(clk, bg_legible_at(user, &fa));
+        clock_widget_set_minimized_base_color(clk, bg_legible_at(user, &ma));
     } else {
         clock_widget_set_color(clk, user);
+        clock_widget_set_minimized_base_color(clk, lv_color_white());
     }
     lvgl_port_unlock();
 }

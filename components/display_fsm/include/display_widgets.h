@@ -61,9 +61,18 @@ void clock_widget_set_color(clock_widget_t *w, lv_color_t color);
 
 /**
  * @brief Minimized-mode text colour (legible over the state screen behind it).
- * Defaults to white; set from a sample of the direct background.
+ * Set from a sample of the direct background; states override per their content.
  */
 void clock_widget_set_minimized_color(clock_widget_t *w, lv_color_t color);
+
+/** Default minimized colour, applied on each minimize (states that show the clock
+ *  bg behind the clock use this; radar/photos override after). */
+void clock_widget_set_minimized_base_color(clock_widget_t *w, lv_color_t color);
+
+/** The raw NVS text colour — the OKLCH base hue used to derive every mode's
+ *  legible colour. Set once from settings; read by states that sample their bg. */
+void       clock_widget_set_user_color(clock_widget_t *w, lv_color_t color);
+lv_color_t clock_widget_user_color(const clock_widget_t *w);
 
 /**
  * @brief Full-clock / minimized-clock screen rectangles (where the digits sit).
@@ -184,6 +193,10 @@ void radar_view_destroy(radar_view_t *rv);
 // radar_view_create() does the SD read under the LVGL lock and stalls the
 // transition into the radar screen.
 void radar_view_preload_map(void);
+
+// The cached radar basemap descriptor (XRGB8888, upright/not flipped), or NULL.
+// For sampling the map behind the minimized clock.
+const lv_image_dsc_t *radar_view_map_dsc(void);
 
 // Two-phase radar overlay: predecode runs without LVGL lock (~500ms),
 // apply_radar runs with LVGL lock (instant pointer swap).

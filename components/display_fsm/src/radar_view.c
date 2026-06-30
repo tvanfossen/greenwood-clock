@@ -189,6 +189,11 @@ static void load_map_dsc(void)
     publish_map_dsc(mpix, mw, mh, mstride, mbuf_sz);
 }
 
+const lv_image_dsc_t *radar_view_map_dsc(void)
+{
+    return s_map_dsc;   // upright (raw binary, not flipped); NULL if no map loaded
+}
+
 void radar_view_preload_map(void)
 {
     // Off-lock startup preload so the first radar transition doesn't pay the

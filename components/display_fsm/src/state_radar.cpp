@@ -5,6 +5,7 @@
 #include "display_states.h"
 #include "display_scheduler.h"
 #include "display_widgets.h"
+#include "ui_contrast.h"
 #include "nws.h"
 #include "settings.h"
 #include "esp_log.h"
@@ -29,6 +30,18 @@ void RadarOverlay::entry()
     if (s_rv) {
         radar_view_apply_radar(s_rv);
         fade_in(radar_view_container(s_rv));
+    }
+
+    // Legible minimized clock over the map (map is upright/not flipped). The map
+    // covers the clock bg, so override the bg-image default with a map sample.
+    clock_widget_t *clk = get_clock();
+    const lv_image_dsc_t *map = radar_view_map_dsc();
+    if (clk && map) {
+        lv_area_t a;
+        clock_widget_min_area(&a);
+        lv_color_t mean = ui_image_region_mean(map, a.x1, a.y1,
+                                               a.x2 - a.x1 + 1, a.y2 - a.y1 + 1);
+        clock_widget_set_minimized_color(clk, ui_legible(clock_widget_user_color(clk), mean));
     }
     ESP_LOGI(TAG, "RadarOverlay: entry");
 }
