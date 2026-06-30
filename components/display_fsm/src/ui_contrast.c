@@ -91,25 +91,22 @@ static lv_color_t oklab_to_srgb(float L, float a, float b)
 
 lv_color_t ui_legible(lv_color_t desired, lv_color_t bg)
 {
+    // Keep the user's exact colour where it's already legible.
     if (ui_contrast_ratio(desired, bg) >= UI_CONTRAST_AA) return desired;
 
-    float L, a, b;
+    float L, a, b, bgL, bga, bgb;
     srgb_to_oklab(desired, &L, &a, &b);
-
-    // Raise lightness toward white (keeping chroma direction a/b) until legible.
-    float bgL, bga, bgb;
     srgb_to_oklab(bg, &bgL, &bga, &bgb);
 
-    // Move the hue's lightness AWAY from the background's: darken over a light
-    // bg, lighten over a dark one (keeping chroma direction a/b) until legible.
-    for (int i = 1; i <= 20; i++) {
-        float t = i / 20.0f;
-        float try_L = (bgL > 0.5f) ? (L * (1.0f - t))         // darken toward black
-                                   : (L + (1.0f - L) * t);    // lighten toward white
-        lv_color_t c = oklab_to_srgb(try_L, a, b);
-        if (ui_contrast_ratio(c, bg) >= UI_CONTRAST_AA) return c;
-    }
-    return ui_text_on(bg);  // guarantee a legible result regardless of hue
+    // Otherwise push the hue's lightness to the EXTREME away from the background
+    // (full white over a dark bg, full black over a light one) — keeping the
+    // chroma direction a/b — for maximum, crisp contrast rather than a washed-out
+    // just-barely-legible tone. Fall back to plain black/white if even that hue
+    // can't clear AA (e.g. a saturated hue over a mid-tone bg).
+    float ext_L = (bgL > 0.5f) ? 0.0f : 1.0f;
+    lv_color_t c = oklab_to_srgb(ext_L, a, b);
+    if (ui_contrast_ratio(c, bg) >= UI_CONTRAST_AA) return c;
+    return ui_text_on(bg);
 }
 
 // Add one pixel's 8-bit R/G/B to the running sums (RGB565 or ARGB/XRGB byte
