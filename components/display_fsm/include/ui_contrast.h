@@ -30,9 +30,16 @@ float ui_contrast_ratio(lv_color_t a, lv_color_t b);
 // Black or white, whichever contrasts more with bg.
 lv_color_t ui_text_on(lv_color_t bg);
 
-// `desired`, lightened along OKLCH-L until it meets UI_CONTRAST_AA against bg;
-// falls back to ui_text_on(bg) if the hue cannot be made legible.
+// `desired`, with its OKLCH-L moved away from bg's (darken over a light bg,
+// lighten over a dark one) until it meets UI_CONTRAST_AA; falls back to
+// ui_text_on(bg) if the hue cannot be made legible either way.
 lv_color_t ui_legible(lv_color_t desired, lv_color_t bg);
+
+// Mean colour of a rectangular region of an image buffer (RGB565 or ARGB8888),
+// coords in BUFFER space. Pair with ui_legible() for legible text over an image:
+// sample the region under the text, then ui_legible(desired, mean).
+lv_color_t ui_image_region_mean(const lv_image_dsc_t *img,
+                                int32_t x, int32_t y, int32_t w, int32_t h);
 
 #ifdef __cplusplus
 }
