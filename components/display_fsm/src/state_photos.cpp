@@ -76,7 +76,7 @@ void PhotoSlideshow::apply_clock_contrast()
     int32_t by1 = ih - 1 - a.y2;
     if (by1 < 0) by1 = 0;
     lv_color_t mean    = ui_image_region_mean(photo, a.x1, by1, a.x2 - a.x1 + 1, rh);
-    lv_color_t legible = ui_legible(lv_color_white(), mean);
+    lv_color_t legible = ui_legible(clock_widget_user_color(clk), mean);
     clock_widget_set_minimized_color(clk, legible);
 }
 
