@@ -25,6 +25,7 @@ static const char *TAG = "network";
 
 static EventGroupHandle_t s_wifi_event_group;
 static const int WIFI_CONNECTED_BIT = BIT0;
+static const int SCAN_DONE_BIT      = BIT1;   // set by WIFI_EVENT_SCAN_DONE
 static bool s_wifi_initialized = false;
 static bool s_wifi_connected    = false;
 // Set while network_scan() runs so the disconnect handler doesn't auto-reconnect
@@ -170,7 +171,9 @@ static void on_wifi_event(void* arg, esp_event_base_t ev_base,
                           int32_t ev_id, void* ev_data)
 {
     if (ev_base == WIFI_EVENT) {
-        if (ev_id == WIFI_EVENT_STA_START) {
+        if (ev_id == WIFI_EVENT_SCAN_DONE) {
+            xEventGroupSetBits(s_wifi_event_group, SCAN_DONE_BIT);
+        } else if (ev_id == WIFI_EVENT_STA_START) {
             esp_wifi_connect();                       // initial attempt, immediate
         } else if (ev_id == WIFI_EVENT_STA_DISCONNECTED) {
             ESP_LOGI(TAG, "Wi-Fi disconnected%s", s_scanning ? " (scan in progress)" : "");
@@ -440,11 +443,31 @@ static esp_err_t network_scan_results(wifi_ap_info_t* ap_list, uint16_t max_aps,
 // Public: network_scan
 // =============================================================================
 
+// Run a NON-blocking scan and wait for WIFI_EVENT_SCAN_DONE. On esp_hosted the
+// blocking form (esp_wifi_scan_start(cfg, true)) often returns before results are
+// ready, so esp_wifi_scan_get_ap_num() reads 0 — this waits for the event instead.
+static esp_err_t network_run_scan(const wifi_scan_config_t* cfg) {
+    xEventGroupClearBits(s_wifi_event_group, SCAN_DONE_BIT);
+    esp_err_t err = esp_wifi_scan_start(cfg, false);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "WiFi scan start failed: %d", (int)err);
+        return err;
+    }
+    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group, SCAN_DONE_BIT,
+                                           pdTRUE, pdFALSE, pdMS_TO_TICKS(10000));
+    if (!(bits & SCAN_DONE_BIT)) {
+        ESP_LOGW(TAG, "WiFi scan timed out waiting for SCAN_DONE");
+        esp_wifi_scan_stop();
+        return ESP_ERR_TIMEOUT;
+    }
+    return ESP_OK;
+}
+
 esp_err_t network_scan(wifi_ap_info_t* ap_list, uint16_t max_aps, uint16_t* found) {
     esp_err_t err = network_check_ready(ap_list);
     if (err != ESP_OK || !found) return err ? err : ESP_ERR_INVALID_ARG;
     ESP_LOGI(TAG, "Starting WiFi scan...");
-    wifi_scan_config_t scan_config = {
+    const wifi_scan_config_t scan_config = {
         .ssid        = NULL,
         .bssid       = NULL,
         .channel     = 0,
@@ -453,25 +476,22 @@ esp_err_t network_scan(wifi_ap_info_t* ap_list, uint16_t max_aps, uint16_t* foun
     };
     // esp_wifi_scan_start() returns ESP_ERR_WIFI_STATE (12294) while the STA is
     // mid-connect. When we're not connected the STA is in the auto-reconnect loop,
-    // so abort it (with reconnect suppressed) for the scan, then resume. A connected
-    // STA can scan directly — don't drop an active connection.
+    // so abort it (with reconnect suppressed) and give it a moment to settle before
+    // scanning, then resume. A connected STA can scan directly.
     bool suppressed = !s_wifi_connected;
     if (suppressed) {
         s_scanning = true;
         esp_wifi_disconnect();
-        vTaskDelay(pdMS_TO_TICKS(120));
+        vTaskDelay(pdMS_TO_TICKS(300));   // let the STA leave the connecting state
     }
 
-    err = esp_wifi_scan_start(&scan_config, true);
+    err = network_run_scan(&scan_config);
 
     if (suppressed) {
         s_scanning = false;
         esp_wifi_connect();   // resume connecting now the scan is done
     }
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "WiFi scan start failed: %d", (int)err);
-        return err;
-    }
+    if (err != ESP_OK) return err;
     return network_scan_results(ap_list, max_aps, found);
 }
 
