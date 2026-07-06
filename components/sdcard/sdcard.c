@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "bsp/esp32_p4_function_ev_board.h"
 #include "sdmmc_cmd.h"
+#include "driver/sdmmc_host.h"   // SDMMC_HOST_DEFAULT / SDMMC_HOST_SLOT_0 / SDMMC_FREQ_DEFAULT
 #include <string.h>
 #include <sys/stat.h>
 
@@ -132,9 +133,25 @@ esp_err_t sdcard_mount(bool format_if_failed)
         ESP_LOGW(TAG, "SD card already mounted");
         return ESP_OK;
     }
-    ESP_LOGI(TAG, "Mounting SD card using BSP...");
+    // Mount at full 40MHz (HIGHSPEED) but with a NON-default input_delay_phase. At
+    // 40MHz the controller samples returned data in a narrow window positioned by
+    // input_delay_phase; the BSP/default leaves it at phase 0, which was right on the
+    // margin — it read fine at the original cold boot but later missed (sdmmc 0x107).
+    // A stable window is selected by input_delay_phase. Phase 0 (BSP default) sat on
+    // the margin (read fine at cold boot, later missed → sdmmc 0x107). Phase 1 was
+    // still marginal — large/late reads (e.g. the 435KB background PNG) timed out with
+    // 0x107. Phase 2 moves the sample point further into the stable window so we keep
+    // full 40MHz bandwidth. Passing a custom host overrides the BSP default.
+    // (If phase 2 still misses, try SDMMC_DELAY_PHASE_3, or drop to SDMMC_FREQ_DEFAULT.)
+    ESP_LOGI(TAG, "Mounting SD card at 40MHz, input_delay_phase=2...");
     s_status = SDCARD_STATUS_MOUNTING;
-    esp_err_t ret = bsp_sdcard_mount();
+    sdmmc_host_t host   = SDMMC_HOST_DEFAULT();
+    host.slot           = SDMMC_HOST_SLOT_0;
+    host.max_freq_khz   = SDMMC_FREQ_HIGHSPEED;   // 40MHz — full bandwidth
+    host.input_delay_phase = SDMMC_DELAY_PHASE_2; // phase 1 was still on the margin
+    bsp_sdcard_cfg_t cfg = {0};
+    cfg.host = &host;
+    esp_err_t ret = bsp_sdcard_sdmmc_mount(&cfg);
     if (ret != ESP_OK) {
         sdcard_log_mount_failure(ret, format_if_failed);
         s_status = SDCARD_STATUS_MOUNT_FAILED;

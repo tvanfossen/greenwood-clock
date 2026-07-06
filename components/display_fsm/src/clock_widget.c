@@ -141,6 +141,7 @@ static void apply_topbar_layout(clock_widget_t *w)
 
 static void mode_geometry(clock_mode_t mode, int32_t *x, int32_t *y, int32_t *w, int32_t *h);
 static void apply_effective_color(clock_widget_t *w);
+static void kill_fade(void);
 
 void clock_widget_full_area(lv_area_t *out)
 {
@@ -216,6 +217,7 @@ clock_widget_t *clock_widget_create(lv_obj_t *parent)
 void clock_widget_destroy(clock_widget_t *w)
 {
     if (!w) return;
+    kill_fade();   // drop any in-flight crossfade snapshot before teardown
     if (w->container) {
         lv_anim_delete(w->container, NULL);
         lv_obj_delete(w->container);
@@ -262,6 +264,12 @@ static clock_widget_t *s_morph_w;
 static clock_mode_t    s_morph_target;
 static int32_t s_mx0, s_my0, s_msc0;   // source pos + scale (256 = 1.0x)
 static int32_t s_mx1, s_my1, s_msc1;   // target pos + scale
+static lv_color_t s_mc0, s_mc1;        // source/target text colour (recolours snapshot)
+
+static uint8_t lerp_u8(uint8_t a, uint8_t b, int32_t prog)
+{
+    return (uint8_t)((int32_t)a + ((int32_t)b - (int32_t)a) * prog / 256);
+}
 
 static void morph_exec_cb(void *var, int32_t prog)   // prog: 0 (source) .. 256 (target)
 {
@@ -272,6 +280,39 @@ static void morph_exec_cb(void *var, int32_t prog)   // prog: 0 (source) .. 256 
     if(sc < 1) sc = 1;
     lv_obj_set_pos(img, x, y);
     lv_image_set_scale(img, (uint32_t)sc);
+    // Recolour the white snapshot from the old mode's colour to the new — the
+    // OKLCH text colour transitions smoothly instead of popping at the handoff.
+    lv_color_t c = lv_color_make(lerp_u8(s_mc0.red,   s_mc1.red,   prog),
+                                 lerp_u8(s_mc0.green, s_mc1.green, prog),
+                                 lerp_u8(s_mc0.blue,  s_mc1.blue,  prog));
+    lv_obj_set_style_image_recolor(img, c, 0);
+}
+
+// Where to place + how far to scale the (256pt, centre-rendered) FULL-clock
+// snapshot so its TIME text lands exactly on the real clock of `mode` — same
+// glyph size, centre-x and top-y. This makes the snapshot→real handoff seamless:
+// the dominant time text doesn't jump in size or position when the morph ends.
+// (Date/AM-PM reflow between layouts and only roughly match — the end crossfade
+// hides that peripheral difference.)
+static void morph_appearance(clock_mode_t mode, int32_t *x, int32_t *y, int32_t *scale)
+{
+    const int32_t pad = 8;
+    const int32_t snap_tcx  = pad + (FULL_W - 2 * pad) / 2;  // time centre-x in snapshot
+    const int32_t snap_ttop = pad + 24;                      // time top-y in snapshot
+
+    if (mode == CLOCK_MODE_MINIMIZED) {
+        const int32_t tcx  = MIN_X + pad + (MIN_W - 2 * pad) / 2 - 40;  // -40: layout shift
+        const int32_t ttop = MIN_Y + pad;
+        *scale = 128;                                        // 128pt / 256pt
+        *x = tcx  - snap_tcx  * *scale / 256;
+        *y = ttop - snap_ttop * *scale / 256;
+    } else if (mode == CLOCK_MODE_TOPBAR) {
+        int32_t gx, gy, gw, gh;
+        mode_geometry(CLOCK_MODE_TOPBAR, &gx, &gy, &gw, &gh);
+        *x = gx; *y = gy; *scale = (FULL_W > 0) ? 256 * gw / FULL_W : 256;
+    } else {  // FULL — snapshot's native geometry
+        *x = FULL_X; *y = FULL_Y; *scale = 256;
+    }
 }
 
 static void apply_layout_for_mode(clock_widget_t *w, clock_mode_t mode)
@@ -284,32 +325,97 @@ static void apply_layout_for_mode(clock_widget_t *w, clock_mode_t mode)
     }
 }
 
-// Settle the in-flight morph: drop the snapshot image and restore the real clock
-// at the target layout (visually the same size as the last scaled frame → no
-// jump). Idempotent. Called both on natural completion AND at the start of a new
-// morph — so morphs are strictly serial and an interrupted one can never orphan
-// its snapshot image on the layer (which left stale ghost clocks on screen).
-static void finalize_morph(void)
+// A completed morph hands its snapshot image off here to dissolve out OVER the
+// real clock (already restored to final position underneath). The last morph
+// frame is a downscaled, blurry bitmap of the 256pt clock; the real clock is
+// crisp at its mode's own font/layout — a hard swap pops (size jump + blur→crisp).
+// Crossfading the two hides that pop.
+static lv_obj_t      *s_fade_img;
+static lv_draw_buf_t *s_fade_snap;
+
+static void fade_opa_cb(void *var, int32_t v)
+{
+    lv_obj_set_style_opa((lv_obj_t *)var, (lv_opa_t)v, 0);
+}
+
+// Tear down any in-flight crossfade immediately (its anim, image, and buffer).
+static void kill_fade(void)
+{
+    if (s_fade_img) {
+        lv_anim_delete(s_fade_img, NULL);
+        lv_obj_delete(s_fade_img);
+        s_fade_img = NULL;
+    }
+    if (s_fade_snap) { lv_draw_buf_destroy(s_fade_snap); s_fade_snap = NULL; }
+}
+
+static void fade_done_cb(lv_anim_t *a)
+{
+    LV_UNUSED(a);
+    kill_fade();
+}
+
+// Restore the real clock at the target layout, then dispose of the morph
+// snapshot image — by dissolving it out (crossfade=true, natural completion) or
+// instantly (crossfade=false, an interrupting morph settling this one). Idempotent.
+// Strictly serial: an interrupted morph can never orphan its snapshot on the layer.
+static void finalize_morph(bool crossfade)
 {
     clock_widget_t *w = s_morph_w;
     if (!w) return;
-    if (s_morph_img) {
-        lv_anim_delete(s_morph_img, NULL);   // stop its anim without re-entering done_cb
-        lv_obj_delete(s_morph_img);
-        s_morph_img = NULL;
-    }
-    if (s_morph_snap) { lv_draw_buf_destroy(s_morph_snap); s_morph_snap = NULL; }
+
+    // Stop the AM/PM+date fade-out and restore the real clock at the TARGET layout.
+    // Only the TIME was hidden during the morph (the container stayed visible), so
+    // just un-hide it and move the labels to their target positions.
+    lv_anim_delete(w->lbl_ampm, fade_opa_cb);
+    lv_anim_delete(w->lbl_date, fade_opa_cb);
+    lv_obj_remove_flag(w->lbl_time, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(w->container, LV_OBJ_FLAG_HIDDEN);
     snap_to(w, s_morph_target);
     apply_layout_for_mode(w, s_morph_target);
     apply_effective_color(w);
-    s_morph_w = NULL;
+
+    if (crossfade && s_morph_img && s_morph_snap) {
+        // Fade AM/PM + date back in at the target layout as the time snapshot
+        // dissolves out — a clean crossfade instead of a slide or a pop.
+        lv_obj_set_style_opa(w->lbl_ampm, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_opa(w->lbl_date, LV_OPA_TRANSP, 0);
+        lv_anim_t li;
+        lv_anim_init(&li);
+        lv_anim_set_duration(&li, 160);
+        lv_anim_set_values(&li, LV_OPA_TRANSP, LV_OPA_COVER);
+        lv_anim_set_exec_cb(&li, fade_opa_cb);
+        lv_anim_set_var(&li, w->lbl_ampm); lv_anim_start(&li);
+        lv_anim_set_var(&li, w->lbl_date); lv_anim_start(&li);
+
+        kill_fade();                          // only one dissolve at a time
+        lv_anim_delete(s_morph_img, NULL);    // stop the scale anim
+        s_fade_img  = s_morph_img;
+        s_fade_snap = s_morph_snap;
+        lv_anim_t fa;
+        lv_anim_init(&fa);
+        lv_anim_set_var(&fa, s_fade_img);
+        lv_anim_set_duration(&fa, 140);
+        lv_anim_set_values(&fa, LV_OPA_COVER, LV_OPA_TRANSP);
+        lv_anim_set_exec_cb(&fa, fade_opa_cb);
+        lv_anim_set_completed_cb(&fa, fade_done_cb);
+        lv_anim_start(&fa);
+    } else {
+        // Instant settle (an interrupting morph): labels fully opaque, no fade.
+        lv_obj_set_style_opa(w->lbl_ampm, LV_OPA_COVER, 0);
+        lv_obj_set_style_opa(w->lbl_date, LV_OPA_COVER, 0);
+        if (s_morph_img) { lv_anim_delete(s_morph_img, NULL); lv_obj_delete(s_morph_img); }
+        if (s_morph_snap) lv_draw_buf_destroy(s_morph_snap);
+    }
+    s_morph_img  = NULL;
+    s_morph_snap = NULL;
+    s_morph_w    = NULL;
 }
 
 static void morph_done_cb(lv_anim_t *a)
 {
     LV_UNUSED(a);
-    finalize_morph();
+    finalize_morph(true);   // natural completion → dissolve the snapshot out
 }
 
 // Get position/size for a mode (avoids repeating constants in animation logic).
@@ -338,32 +444,50 @@ static void apply_effective_color(clock_widget_t *w)
 void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
 {
     if (!w) return;
-    finalize_morph();   // settle any in-flight morph first — morphs are serial
-    if (w->mode == mode) return;
+    finalize_morph(false);   // settle any in-flight morph instantly — morphs are serial
+    kill_fade();             // and drop any still-dissolving previous snapshot
+    if (w->mode == mode) {
+        // No geometry change, but on a minimized→minimized state switch the caller
+        // has re-derived min_base for the NEW background — apply it. Without this the
+        // clock keeps the PREVIOUS state's colour (e.g. radar's white bleeding into
+        // weather/astronomy, which should be dark over their bright photo).
+        if (mode == CLOCK_MODE_MINIMIZED) {
+            w->min_color = w->min_base;
+            apply_effective_color(w);
+        }
+        return;
+    }
 
     clock_mode_t old_mode = w->mode;
 
-    int32_t ox, oy, ow, oh, nx, ny, nw, nh, fx, fy, fw, fh;
-    mode_geometry(old_mode,         &ox, &oy, &ow, &oh);
-    mode_geometry(mode,             &nx, &ny, &nw, &nh);
-    mode_geometry(CLOCK_MODE_FULL,  &fx, &fy, &fw, &fh);
+    // Effective colours for each end of the morph (computed BEFORE the snapshot so
+    // the recolour animates old→new). Minimized defaults to min_base; states whose
+    // own content covers the bg (radar/photos) set min_base before minimizing.
+    if (mode == CLOCK_MODE_MINIMIZED) w->min_color = w->min_base;
+    s_mc0 = (old_mode == CLOCK_MODE_FULL) ? w->color : w->min_color;
+    s_mc1 = (mode     == CLOCK_MODE_FULL) ? w->color : w->min_color;
 
-    LV_UNUSED(fx); LV_UNUSED(fy); LV_UNUSED(fh);
-    // Render the real clock at FULL (256pt) and snapshot it once. The morph then
-    // scales that static bitmap (no per-frame re-raster) between source & target
-    // geometry. Full colour for the snapshot — legible over the clock background.
+    // Render the real clock at FULL (256pt) in WHITE and snapshot it once. The
+    // morph scales that static bitmap (no per-frame re-raster) and recolours it,
+    // so one white snapshot serves every colour (white→recolour keeps glyph AA).
     snap_to(w, CLOCK_MODE_FULL);
     apply_full_layout(w);
-    lv_obj_set_style_text_color(w->lbl_time, w->color, 0);
-    lv_obj_set_style_text_color(w->lbl_ampm, w->color, 0);
-    lv_obj_set_style_text_color(w->lbl_date, w->color, 0);
+    lv_color_t white = lv_color_white();
+    lv_obj_set_style_text_color(w->lbl_time, white, 0);
+    lv_obj_set_style_text_color(w->lbl_ampm, white, 0);
+    lv_obj_set_style_text_color(w->lbl_date, white, 0);
+    // Keep AM/PM + date OUT of the morph snapshot. They reflow between layouts, so
+    // scaling them uniformly with the time lands them in the wrong place and they
+    // ghost. Snapshot the time alone; the real AM/PM + date crossfade separately.
+    lv_obj_add_flag(w->lbl_ampm, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(w->lbl_date, LV_OBJ_FLAG_HIDDEN);
     lv_obj_update_layout(w->container);
 
     s_morph_snap = lv_snapshot_take(w->container, LV_COLOR_FORMAT_ARGB8888);
+
+    lv_obj_remove_flag(w->lbl_ampm, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(w->lbl_date, LV_OBJ_FLAG_HIDDEN);
     w->mode = mode;
-    // Reset minimized colour to the bg-image default; states whose own content
-    // covers the bg (radar, photos) override it after with their own sample.
-    if (mode == CLOCK_MODE_MINIMIZED) w->min_color = w->min_base;
     if (!s_morph_snap) {
         // Snapshot failed (OOM) — fall back to an instant snap, no animation.
         snap_to(w, mode);
@@ -373,17 +497,34 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
         return;
     }
 
-    // Hide the real clock; animate a scaled image of the snapshot in its place.
-    lv_obj_add_flag(w->container, LV_OBJ_FLAG_HIDDEN);
+    // Instead of hiding the whole clock, keep it at the SOURCE layout and hide only
+    // its TIME — the scaling snapshot stands in for that. The real AM/PM + date stay
+    // visible at their source positions and fade OUT in place here (no slide, no
+    // ghost); finalize_morph moves them to the target layout and fades them back IN.
+    snap_to(w, old_mode);
+    apply_layout_for_mode(w, old_mode);
+    lv_obj_set_style_text_color(w->lbl_ampm, s_mc0, 0);
+    lv_obj_set_style_text_color(w->lbl_date, s_mc0, 0);
+    lv_obj_add_flag(w->lbl_time, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_opa(w->lbl_ampm, LV_OPA_COVER, 0);
+    lv_obj_set_style_opa(w->lbl_date, LV_OPA_COVER, 0);
+    lv_anim_t lf;
+    lv_anim_init(&lf);
+    lv_anim_set_duration(&lf, 180);
+    lv_anim_set_values(&lf, LV_OPA_COVER, LV_OPA_TRANSP);
+    lv_anim_set_exec_cb(&lf, fade_opa_cb);
+    lv_anim_set_var(&lf, w->lbl_ampm); lv_anim_start(&lf);
+    lv_anim_set_var(&lf, w->lbl_date); lv_anim_start(&lf);
+
     s_morph_img = lv_image_create(lv_obj_get_parent(w->container));
     lv_image_set_src(s_morph_img, s_morph_snap);
     lv_image_set_pivot(s_morph_img, 0, 0);            // scale about top-left
+    lv_obj_set_style_image_recolor_opa(s_morph_img, LV_OPA_COVER, 0);
     lv_obj_remove_flag(s_morph_img, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
-    // The snapshot's natural size is the FULL container; scale 256 = full size at
-    // FULL position. Source/target appearance = each mode's pos + size ratio.
-    s_mx0 = ox; s_my0 = oy; s_msc0 = (fw > 0) ? 256 * ow / fw : 256;
-    s_mx1 = nx; s_my1 = ny; s_msc1 = (fw > 0) ? 256 * nw / fw : 256;
+    // Endpoints aligned so the TIME text matches the real clock at each mode.
+    morph_appearance(old_mode, &s_mx0, &s_my0, &s_msc0);
+    morph_appearance(mode,     &s_mx1, &s_my1, &s_msc1);
     s_morph_w      = w;
     s_morph_target = mode;
     morph_exec_cb(s_morph_img, 0);   // source appearance immediately (no flash)
