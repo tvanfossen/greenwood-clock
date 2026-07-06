@@ -11,6 +11,7 @@
 #include "esp_event.h"
 #include "esp_sntp.h"
 #include "esp_wifi.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
@@ -29,6 +30,14 @@ static bool s_wifi_connected    = false;
 // Set while network_scan() runs so the disconnect handler doesn't auto-reconnect
 // and fight the scan (esp_wifi_scan_start fails ESP_ERR_WIFI_STATE mid-connect).
 static volatile bool s_scanning = false;
+
+// Reconnect backoff. The disconnect handler must NOT call esp_wifi_connect() in a
+// tight loop — with wrong/absent creds that hammers the C6 and spams logs. Instead
+// schedule the retry on a one-shot timer with exponential backoff (reset on success).
+#define RECONNECT_BACKOFF_MIN_MS   1000
+#define RECONNECT_BACKOFF_MAX_MS   30000
+static esp_timer_handle_t s_reconnect_timer   = NULL;
+static uint32_t           s_reconnect_backoff_ms = RECONNECT_BACKOFF_MIN_MS;
 
 static const char* NTP_SERVERS[] = {
     "pool.ntp.org",
@@ -128,24 +137,49 @@ static void network_handle_got_ip(void) {
     network_start_sntp();
 }
 
+/** @brief One-shot timer callback: attempt a (backed-off) reconnect. */
+static void reconnect_timer_cb(void* arg) {
+    (void)arg;
+    if (s_scanning) return;   // a scan started meanwhile — it will resume the connect
+    esp_wifi_connect();
+}
+
+/**
+ * @brief Schedule a reconnect after the current backoff, then grow the backoff.
+ *
+ * Never calls esp_wifi_connect() synchronously from the event task in a loop —
+ * that is what caused the too-frequent retries with wrong credentials.
+ */
+static void schedule_reconnect(void) {
+    if (!s_reconnect_timer) { esp_wifi_connect(); return; }   // fallback: timer not ready
+    esp_timer_stop(s_reconnect_timer);                        // no-op if not running
+    esp_timer_start_once(s_reconnect_timer, (uint64_t)s_reconnect_backoff_ms * 1000);
+    ESP_LOGI(TAG, "Wi-Fi reconnect in %lu ms", (unsigned long)s_reconnect_backoff_ms);
+    uint32_t next = s_reconnect_backoff_ms * 2;
+    s_reconnect_backoff_ms = (next > RECONNECT_BACKOFF_MAX_MS) ? RECONNECT_BACKOFF_MAX_MS : next;
+}
+
 /**
  * @brief Unified event handler for WIFI_EVENT and IP_EVENT_STA_GOT_IP.
  *
- * - WIFI_EVENT_STA_START / STA_DISCONNECTED → reconnect
- * - IP_EVENT_STA_GOT_IP → update state + start SNTP
+ * - WIFI_EVENT_STA_START → connect immediately (first attempt)
+ * - WIFI_EVENT_STA_DISCONNECTED → reconnect with exponential backoff
+ * - IP_EVENT_STA_GOT_IP → reset backoff, update state + start SNTP
  */
 static void on_wifi_event(void* arg, esp_event_base_t ev_base,
                           int32_t ev_id, void* ev_data)
 {
     if (ev_base == WIFI_EVENT) {
-        if (ev_id == WIFI_EVENT_STA_DISCONNECTED)
-            ESP_LOGI(TAG, "Wi-Fi disconnected%s", s_scanning ? " (scan in progress)" : ", retrying...");
-        // Suppress auto-reconnect during a scan — network_scan() deliberately aborts
-        // the connect (scan can't start mid-connect) and resumes it when done.
-        if (ev_id == WIFI_EVENT_STA_START ||
-            (ev_id == WIFI_EVENT_STA_DISCONNECTED && !s_scanning))
-            esp_wifi_connect();
+        if (ev_id == WIFI_EVENT_STA_START) {
+            esp_wifi_connect();                       // initial attempt, immediate
+        } else if (ev_id == WIFI_EVENT_STA_DISCONNECTED) {
+            ESP_LOGI(TAG, "Wi-Fi disconnected%s", s_scanning ? " (scan in progress)" : "");
+            // Suppress auto-reconnect during a scan — network_scan() aborts the
+            // connect on purpose and resumes it when done. Otherwise back off.
+            if (!s_scanning) schedule_reconnect();
+        }
     } else if (ev_base == IP_EVENT && ev_id == IP_EVENT_STA_GOT_IP) {
+        s_reconnect_backoff_ms = RECONNECT_BACKOFF_MIN_MS;   // connected — reset backoff
         network_handle_got_ip();
     }
 }
@@ -198,6 +232,11 @@ static void network_register_event_handlers(void) {
  */
 static void network_configure_and_start(void) {
     s_wifi_event_group = xEventGroupCreate();
+    const esp_timer_create_args_t rt = {
+        .callback = reconnect_timer_cb,
+        .name     = "wifi_reconnect",
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&rt, &s_reconnect_timer));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
@@ -473,6 +512,8 @@ esp_err_t network_connect(const char* ssid, const char* password) {
     esp_err_t err = network_check_ready(ssid);
     if (err != ESP_OK) return err;
     ESP_LOGI(TAG, "Connecting to '%s'...", ssid);
+    if (s_reconnect_timer) esp_timer_stop(s_reconnect_timer);   // cancel any pending retry
+    s_reconnect_backoff_ms = RECONNECT_BACKOFF_MIN_MS;          // user action → try promptly
     if (s_wifi_connected) {
         esp_wifi_disconnect();
         vTaskDelay(pdMS_TO_TICKS(500));
