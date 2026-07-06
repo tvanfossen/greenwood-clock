@@ -6,6 +6,7 @@
 #include "display_states.h"
 #include "display_scheduler.h"
 #include "display_widgets.h"
+#include "display_fsm.h"
 #include "nws.h"
 #include "settings.h"
 #include "esp_log.h"
@@ -116,6 +117,7 @@ static const char *next_event_after(const dated_event_t *events, int count,
 void AmbientDashboard::entry()
 {
     set_state_info(DISPLAY_STATE_AMBIENT, "ambient");
+    display_fsm_apply_min_bg_contrast();   // sample bg behind clock BEFORE minimizing
     minimize_clock();
 
     clock_settings_t cfg;

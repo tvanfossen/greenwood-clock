@@ -109,6 +109,11 @@ weather_card_t *weather_card_create(lv_obj_t *parent);
 void weather_card_destroy(weather_card_t *w);
 void weather_card_update(weather_card_t *w, const struct nws_conditions_t *cond);
 void weather_card_set_color(weather_card_t *w, lv_color_t primary, lv_color_t secondary);
+
+/** Derive legible text colours from a single base hue (the NVS clock text colour)
+ *  via OKLCH against the card's own panel colour, and apply them. Primary text
+ *  is the legible base; secondary text is the same dimmed toward the panel. */
+void weather_card_set_contrast(weather_card_t *w, lv_color_t base);
 lv_obj_t *weather_card_container(const weather_card_t *w);
 
 /**
@@ -132,6 +137,11 @@ forecast_strip_t *forecast_strip_create(lv_obj_t *parent);
 void forecast_strip_destroy(forecast_strip_t *s);
 void forecast_strip_update(forecast_strip_t *s, const struct nws_forecast_t *fc);
 void forecast_strip_set_color(forecast_strip_t *s, lv_color_t primary, lv_color_t secondary);
+
+/** Derive legible text colours from a single base hue (NVS clock text colour) via
+ *  OKLCH against the strip's panel colour, and apply them (day/temps = primary,
+ *  condition = dimmed secondary). */
+void forecast_strip_set_contrast(forecast_strip_t *s, lv_color_t base);
 lv_obj_t *forecast_strip_container(const forecast_strip_t *s);
 
 // ---------------------------------------------------------------------------

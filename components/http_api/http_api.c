@@ -1020,17 +1020,36 @@ static esp_err_t disk_usage_handler(httpd_req_t *req)
     uint64_t used = total > free_bytes ? (total - free_bytes) : 0;
     int pct = (total > 0) ? (int)((used * 100) / total) : 0;
 
-    char body[256];
+    // Card HARDWARE truth from the in-RAM sdmmc_card_t (no SD I/O): the negotiated
+    // clock and the CSD capacity. If real_freq is high (~40MHz) and reads are timing
+    // out, a bus/speed/signal issue is likely (not a dead card); if csd capacity !=
+    // the FS total, the FS view is stale/wrong.
+    sdmmc_card_t *card = bsp_sdcard_get_handle();
+    char card_name[16] = "?";
+    int real_freq = 0, max_freq = 0;
+    unsigned long long csd_bytes = 0;
+    if (card) {
+        snprintf(card_name, sizeof(card_name), "%s", card->cid.name);
+        real_freq = card->real_freq_khz;
+        max_freq  = card->max_freq_khz;
+        csd_bytes = (unsigned long long)card->csd.capacity * card->csd.sector_size;
+    }
+
+    char body[384];
     snprintf(body, sizeof(body),
              "{\"mount\":\"/sdcard\","
              "\"total_bytes\":%llu,"
              "\"free_bytes\":%llu,"
              "\"used_bytes\":%llu,"
-             "\"used_pct\":%d}\n",
+             "\"used_pct\":%d,"
+             "\"card_name\":\"%s\","
+             "\"csd_capacity_bytes\":%llu,"
+             "\"real_freq_khz\":%d,"
+             "\"max_freq_khz\":%d}\n",
              (unsigned long long)total,
              (unsigned long long)free_bytes,
              (unsigned long long)used,
-             pct);
+             pct, card_name, csd_bytes, real_freq, max_freq);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;

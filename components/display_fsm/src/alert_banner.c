@@ -14,7 +14,15 @@ static const char *TAG = "alert_banner";
 
 // Local alias — canonical value is ALERT_BANNER_HEIGHT in display_widgets.h
 #define BANNER_HEIGHT   ALERT_BANNER_HEIGHT
-#define SCROLL_SPEED_PX_SEC 12  // pixels/second for circular scroll (slow, very readable)
+
+// Circular-scroll pacing. We CANNOT use lv_anim_speed*(): its encoding truncates the
+// max scroll time to ~10s (lv_anim_speed_clamped caps max_time at 10000ms), so any
+// long alert headline clamps to a fast 10s/cycle regardless of the px/s asked for.
+// Instead set a PLAIN anim_duration in ms, sized to the headline length so the crawl
+// speed stays ~constant. At font 20 (~11px/char), ~240ms/char ≈ 46px/s — a slow,
+// readable ticker (vs the old ~200-400px/s from the 10s clamp).
+#define SCROLL_MS_PER_CHAR  240
+#define SCROLL_MIN_MS       8000
 
 struct alert_banner_t {
     lv_obj_t *container;
@@ -58,9 +66,9 @@ alert_banner_t *alert_banner_create(lv_obj_t *parent)
     lv_obj_set_style_text_font(b->lbl_headline, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(b->lbl_headline, ui_text_on(default_bg), 0);
     lv_label_set_long_mode(b->lbl_headline, LV_LABEL_LONG_SCROLL_CIRCULAR);
-    // LVGL 9 uses anim_duration with speed-encoded value (lv_anim_speed converts
-    // px/sec → internal representation resolved by lv_anim_resolve_speed at runtime).
-    lv_obj_set_style_anim_duration(b->lbl_headline, lv_anim_speed(SCROLL_SPEED_PX_SEC), 0);
+    // Plain-ms duration (recomputed per headline in alert_banner_show); see the
+    // SCROLL_MS_PER_CHAR note above for why we avoid lv_anim_speed*().
+    lv_obj_set_style_anim_duration(b->lbl_headline, 20000, 0);
     lv_obj_set_width(b->lbl_headline, 1000);
     lv_obj_align(b->lbl_headline, LV_ALIGN_CENTER, 0, 0);
     lv_label_set_text(b->lbl_headline, "");
@@ -93,7 +101,13 @@ void alert_banner_show(alert_banner_t *b, const nws_alert_t *alert)
 
     // Set headline text — circular scroll handles overflow
     char text[320];
-    snprintf(text, sizeof(text), "  %s — %s  ", alert->event, alert->headline);
+    int len = snprintf(text, sizeof(text), "  %s — %s  ", alert->event, alert->headline);
+
+    // Size the scroll duration to the headline length (constant slow px/s crawl).
+    // Set BEFORE set_text so the scroll animation is (re)created with this duration.
+    uint32_t dur_ms = (uint32_t)(len > 0 ? len : 1) * SCROLL_MS_PER_CHAR;
+    if (dur_ms < SCROLL_MIN_MS) dur_ms = SCROLL_MIN_MS;
+    lv_obj_set_style_anim_duration(b->lbl_headline, dur_ms, 0);
     lv_label_set_text(b->lbl_headline, text);
 
     // Show

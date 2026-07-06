@@ -5,6 +5,7 @@
 
 #include "display_widgets.h"
 #include "display_fsm.h"
+#include "ui_contrast.h"
 #include "nws.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
@@ -14,6 +15,20 @@
 #include <sys/stat.h>
 
 static const char *TAG = "weather_widgets";
+
+// Panel (box) background colours — the OKLCH contrast reference for text on them.
+#define WX_CARD_PANEL   0x0a0a1e
+#define WX_STRIP_PANEL  0x1a1a2e
+
+// Derive a legible primary + a dimmed secondary text colour for `base` over the
+// given (opaque-equivalent) panel colour. Secondary leans ~43% toward the panel.
+static void derive_panel_colors(lv_color_t base, uint32_t panel_hex,
+                                lv_color_t *primary, lv_color_t *secondary)
+{
+    lv_color_t panel = lv_color_hex(panel_hex);
+    *primary   = ui_legible(base, panel);
+    *secondary = lv_color_mix(panel, *primary, 85);   // gently dimmed, still clearly light
+}
 
 LV_FONT_DECLARE(nunito_48);
 LV_FONT_DECLARE(nunito_128);
@@ -114,9 +129,10 @@ weather_card_t *weather_card_create(lv_obj_t *parent)
 
     // Container — left region of screen with dark semi-opaque backdrop.
     // Y=66: reserves 50px alert banner zone + 16px margin.
-    // H=380: card bottom at y=446, forecast strip top at y=462 → 16px gap.
+    // H=350: card bottom at y=416; forecast strip top at y=432 (600-8-160) → 16px
+    // gap. (Was 380 → bottom 446, which overlapped the strip top by ~14px.)
     w->container = lv_obj_create(parent);
-    lv_obj_set_size(w->container, 556, 380);
+    lv_obj_set_size(w->container, 556, 350);
     lv_obj_align(w->container, LV_ALIGN_TOP_LEFT, 16, ALERT_BANNER_HEIGHT + 16);
     lv_obj_set_style_bg_color(w->container, lv_color_hex(0x0a0a1e), 0);
     lv_obj_set_style_bg_opa(w->container, LV_OPA_70, 0);
@@ -135,35 +151,35 @@ weather_card_t *weather_card_create(lv_obj_t *parent)
     // "°F" suffix — Nunito fonts are ASCII-only (no ° glyph), use Montserrat
     w->lbl_temp_unit = lv_label_create(w->container);
     lv_obj_set_style_text_font(w->lbl_temp_unit, &nunito_48, 0);
-    lv_obj_set_style_text_color(w->lbl_temp_unit, lv_color_hex(0x8888aa), 0);
+    lv_obj_set_style_text_color(w->lbl_temp_unit, lv_color_hex(0xc8c8d8), 0);
     lv_obj_align_to(w->lbl_temp_unit, w->lbl_temp, LV_ALIGN_OUT_RIGHT_TOP, 4, 8);
     lv_label_set_text(w->lbl_temp_unit, "F");
 
     // Description
     w->lbl_description = lv_label_create(w->container);
     lv_obj_set_style_text_font(w->lbl_description, &nunito_48, 0);
-    lv_obj_set_style_text_color(w->lbl_description, lv_color_hex(0xc0c0c0), 0);
+    lv_obj_set_style_text_color(w->lbl_description, lv_color_hex(0xe0e0e0), 0);
     lv_obj_align_to(w->lbl_description, w->lbl_temp, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
     lv_label_set_text(w->lbl_description, "");
 
     // Feels like
     w->lbl_feels = lv_label_create(w->container);
     lv_obj_set_style_text_font(w->lbl_feels, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(w->lbl_feels, lv_color_hex(0x8888aa), 0);
+    lv_obj_set_style_text_color(w->lbl_feels, lv_color_hex(0xc8c8d8), 0);
     lv_obj_align_to(w->lbl_feels, w->lbl_description, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 8);
     lv_label_set_text(w->lbl_feels, "");
 
     // Wind
     w->lbl_wind = lv_label_create(w->container);
     lv_obj_set_style_text_font(w->lbl_wind, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(w->lbl_wind, lv_color_hex(0x8888aa), 0);
+    lv_obj_set_style_text_color(w->lbl_wind, lv_color_hex(0xc8c8d8), 0);
     lv_obj_align_to(w->lbl_wind, w->lbl_feels, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
     lv_label_set_text(w->lbl_wind, "");
 
     // Humidity
     w->lbl_humidity = lv_label_create(w->container);
     lv_obj_set_style_text_font(w->lbl_humidity, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(w->lbl_humidity, lv_color_hex(0x8888aa), 0);
+    lv_obj_set_style_text_color(w->lbl_humidity, lv_color_hex(0xc8c8d8), 0);
     lv_obj_align_to(w->lbl_humidity, w->lbl_wind, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
     lv_label_set_text(w->lbl_humidity, "");
 
@@ -197,6 +213,19 @@ void weather_card_set_color(weather_card_t *w, lv_color_t primary, lv_color_t se
     if (!w) return;
     lv_obj_set_style_text_color(w->lbl_temp, primary, 0);
     lv_obj_set_style_text_color(w->lbl_description, secondary, 0);
+    lv_obj_set_style_text_color(w->lbl_feels, secondary, 0);
+    lv_obj_set_style_text_color(w->lbl_wind, secondary, 0);
+    lv_obj_set_style_text_color(w->lbl_humidity, secondary, 0);
+}
+
+void weather_card_set_contrast(weather_card_t *w, lv_color_t base)
+{
+    if (!w) return;
+    lv_color_t primary, secondary;
+    derive_panel_colors(base, WX_CARD_PANEL, &primary, &secondary);
+    lv_obj_set_style_text_color(w->lbl_temp, primary, 0);
+    lv_obj_set_style_text_color(w->lbl_description, primary, 0);
+    lv_obj_set_style_text_color(w->lbl_temp_unit, secondary, 0);
     lv_obj_set_style_text_color(w->lbl_feels, secondary, 0);
     lv_obj_set_style_text_color(w->lbl_wind, secondary, 0);
     lv_obj_set_style_text_color(w->lbl_humidity, secondary, 0);
@@ -280,6 +309,7 @@ void weather_card_load_condition_lottie(weather_card_t *w, const char *condition
         ESP_LOGE(TAG, "Weather Lottie SPIRAM alloc failed (%zu B)", buf_sz);
         return;
     }
+    memset(w->lottie_buf, 0, buf_sz);   // avoid random-pixel noise before first frame
 
     // Create Lottie widget (caller holds LVGL lock)
     w->lottie_widget = lv_lottie_create(w->container);
@@ -300,9 +330,11 @@ void weather_card_load_condition_lottie(weather_card_t *w, const char *condition
 
     lv_obj_set_size(w->lottie_widget, WX_LOTTIE_W, WX_LOTTIE_H);
     lv_lottie_set_buffer(w->lottie_widget, WX_LOTTIE_W, WX_LOTTIE_H, w->lottie_buf);
-    // Position: centered in card as background, behind text
+    // Position: centered in card, behind text. Opacity raised from 30% — at 30%
+    // it read as a dull, washed-out watermark; 80% makes the condition animation
+    // clearly visible while still sitting behind the (now bright) text labels.
     lv_obj_align(w->lottie_widget, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_opa(w->lottie_widget, LV_OPA_30, 0);
+    lv_obj_set_style_opa(w->lottie_widget, LV_OPA_80, 0);
     lv_obj_move_background(w->lottie_widget);
 
     // Submit to shared Lottie loader task (deep JSON parse needs 64KB stack)
@@ -376,7 +408,7 @@ forecast_strip_t *forecast_strip_create(lv_obj_t *parent)
         // Condition text (replaces icon until Lottie assets exist)
         s->days[i].lbl_condition = lv_label_create(col);
         lv_obj_set_style_text_font(s->days[i].lbl_condition, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(s->days[i].lbl_condition, lv_color_hex(0x8888aa), 0);
+        lv_obj_set_style_text_color(s->days[i].lbl_condition, lv_color_hex(0xc8c8d8), 0);
         lv_obj_set_width(s->days[i].lbl_condition, 120);
         lv_label_set_long_mode(s->days[i].lbl_condition, LV_LABEL_LONG_DOT);
         lv_obj_align(s->days[i].lbl_condition, LV_ALIGN_CENTER, 0, 4);
@@ -418,6 +450,16 @@ void forecast_strip_set_color(forecast_strip_t *s, lv_color_t primary, lv_color_
         lv_obj_set_style_text_color(s->days[i].lbl_condition, secondary, 0);
         lv_obj_set_style_text_color(s->days[i].lbl_temps, primary, 0);
     }
+}
+
+void forecast_strip_set_contrast(forecast_strip_t *s, lv_color_t base)
+{
+    lv_color_t primary, secondary;
+    derive_panel_colors(base, WX_STRIP_PANEL, &primary, &secondary);
+    (void)secondary;
+    // Uniform: every day-column label (name, condition, hi/lo) gets the same
+    // legible primary colour — no dimmed tier — so the strip reads cleanly.
+    forecast_strip_set_color(s, primary, primary);
 }
 
 void forecast_strip_update(forecast_strip_t *s, const nws_forecast_t *fc)

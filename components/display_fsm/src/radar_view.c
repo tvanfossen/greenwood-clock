@@ -223,18 +223,18 @@ radar_view_t *radar_view_create(lv_obj_t *parent, float lat, float lon)
     lv_obj_set_style_radius(rv->container, 0, 0);
     lv_obj_clear_flag(rv->container, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-    // Map background — pre-rendered raw BGRA binary (bypasses lodepng), loaded
-    // once into the module-level cache.
+    // Map background — pre-rendered raw BGRA binary. NEVER read it here:
+    // radar_view_create() runs UNDER the LVGL lock (RadarOverlay::entry), so the
+    // 2.4MB fread would stall the render thread → display watchdog reset. The map is
+    // preloaded OFF-lock (radar_view_preload_map). If that hasn't succeeded yet,
+    // render radar WITHOUT the basemap (fail fast) instead of blocking on SD.
     rv->img_map = NULL;
-    if (!s_map_dsc) {
-        load_map_dsc();
-    } else {
-        ESP_LOGI(TAG, "Map using cached data");
-    }
     if (s_map_dsc) {
         rv->img_map = lv_image_create(rv->container);
         lv_image_set_src(rv->img_map, s_map_dsc);
         lv_obj_align(rv->img_map, LV_ALIGN_TOP_LEFT, 0, 0);
+    } else {
+        ESP_LOGW(TAG, "radar: basemap not preloaded — rendering without it (no on-lock read)");
     }
 
     // Radar overlay image (initially empty — set via radar_view_apply_radar)
