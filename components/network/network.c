@@ -26,6 +26,9 @@ static EventGroupHandle_t s_wifi_event_group;
 static const int WIFI_CONNECTED_BIT = BIT0;
 static bool s_wifi_initialized = false;
 static bool s_wifi_connected    = false;
+// Set while network_scan() runs so the disconnect handler doesn't auto-reconnect
+// and fight the scan (esp_wifi_scan_start fails ESP_ERR_WIFI_STATE mid-connect).
+static volatile bool s_scanning = false;
 
 static const char* NTP_SERVERS[] = {
     "pool.ntp.org",
@@ -136,8 +139,11 @@ static void on_wifi_event(void* arg, esp_event_base_t ev_base,
 {
     if (ev_base == WIFI_EVENT) {
         if (ev_id == WIFI_EVENT_STA_DISCONNECTED)
-            ESP_LOGI(TAG, "Wi-Fi disconnected, retrying...");
-        if (ev_id == WIFI_EVENT_STA_START || ev_id == WIFI_EVENT_STA_DISCONNECTED)
+            ESP_LOGI(TAG, "Wi-Fi disconnected%s", s_scanning ? " (scan in progress)" : ", retrying...");
+        // Suppress auto-reconnect during a scan — network_scan() deliberately aborts
+        // the connect (scan can't start mid-connect) and resumes it when done.
+        if (ev_id == WIFI_EVENT_STA_START ||
+            (ev_id == WIFI_EVENT_STA_DISCONNECTED && !s_scanning))
             esp_wifi_connect();
     } else if (ev_base == IP_EVENT && ev_id == IP_EVENT_STA_GOT_IP) {
         network_handle_got_ip();
@@ -406,7 +412,23 @@ esp_err_t network_scan(wifi_ap_info_t* ap_list, uint16_t max_aps, uint16_t* foun
         .show_hidden = false,
         .scan_type   = WIFI_SCAN_TYPE_ACTIVE,
     };
+    // esp_wifi_scan_start() returns ESP_ERR_WIFI_STATE (12294) while the STA is
+    // mid-connect. When we're not connected the STA is in the auto-reconnect loop,
+    // so abort it (with reconnect suppressed) for the scan, then resume. A connected
+    // STA can scan directly — don't drop an active connection.
+    bool suppressed = !s_wifi_connected;
+    if (suppressed) {
+        s_scanning = true;
+        esp_wifi_disconnect();
+        vTaskDelay(pdMS_TO_TICKS(120));
+    }
+
     err = esp_wifi_scan_start(&scan_config, true);
+
+    if (suppressed) {
+        s_scanning = false;
+        esp_wifi_connect();   // resume connecting now the scan is done
+    }
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "WiFi scan start failed: %d", (int)err);
         return err;
