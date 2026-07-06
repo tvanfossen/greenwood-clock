@@ -5,9 +5,11 @@
 #include "esp_system.h"
 #include "esp_task_wdt.h"
 #include "esp_timer.h"
+#include "esp_rom_sys.h"
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
 #include "driver/gpio.h"
+#include "driver/i2c_master.h"
 #include "driver/temperature_sensor.h"
 #include "nvs.h"
 #include "freertos/FreeRTOS.h"
@@ -379,7 +381,11 @@ static void panic_handler_hook(void) {
     ESP_LOGE(TAG, "Heap free: %lu bytes", (unsigned long)esp_get_free_heap_size());
     ESP_LOGE(TAG, "Min heap ever: %lu bytes", (unsigned long)esp_get_minimum_free_heap_size());
 
-    char task_list[1024];
+    // NOT on the stack: this hook runs on whoever called esp_restart() — often the
+    // esp_timer task (~3.5KB stack) via the display-watchdog restart timer. A 1KB
+    // stack buffer here plus the vfprintf/fatfs/sdmmc log write overflowed that
+    // stack and turned a clean watchdog restart into a panic loop. static = off-stack.
+    static char task_list[1024];
     vTaskList(task_list);
     ESP_LOGE(TAG, "Task list:\n%s", task_list);
 
@@ -646,10 +652,94 @@ static void boot_await_launch(void)
     s_launch_sem = NULL;
 }
 
+// Bit-bang the shared touch I2C bus (SCL=GPIO8, SDA=GPIO7) to clear a slave that
+// is holding SDA low. Returns true if SDA is released (bus idle) afterward.
+//
+// Root cause this addresses: on a warm reboot mid-GT911-read, the GT911 keeps
+// driving SDA low to finish the interrupted byte. The next I2C master init then
+// sees a wedged bus, esp_lcd_touch_new_i2c_gt911() fails, and the BSP's
+// ESP_ERROR_CHECK aborts — bricking every warm boot in a loop. A cold power cycle
+// clears the slave, which is why cold boots work and warm reboots don't.
+static bool touch_i2c_unstick(void)
+{
+    const gpio_num_t scl = BSP_I2C_SCL, sda = BSP_I2C_SDA;
+    gpio_config_t io = {
+        .pin_bit_mask = (1ULL << scl) | (1ULL << sda),
+        .mode         = GPIO_MODE_INPUT_OUTPUT_OD,   // open-drain: read while driving
+        .pull_up_en   = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type    = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&io);
+    gpio_set_level(scl, 1);
+    gpio_set_level(sda, 1);
+    esp_rom_delay_us(10);
+
+    int sda_before = gpio_get_level(sda);
+    int pulses = 0;
+    // Up to 9 SCL pulses (one full byte + ACK); stop early once SDA releases high.
+    for (int i = 0; i < 9 && gpio_get_level(sda) == 0; i++) {
+        gpio_set_level(scl, 0);
+        esp_rom_delay_us(5);
+        gpio_set_level(scl, 1);
+        esp_rom_delay_us(5);
+        pulses++;
+    }
+    // STOP condition: SDA low->high while SCL held high.
+    gpio_set_level(sda, 0);
+    esp_rom_delay_us(5);
+    gpio_set_level(scl, 1);
+    esp_rom_delay_us(5);
+    gpio_set_level(sda, 1);
+    esp_rom_delay_us(5);
+    int sda_after = gpio_get_level(sda);
+
+    ESP_LOGI(TAG, "[BOOT] Touch I2C unstick: SDA before=%d after=%d, SCL pulses=%d",
+             sda_before, sda_after, pulses);
+    if (sda_before == 0) {
+        ESP_LOGW(TAG, "[BOOT] Touch I2C bus WAS STUCK — recovery %s",
+                 sda_after ? "SUCCEEDED" : "FAILED (SDA still held low)");
+    }
+    // Release the pins so bsp_i2c_init() can reconfigure them for the peripheral.
+    gpio_reset_pin(scl);
+    gpio_reset_pin(sda);
+    return sda_after != 0;
+}
+
+// Recover and confirm the GT911 touch bus before bsp_display_start(), whose
+// bsp_touch_new() aborts fatally on I2C failure. Unsticks the bus (retrying), then
+// probes the GT911 so the log shows whether the controller now ACKs (0x5D primary,
+// 0x14 backup). Non-fatal here by design: we only observe; the BSP remains the
+// authority on touch init. See touch_i2c_unstick() for the warm-reboot root cause.
+static void boot_touch_i2c_recover(void)
+{
+    for (int round = 0; round < 3; round++) {
+        if (touch_i2c_unstick()) break;
+        ESP_LOGW(TAG, "[BOOT] Touch I2C still stuck after round %d, retrying", round + 1);
+    }
+
+    esp_err_t err = bsp_i2c_init();   // idempotent; bsp_touch_new() calls it again
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "[BOOT] bsp_i2c_init failed: %s", esp_err_to_name(err));
+        return;
+    }
+    i2c_master_bus_handle_t bus = bsp_i2c_get_handle();
+    esp_err_t p5d = i2c_master_probe(bus, 0x5D, 50);
+    esp_err_t p14 = i2c_master_probe(bus, 0x14, 50);
+    ESP_LOGI(TAG, "[BOOT] GT911 probe: 0x5D=%s 0x14=%s",
+             esp_err_to_name(p5d), esp_err_to_name(p14));
+    if (p5d != ESP_OK && p14 != ESP_OK) {
+        ESP_LOGE(TAG, "[BOOT] GT911 did not ACK — bsp_display_start may abort");
+    }
+}
+
 static void boot_display_init(const clock_settings_t *cfg)
 {
     set_boot_stage("display_init");
     ESP_LOGI(TAG, "[BOOT] display_init: heap free=%lu", (unsigned long)esp_get_free_heap_size());
+
+    // Clear/confirm the touch I2C bus before bsp_display_start (fatal on touch I2C failure).
+    boot_touch_i2c_recover();
 
     lvgl_port_cfg_t port_config = {
         .task_priority    = 5,

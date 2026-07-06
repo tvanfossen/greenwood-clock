@@ -3,6 +3,8 @@
 #include "debug_log.h"
 #include "sdcard.h"
 #include "esp_log.h"
+#include "esp_rom_sys.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <stdio.h>
@@ -18,6 +20,23 @@ static const char* TAG = "debug_log";
 #define DEBUG_LOG_SLOT_COUNT  3
 #define DEBUG_LOG_MAX_SIZE    (5 * 1024 * 1024)
 
+// Disable SD logging after this many consecutive write failures. A failing/flaky
+// SD card makes every write time out; writing synchronously from the log hook then
+// stalls the caller (tripping the LVGL display watchdog) and, when the sdmmc error
+// is itself logged, recurses on a tiny stack → panic loop. Giving up on the SD and
+// falling back to console-only keeps the device alive on a bad card.
+#define DEBUG_LOG_MAX_WRITE_FAILURES  3
+
+// fsync() forces a physical SD flush (rewrites FAT + directory entry). Doing it on
+// every log line means constant SD writes: flash wear, and — because the log hook
+// runs synchronously in the context of whatever task logged — a UI-thread log would
+// block the LVGL task on the SD bus (display watchdog) and starve the C6 WiFi, which
+// shares the SDMMC controller (sdio_rx panic). Instead we fflush() every line (cheap:
+// stdio buffer → FATFS RAM cache, preserving crash lead-up) but fsync() to the card at
+// most once per interval below. Bounds crash-log loss to ~2s of lead-up; the panic
+// frame itself goes to RTC memory, not this log, so that loss is acceptable.
+#define DEBUG_LOG_FSYNC_INTERVAL_US   (2 * 1000 * 1000)
+
 // Spinlock protecting log_file pointer.
 // Held only for pointer load/store (never while doing file I/O).
 // Safe from task context; short enough that interrupt latency is negligible.
@@ -28,6 +47,8 @@ static bool           is_active         = false;
 static bool           s_in_vprintf      = false;
 static int            s_slot            = 0;
 static size_t         s_bytes_written   = 0;
+static int            s_write_failures  = 0;   // consecutive SD write failures
+static int64_t        s_last_fsync_us   = 0;   // last physical SD flush (esp_timer clock)
 static char           s_slot_paths[DEBUG_LOG_SLOT_COUNT][64];
 
 // Original vprintf function (for console output)
@@ -132,18 +153,28 @@ static void debug_log_rotate(void)
  * @param fmt  Format string.
  * @param args Variadic argument list (a va_copy is made internally).
  */
-static void debug_log_write_to_file(FILE* f, const char* fmt, va_list args)
+// Returns false if the SD write failed (card timing out / removed) so the caller
+// can count failures and eventually give up on the SD.
+static bool debug_log_write_to_file(FILE* f, const char* fmt, va_list args)
 {
     va_list file_args;
     va_copy(file_args, args);
     int n = vfprintf(f, fmt, file_args);
     va_end(file_args);
-    if (n > 0) s_bytes_written += (size_t)n;
-    fflush(f);
-    fsync(fileno(f));
+    if (n < 0) return false;                      // write failed (SD error)
+    s_bytes_written += (size_t)n;
+    if (fflush(f) != 0) return false;             // stdio buffer → FATFS RAM cache
+    // Physical SD flush is throttled: at most once per DEBUG_LOG_FSYNC_INTERVAL_US,
+    // not every line. See the interval macro for the rationale.
+    int64_t now = esp_timer_get_time();
+    if (now - s_last_fsync_us >= DEBUG_LOG_FSYNC_INTERVAL_US) {
+        if (fsync(fileno(f)) != 0) return false;
+        s_last_fsync_us = now;
+    }
     if (s_bytes_written >= DEBUG_LOG_MAX_SIZE) {
         debug_log_rotate();
     }
+    return true;
 }
 
 /**
@@ -165,10 +196,21 @@ static void debug_log_acquire_and_write(const char* fmt, va_list args)
     taskEXIT_CRITICAL(&s_log_mux);
 
     if (f) {
-        debug_log_write_to_file(f, fmt, args);
+        bool ok = debug_log_write_to_file(f, fmt, args);
+        bool giving_up = false;
         taskENTER_CRITICAL(&s_log_mux);
         s_in_vprintf = false;
+        if (ok) {
+            s_write_failures = 0;
+        } else if (++s_write_failures >= DEBUG_LOG_MAX_WRITE_FAILURES) {
+            is_active = false;          // SD is failing — stop writing (console-only)
+            giving_up = true;
+        }
         taskEXIT_CRITICAL(&s_log_mux);
+        if (giving_up) {
+            // esp_rom_printf writes straight to UART — safe from the log hook (no recursion).
+            esp_rom_printf("debug_log: SD writes failing — disabling SD log (console-only)\n");
+        }
     }
 }
 
