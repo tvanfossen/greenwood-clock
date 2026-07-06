@@ -21,7 +21,9 @@
 extern "C" {
 #endif
 
-// WCAG 2.x minimum contrast ratio for normal text (AA).
+// WCAG 2.x minimum contrast ratio for normal text (AA). Used by ui_text_on().
+// ui_legible() does NOT threshold on a ratio — it pushes lightness to the extreme
+// (see ui_contrast.c) so text is strongly light/dark, never a washed mid-tone.
 #define UI_CONTRAST_AA 4.5f
 
 // WCAG contrast ratio between two colours: 1.0 (none) .. 21.0 (black/white).
@@ -30,9 +32,9 @@ float ui_contrast_ratio(lv_color_t a, lv_color_t b);
 // Black or white, whichever contrasts more with bg.
 lv_color_t ui_text_on(lv_color_t bg);
 
-// `desired`, with its OKLCH-L moved away from bg's (darken over a light bg,
-// lighten over a dark one) until it meets UI_CONTRAST_AA; falls back to
-// ui_text_on(bg) if the hue cannot be made legible either way.
+// `desired`, with its OKLCH-L driven to the extreme away from bg's lightness —
+// near-white over a dark bg, near-black over a light one — keeping its hue/chroma.
+// Strongly light/dark, never a washed mid-tone.
 lv_color_t ui_legible(lv_color_t desired, lv_color_t bg);
 
 // Mean colour of a rectangular region of an image buffer (RGB565 or ARGB8888),

@@ -4,7 +4,7 @@
 components/secrets/secrets.h
 
 # Session / device-dump artifacts
-/debug_log*.log
+/debug_*.log
 /log.log
 /.claude/tmp/
 

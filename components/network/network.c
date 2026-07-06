@@ -279,9 +279,22 @@ static bool sntp_poll_until_synced(int max_retries) {
 // Public: network_wait_for_time
 // =============================================================================
 
+// Bound the boot-time wait for Wi-Fi so a clock with NO network (AP down, moved,
+// bad credentials) still boots to the display instead of hanging here forever.
+// If Wi-Fi connects later, the IP-event handler starts SNTP and the RTC corrects
+// itself in the background.
+#define WIFI_CONNECT_BOOT_WAIT_MS   20000
+
 void network_wait_for_time(void) {
-    xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT,
-                        pdFALSE, pdTRUE, portMAX_DELAY);
+    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT,
+                        pdFALSE, pdTRUE, pdMS_TO_TICKS(WIFI_CONNECT_BOOT_WAIT_MS));
+    if (!(bits & WIFI_CONNECTED_BIT)) {
+        ESP_LOGW(TAG, "Wi-Fi not connected within %d ms — booting without SNTP; "
+                 "RTC will sync in the background if Wi-Fi comes up",
+                 WIFI_CONNECT_BOOT_WAIT_MS);
+        load_time_from_nvs();   // best-effort last-known time; incorrect is better than hung
+        return;
+    }
     bool synced = sntp_poll_until_synced(10);
     if (synced) {
         time_t now = 0;

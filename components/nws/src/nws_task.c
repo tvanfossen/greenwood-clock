@@ -24,8 +24,11 @@ static void send_event(const display_event_t *evt)
 #define RADAR_INTERVAL_S        (10 * 60)   // 10 minutes
 #define KP_INTERVAL_S           (3 * 3600)  // 3 hours
 
-// Stagger initial fetches — longer initial delay lets WiFi/TLS stabilize
-#define INITIAL_DELAY_S         15
+// Stagger initial fetches — a longer initial delay lets WiFi + the ESP32-C6 SDIO
+// coprocessor stabilize, and pre-seeding (see nws_task_fn) spreads each source's
+// FIRST fetch across separate poll cycles. The boot-time burst of back-to-back TLS
+// fetches is what trips the known C6 SDIO panic; one light fetch per cycle avoids it.
+#define INITIAL_DELAY_S         30
 #define STAGGER_S               10
 
 // Aurora visibility threshold for latitude ~43°N
@@ -116,6 +119,15 @@ typedef struct {
 static bool poll_due(TickType_t now, TickType_t last, uint32_t interval_s)
 {
     return last == 0 || (now - last) >= pdMS_TO_TICKS(interval_s * 1000);
+}
+
+// Fabricate a "last fetch" tick so a source first becomes due `due_in_s` seconds
+// after `t0`. Used to spread each source's first fetch across separate poll cycles
+// at boot (unsigned tick wraparound makes now-last resolve to the true elapsed).
+static TickType_t seed_due_in(TickType_t t0, uint32_t interval_s, uint32_t due_in_s)
+{
+    TickType_t last = t0 - pdMS_TO_TICKS((interval_s - due_in_s) * 1000);
+    return last == 0 ? 1 : last;   // 0 means "never fetched" (immediately due)
 }
 
 static void send_simple_event(display_event_type_t type)
@@ -280,9 +292,20 @@ static void nws_task_fn(void *arg)
     ESP_LOGI(TAG, "task started: lat=%.4f lon=%.4f office=%s station=%s",
              lat, lon, s_location.office, s_location.station);
 
-    vTaskDelay(pdMS_TO_TICKS(INITIAL_DELAY_S * 1000));  // stagger initial fetches
+    vTaskDelay(pdMS_TO_TICKS(INITIAL_DELAY_S * 1000));  // let WiFi + C6 SDIO settle
 
-    poll_ticks_t last = {0, 0, 0, 0, 0};
+    // Spread the FIRST fetch of each source across separate ~60s poll cycles rather
+    // than bursting all five at boot — the burst is what trips the C6 SDIO panic.
+    // Order by weight/importance: conditions first, then alerts, forecast, radar
+    // (heaviest, deferred most), Kp last.
+    TickType_t t0 = xTaskGetTickCount();
+    poll_ticks_t last = {
+        .conditions = seed_due_in(t0, CONDITIONS_INTERVAL_S,  0),   // ~cycle 1
+        .alerts     = seed_due_in(t0, ALERTS_INTERVAL_S,     60),   // ~cycle 2
+        .forecast   = seed_due_in(t0, FORECAST_INTERVAL_S,  120),   // ~cycle 3
+        .radar      = seed_due_in(t0, RADAR_INTERVAL_S,     180),   // ~cycle 4
+        .kp         = seed_due_in(t0, KP_INTERVAL_S,        240),   // ~cycle 5
+    };
     int streak = 0;
 
     while (true) {

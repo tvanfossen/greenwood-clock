@@ -310,14 +310,19 @@ static lv_obj_t *create_gif_bg(lv_obj_t *scr, const char *path)
 // to LVGL's on-demand decode of the path.
 static lv_obj_t *create_static_bg(lv_obj_t *scr, const char *path, lv_image_dsc_t *dsc)
 {
-    lv_obj_t *obj = lv_img_create(scr);
-    if (dsc) {
-        if (s_bg_dsc) image_decode_free(s_bg_dsc);
-        s_bg_dsc = dsc;
-        lv_img_set_src(obj, dsc);
-    } else {
-        lv_img_set_src(obj, path);   // fallback: LVGL on-demand decode
+    if (!dsc) {
+        // Pre-decode failed (SD read error). Do NOT fall back to lv_img_set_src(path):
+        // that makes LVGL decode the PNG straight from SD on the LVGL TASK (under the
+        // lock), blocking the UI thread on a slow/failing read → display watchdog →
+        // reset loop. Skip the bg instead (black screen + legible clock handle it);
+        // it loads normally on a boot where the pre-decode succeeds.
+        ESP_LOGW(TAG, "bg: predecode failed for '%s' — skipping (no on-UI-thread SD decode)", path);
+        return NULL;
     }
+    lv_obj_t *obj = lv_img_create(scr);
+    if (s_bg_dsc) image_decode_free(s_bg_dsc);
+    s_bg_dsc = dsc;
+    lv_img_set_src(obj, dsc);
     return obj;
 }
 
@@ -358,8 +363,12 @@ static void load_background(lv_obj_t *scr, const clock_settings_t *cfg)
     lvgl_port_lock(0);
     lv_obj_t *obj = gif ? create_gif_bg(scr, path)
                         : create_static_bg(scr, path, dsc);
-    apply_bg_common_flags(obj);
-    finalize_bg(obj, gif, path);
+    if (obj) {
+        apply_bg_common_flags(obj);
+        finalize_bg(obj, gif, path);
+    } else {
+        s_bg_img = NULL;   // no background this time — degrade gracefully
+    }
     lvgl_port_unlock();
 }
 
@@ -382,10 +391,9 @@ static lv_color_t bg_legible_at(lv_color_t user, const lv_area_t *a)
     return ui_legible(user, mean);
 }
 
-// Derive the full- and minimized-clock colours from the background image, using
-// the user's NVS text colour as the OKLCH base. Minimized states that show this
-// same bg behind the clock (weather/astro/ambient) use the minimized result;
-// radar/photos override it from their own background.
+// Derive the FULL-clock colour from the background image (the clock screen's only
+// content behind the digits), NVS text colour as OKLCH base. The minimized clock
+// is handled separately by sampling the actual state screen (see below).
 static void apply_clock_bg_contrast(const clock_settings_t *cfg)
 {
     clock_widget_t *clk = DisplayFsm::get_clock();
@@ -402,12 +410,39 @@ static void apply_clock_bg_contrast(const clock_settings_t *cfg)
         clock_widget_full_area(&fa);
         clock_widget_min_area(&ma);
         clock_widget_set_color(clk, bg_legible_at(user, &fa));
+        // Minimized default sampled at the clock's MINIMIZED position (top-right),
+        // not the whole image — the corner behind the minimized clock can be much
+        // lighter/darker than the average, so a full-image colour left it barely
+        // visible. States re-sample at entry too (display_fsm_apply_min_bg_contrast).
         clock_widget_set_minimized_base_color(clk, bg_legible_at(user, &ma));
     } else {
-        clock_widget_set_color(clk, user);
-        clock_widget_set_minimized_base_color(clk, lv_color_white());
+        // No background image (GIF bg, or the SD read failed so nothing decoded) —
+        // there's no image to sample, but the clock must still be legible against the
+        // screen's OWN background colour. Using the raw NVS colour here left a dark
+        // text colour invisible on the black no-bg screen; contrast against the screen
+        // bg instead (→ white on black).
+        lv_obj_t *scr = DisplayFsm::get_screen();
+        lv_color_t scr_bg = scr ? lv_obj_get_style_bg_color(scr, LV_PART_MAIN)
+                                : lv_color_black();
+        lv_color_t c = ui_legible(user, scr_bg);
+        clock_widget_set_color(clk, c);
+        clock_widget_set_minimized_base_color(clk, c);
     }
     lvgl_port_unlock();
+}
+
+// Re-derive the minimized clock colour from the bg image directly behind the
+// minimized clock position. States that show the clock bg behind the minimized
+// clock (weather/astronomy/ambient) call this at entry() BEFORE minimize_clock(),
+// so the colour reflects the CURRENT background and the morph recolours straight
+// to it. No-op for a GIF bg (no sampleable buffer) — the startup default stands.
+extern "C" void display_fsm_apply_min_bg_contrast(void)
+{
+    clock_widget_t *clk = DisplayFsm::get_clock();
+    if (!clk || !s_bg_dsc) return;   // caller (state entry) already holds the LVGL lock
+    lv_area_t ma;
+    clock_widget_min_area(&ma);
+    clock_widget_set_minimized_base_color(clk, bg_legible_at(clock_widget_user_color(clk), &ma));
 }
 
 // Delete the current background (object + persistent descriptor) and reload from
@@ -467,6 +502,9 @@ static void load_clock_lottie(lv_obj_t *scr)
         ESP_LOGE(TAG, "lottie: SPIRAM alloc failed (%zu B)", buf_sz);
         return;
     }
+    // Zero the render buffer — until ThorVG produces the first frame, an uncleared
+    // SPIRAM buffer displays as random-pixel NOISE. Transparent is the correct empty.
+    memset(s_clock_lottie_buf, 0, buf_sz);
 
     lvgl_port_lock(0);
     lv_obj_t *widget = lv_lottie_create(scr);

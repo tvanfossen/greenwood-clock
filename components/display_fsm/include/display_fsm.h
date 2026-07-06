@@ -54,6 +54,14 @@ display_state_id_t display_fsm_get_state_id(void);
 struct clock_widget_t *display_fsm_get_clock(void);
 
 /**
+ * @brief Re-derive the minimized clock colour from the bg image directly behind
+ * the minimized clock position (strong OKLCH contrast). Call from a state's
+ * entry() BEFORE minimize_clock() so the morph recolours to the correct,
+ * placement-aware colour. Caller must hold the LVGL lock (state entry does).
+ */
+void display_fsm_apply_min_bg_contrast(void);
+
+/**
  * @brief Get the FSM's active screen for background/widget operations.
  *
  * @return Pointer to the LVGL screen object.

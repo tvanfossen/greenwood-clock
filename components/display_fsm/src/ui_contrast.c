@@ -89,24 +89,26 @@ static lv_color_t oklab_to_srgb(float L, float a, float b)
                          (uint8_t)(linear_to_srgb(bl) * 255.0f + 0.5f));
 }
 
+// The single text-colour method: keep the desired colour's hue/chroma and drive
+// its OKLCH lightness STRONGLY away from the background — near-white over a dark
+// bg, near-black over a light one. We deliberately go to the extreme rather than
+// stopping at the first tone that scrapes past a contrast ratio: against a very
+// dark panel the ratio is met early at a washed MID-grey (luminance ~0.33 already
+// clears 7:1), so threshold-stopping left panel text grey, not light — while over
+// a bright photo the same ratio is unreachable so it fell through to black. That
+// asymmetry made the clock black on the home screen but only mid-grey when
+// minimized over panels. Pushing to the extreme makes it consistently strong:
+// clearly light over dark, clearly dark over light, hue preserved.
 lv_color_t ui_legible(lv_color_t desired, lv_color_t bg)
 {
-    // Keep the user's exact colour where it's already legible.
-    if (ui_contrast_ratio(desired, bg) >= UI_CONTRAST_AA) return desired;
-
     float L, a, b, bgL, bga, bgb;
     srgb_to_oklab(desired, &L, &a, &b);
     srgb_to_oklab(bg, &bgL, &bga, &bgb);
 
-    // Otherwise push the hue's lightness to the EXTREME away from the background
-    // (full white over a dark bg, full black over a light one) — keeping the
-    // chroma direction a/b — for maximum, crisp contrast rather than a washed-out
-    // just-barely-legible tone. Fall back to plain black/white if even that hue
-    // can't clear AA (e.g. a saturated hue over a mid-tone bg).
-    float ext_L = (bgL > 0.5f) ? 0.0f : 1.0f;
-    lv_color_t c = oklab_to_srgb(ext_L, a, b);
-    if (ui_contrast_ratio(c, bg) >= UI_CONTRAST_AA) return c;
-    return ui_text_on(bg);
+    // Over a light bg cap lightness very low (dark text); over a dark bg floor it
+    // very high (light text). max()/min() so an already-more-extreme desired stays.
+    float target_L = (bgL > 0.5f) ? fminf(L, 0.06f) : fmaxf(L, 0.95f);
+    return oklab_to_srgb(target_L, a, b);
 }
 
 // Add one pixel's 8-bit R/G/B to the running sums (RGB565 or ARGB/XRGB byte

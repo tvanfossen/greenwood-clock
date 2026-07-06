@@ -5,6 +5,8 @@
 #include "display_states.h"
 #include "display_scheduler.h"
 #include "display_widgets.h"
+#include "display_fsm.h"
+#include "ui_contrast.h"
 #include "nws.h"
 #include "settings.h"
 #include "esp_log.h"
@@ -38,6 +40,7 @@ static int get_tz_offset_minutes(time_t now)
 void Astronomy::entry()
 {
     set_state_info(DISPLAY_STATE_ASTRONOMY, "astronomy");
+    display_fsm_apply_min_bg_contrast();   // sample bg behind clock BEFORE minimizing
     minimize_clock();
 
     clock_settings_t cfg;
@@ -67,9 +70,12 @@ void Astronomy::entry()
     while (ss_local < 0) ss_local += 1440;
     while (ss_local >= 1440) ss_local -= 1440;
 
-    // Fixed high-contrast palette for secondary screens (NVS text_color is clock-only)
-    lv_color_t primary = lv_color_white();
-    lv_color_t secondary = lv_color_hex(0xb0b0c0);
+    // OKLCH text contrast over the panel, from the single NVS clock text colour.
+    // (Semantic accents below — sunrise gold, aurora violet — are kept on purpose.)
+    lv_color_t panel = lv_color_hex(0x0a0a1e);
+    lv_color_t base = clock_widget_user_color(get_clock());
+    lv_color_t primary = ui_legible(base, panel);
+    lv_color_t secondary = lv_color_mix(panel, primary, 110);
 
     // Container with dark semi-opaque backdrop for contrast.
     // Y=66: reserves 50px alert banner zone + 16px margin.

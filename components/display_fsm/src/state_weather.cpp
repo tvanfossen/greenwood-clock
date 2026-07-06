@@ -6,6 +6,7 @@
 #include "display_states.h"
 #include "display_scheduler.h"
 #include "display_widgets.h"
+#include "display_fsm.h"
 #include "nws.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -40,6 +41,7 @@ void WeatherOverlay::entry()
     // blocks rendering. Find what eats the transition budget.
     int64_t t0 = esp_timer_get_time();
     set_state_info(DISPLAY_STATE_WEATHER, "weather");
+    display_fsm_apply_min_bg_contrast();   // sample bg behind clock BEFORE minimizing
     minimize_clock();
     int64_t t_min = esp_timer_get_time();
 
@@ -73,6 +75,11 @@ void WeatherOverlay::entry()
         forecast_strip_update(s_strip, fc);
     }
     int64_t t_strip_u = esp_timer_get_time();
+
+    // OKLCH text contrast over the panels, derived from the single NVS text colour.
+    lv_color_t base = clock_widget_user_color(get_clock());
+    if (s_card)  weather_card_set_contrast(s_card, base);
+    if (s_strip) forecast_strip_set_contrast(s_strip, base);
 
     // Fade in weather widgets
     if (s_card) fade_in(weather_card_container(s_card));
