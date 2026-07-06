@@ -470,6 +470,25 @@ static esp_err_t network_run_scan(const wifi_scan_config_t* cfg) {
     return ESP_OK;
 }
 
+// Give the scan exclusive use of the radio: suppress our reconnect, abort the
+// in-progress connect, and clear the STA config so nothing keeps chasing the stored
+// AP during the scan. Saves the prior config for scan_resume_connect() to restore.
+static void scan_preempt_connect(wifi_config_t* saved, bool* had_cfg) {
+    s_scanning = true;
+    *had_cfg = (esp_wifi_get_config(WIFI_IF_STA, saved) == ESP_OK);
+    esp_wifi_disconnect();
+    wifi_config_t empty = {0};
+    esp_wifi_set_config(WIFI_IF_STA, &empty);
+    vTaskDelay(pdMS_TO_TICKS(200));   // let the connect fully stand down
+}
+
+/** @brief Restore the STA config saved by scan_preempt_connect() and reconnect. */
+static void scan_resume_connect(const wifi_config_t* saved, bool had_cfg) {
+    if (had_cfg) esp_wifi_set_config(WIFI_IF_STA, saved);
+    s_scanning = false;
+    esp_wifi_connect();
+}
+
 esp_err_t network_scan(wifi_ap_info_t* ap_list, uint16_t max_aps, uint16_t* found) {
     esp_err_t err = network_check_ready(ap_list);
     if (err != ESP_OK || !found) return err ? err : ESP_ERR_INVALID_ARG;
@@ -485,27 +504,22 @@ esp_err_t network_scan(wifi_ap_info_t* ap_list, uint16_t max_aps, uint16_t* foun
     // mid-connect. When we're not connected the STA is in the auto-reconnect loop,
     // so abort it (with reconnect suppressed) and give it a moment to settle before
     // scanning, then resume. A connected STA can scan directly.
+    // Make the scan take precedence over the (retrying) connect. Suppressing our
+    // reconnect handler isn't enough: while an SSID is configured the connect
+    // machinery keeps chasing that AP and starves/overwrites the scan. So when we're
+    // not already connected, snapshot the STA config, clear it (no target → nothing
+    // reconnects and the radio is free), scan, read results, then restore + resume.
+    // A live connection is left alone (scanning while connected already works).
     bool suppressed = !s_wifi_connected;
-    if (suppressed) {
-        s_scanning = true;
-        esp_wifi_disconnect();
-        vTaskDelay(pdMS_TO_TICKS(300));   // let the STA leave the connecting state
-    }
+    wifi_config_t saved = {0};
+    bool had_cfg = false;
+    if (suppressed) scan_preempt_connect(&saved, &had_cfg);
 
     err = network_run_scan(&scan_config);
-
-    // Read the results BEFORE resuming the connect. A resumed esp_wifi_connect()
-    // starts the C6's own internal scan for the configured SSID, which OVERWRITES
-    // these scan records — so reading them after resume returns 0 APs (this is why
-    // scanning worked at first setup, when there were no creds to reconnect to, but
-    // failed later at a site where the stored AP is absent and we're retrying it).
     if (err == ESP_OK)
-        err = network_scan_results(ap_list, max_aps, found);
+        err = network_scan_results(ap_list, max_aps, found);   // read before restoring
 
-    if (suppressed) {
-        s_scanning = false;
-        esp_wifi_connect();   // resume connecting AFTER results are read
-    }
+    if (suppressed) scan_resume_connect(&saved, had_cfg);
     return err;
 }
 
