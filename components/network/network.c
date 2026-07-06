@@ -172,6 +172,10 @@ static void on_wifi_event(void* arg, esp_event_base_t ev_base,
 {
     if (ev_base == WIFI_EVENT) {
         if (ev_id == WIFI_EVENT_SCAN_DONE) {
+            const wifi_event_sta_scan_done_t* d = (const wifi_event_sta_scan_done_t*)ev_data;
+            if (d)
+                ESP_LOGI(TAG, "SCAN_DONE: status=%u number=%u id=%u",
+                         (unsigned)d->status, (unsigned)d->number, (unsigned)d->scan_id);
             xEventGroupSetBits(s_wifi_event_group, SCAN_DONE_BIT);
         } else if (ev_id == WIFI_EVENT_STA_START) {
             esp_wifi_connect();                       // initial attempt, immediate
@@ -460,6 +464,9 @@ static esp_err_t network_run_scan(const wifi_scan_config_t* cfg) {
         esp_wifi_scan_stop();
         return ESP_ERR_TIMEOUT;
     }
+    uint16_t n = 0;
+    esp_wifi_scan_get_ap_num(&n);
+    ESP_LOGI(TAG, "post-scan esp_wifi_scan_get_ap_num=%u", n);
     return ESP_OK;
 }
 
@@ -487,12 +494,19 @@ esp_err_t network_scan(wifi_ap_info_t* ap_list, uint16_t max_aps, uint16_t* foun
 
     err = network_run_scan(&scan_config);
 
+    // Read the results BEFORE resuming the connect. A resumed esp_wifi_connect()
+    // starts the C6's own internal scan for the configured SSID, which OVERWRITES
+    // these scan records — so reading them after resume returns 0 APs (this is why
+    // scanning worked at first setup, when there were no creds to reconnect to, but
+    // failed later at a site where the stored AP is absent and we're retrying it).
+    if (err == ESP_OK)
+        err = network_scan_results(ap_list, max_aps, found);
+
     if (suppressed) {
         s_scanning = false;
-        esp_wifi_connect();   // resume connecting now the scan is done
+        esp_wifi_connect();   // resume connecting AFTER results are read
     }
-    if (err != ESP_OK) return err;
-    return network_scan_results(ap_list, max_aps, found);
+    return err;
 }
 
 // =============================================================================
