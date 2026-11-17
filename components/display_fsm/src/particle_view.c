@@ -1,10 +1,11 @@
 /**
  * @file particle_view.c
- * @version 1
+ * v2: old/new particle boxes joined only when they overlap.
+ * @version 2
  * @brief Shared particle-field renderer: one custom-draw object, per-particle dirty rects.
  */
 #include "particle_view.h"
-#include "src/misc/lv_area_private.h"  /* lv_area_intersect / lv_area_join (v9.3 private API) */
+#include "src/misc/lv_area_private.h"  /* lv_area_intersect / lv_area_join / lv_area_is_on (v9.3 private API) */
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -93,8 +94,28 @@ static void pv_draw_cb(lv_event_t *e)
 }
 
 /**
- * @brief Frame timer: step the model, then invalidate each particle's old∪new rectangle.
+ * @brief Invalidate a particle's old and new boxes: joined when they overlap, else separately.
+ *        A respawn (bottom -> top) or a horizontal wrap must not dirty the span between them.
  * @version 1
+ * @req REQ-ANIM-004
+ */
+static void pv_invalidate_move(lv_obj_t *obj, const lv_area_t *before, const lv_area_t *after)
+{
+    if (lv_area_is_on(before, after)) {
+        lv_area_t both;
+        lv_area_join(&both, before, after);
+        lv_obj_invalidate_area(obj, &both);
+    } else {
+        lv_obj_invalidate_area(obj, before);
+        lv_obj_invalidate_area(obj, after);
+    }
+}
+
+/**
+ * @brief Frame timer: step the model, then invalidate each particle's old and new rectangles.
+ * v2: joins old/new only when they overlap (pv_invalidate_move); a respawn or wrap used to
+ *     dirty a screen-spanning rectangle.
+ * @version 2
  * @callback
  */
 static void pv_timer_cb(lv_timer_t *t)
@@ -111,10 +132,9 @@ static void pv_timer_cb(lv_timer_t *t)
     v->ops->step(v->model, dt);
     n = pv_count(v);
     for (int i = 0; i < n; i++) {
-        lv_area_t after, both;
+        lv_area_t after;
         v->ops->bounds(v->model, i, &after);
-        lv_area_join(&both, &v->before[i], &after);
-        lv_obj_invalidate_area(v->obj, &both);
+        pv_invalidate_move(v->obj, &v->before[i], &after);
     }
     pv_stats(v, now, esp_timer_get_time() - t0);
 }

@@ -1,6 +1,7 @@
 /**
  * @file display_widgets.h
- * @version 1
+ * v2: adds forecast_icons_rescan (the one off-lock widget call).
+ * @version 2
  * @brief Layer 1: Reusable UI widget components (C API).
  *
  * Widgets never call lvgl_port_lock — caller (FSM task) holds the lock.
@@ -146,6 +147,14 @@ void forecast_strip_set_color(forecast_strip_t *s, lv_color_t primary, lv_color_
  *  condition = dimmed secondary). */
 void forecast_strip_set_contrast(forecast_strip_t *s, lv_color_t base);
 lv_obj_t *forecast_strip_container(const forecast_strip_t *s);
+
+/**
+ * @brief Re-resolve the forecast icon for every condition (SD stat calls). Must be called
+ *        WITHOUT the LVGL lock, on the FSM task; forecast_strip_update reads the result.
+ * @version 1
+ * @req REQ-WX-006
+ */
+void forecast_icons_rescan(void);
 
 // ---------------------------------------------------------------------------
 // AlertBanner — colored banner with scrolling headline

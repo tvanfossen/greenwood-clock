@@ -1,6 +1,7 @@
 /**
  * @file snow_physics.c
- * @version 1
+ * v2: sway/jitter driven by per-flake wrapped phases (no float-time precision cliff).
+ * @version 2
  * @brief Platform-independent snowfall physics. Sources: CITATIONS.md.
  *
  * Model, per flake:
@@ -114,7 +115,8 @@ static void flake_update_appearance(const snow_params_t *p, snow_flake_t *fl)
 
 /**
  * @brief Draw a fresh size, depth, speed and sway for a flake (position untouched).
- * @version 1
+ * v2: also seeds the vertical-jitter phase (now a per-flake accumulator).
+ * @version 2
  * @dg_internal
  */
 static void flake_randomise(snow_field_t *f, snow_flake_t *fl)
@@ -129,6 +131,7 @@ static void flake_randomise(snow_field_t *f, snow_flake_t *fl)
     fl->sway_omega = TWO_PI / prng_range(&f->rng, p->sway_period_min_s, p->sway_period_max_s);
     fl->sway_phase = prng_range(&f->rng, 0.0f, TWO_PI);
     fl->vjit_omega = TWO_PI / prng_range(&f->rng, 1.5f, 3.0f);
+    fl->vjit_phase = fl->sway_phase;  /* same start offset as the former sin(w*t + sway_phase) */
     flake_update_appearance(p, fl);
 }
 
@@ -178,19 +181,34 @@ static void flake_wrap_x(const snow_params_t *p, snow_flake_t *fl)
 }
 
 /**
- * @brief Integrate all flakes by dt; respawn and wrap at the edges.
+ * @brief Advance a phase by omega * dt, wrapped into [0, 2pi) so it never loses float precision.
  * @version 1
+ * @dg_internal
+ * @return The new phase.
+ */
+static float phase_advance(float phase, float omega, float dt_s)
+{
+    float p = fmodf(phase + omega * dt_s, TWO_PI);
+    return p < 0.0f ? p + TWO_PI : p;
+}
+
+/**
+ * @brief Integrate all flakes by dt; respawn and wrap at the edges.
+ * v2: sway / jitter use per-flake wrapped phases instead of sin(omega * t_s): a float t_s
+ *     ran sway ~2x fast past 2^19 s and froze it past 2^20 s of runtime.
+ * @version 2
  * @req REQ-ANIM-002
  */
 void snow_field_step(snow_field_t *f, float dt_s)
 {
     f->t_s += dt_s;
-    const float t = f->t_s;
     for (int i = 0; i < f->count; i++) {
         snow_flake_t *fl = &f->flakes[i];
+        fl->sway_phase = phase_advance(fl->sway_phase, fl->sway_omega, dt_s);
+        fl->vjit_phase = phase_advance(fl->vjit_phase, fl->vjit_omega, dt_s);
         float k = snow_px_per_m(&f->p, fl->z_m);
-        float u = f->p.wind_mps + fl->sway_amp_mps * sinf(fl->sway_omega * t + fl->sway_phase);
-        float jitter = f->p.vjitter_rel * SQRT2 * sinf(fl->vjit_omega * t + fl->sway_phase);
+        float u = f->p.wind_mps + fl->sway_amp_mps * sinf(fl->sway_phase);
+        float jitter = f->p.vjitter_rel * SQRT2 * sinf(fl->vjit_phase);
         fl->x_px += u * k * dt_s;
         fl->y_px += fl->v_mps * (1.0f + jitter) * k * dt_s;
         if (fl->y_px - fl->radius_px > (float)f->p.screen_h_px) flake_respawn(f, fl);

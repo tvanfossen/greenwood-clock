@@ -1,13 +1,14 @@
 ## @file test_lottie_keyframes.py
 ## @brief Structural test: every animated property in the generated Lottie set has strictly increasing keyframe times.
-## @version 1
+## v2: docstring no longer claims a loop-seam check it does not perform.
+## @version 2
 """Structural tests for generated Lottie files.
 
 A Lottie player interpolates between consecutive keyframes in time order; a
 keyframe whose time goes backwards makes the value jump (seen as the cloud
-'jump' at frame 199->200 in partly_cloudy). Every animated property must have
-strictly increasing keyframe times, and looping animations must end where they
-start so the loop seam is invisible.
+'jump' at frame 199->200 in partly_cloudy). This test checks ONE property: every
+animated property has strictly increasing keyframe times. It does not check that
+loops end where they start; loop seams are checked visually by `inv lottie-vet`.
 
 Run: .venv/bin/inv test-lottie
 """

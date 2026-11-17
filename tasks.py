@@ -206,12 +206,30 @@ def set_bg(c, path, host=DEFAULT_HOST):
         print(body.decode(errors="replace"))
 
 
-## @brief Select the clock-screen animation: hummingbird, snowfall or none.
+#: Short CLI names -> the firmware's display names (clock_anim_from_name matches those,
+#: case-insensitively). Anything else is passed through unchanged.
+ANIM_NAMES = {
+    "hummingbird": "Hummingbird",
+    "snowfall": "Snowfall",
+    "leaves": "Falling Leaves",
+    "falling-leaves": "Falling Leaves",
+    "none": "None",
+}
+
+
+## @brief Select the clock-screen animation: hummingbird, snowfall, leaves or none.
+## v2: help lists every animation; short names (leaves) map to the firmware display names.
 ## @req REQ-TOOL-001
-## @version 1
-@task(help={"host": "Device host or IP", "name": "hummingbird | snowfall | none"})
+## @version 2
+@task(
+    help={
+        "host": "Device host or IP",
+        "name": "hummingbird | snowfall | leaves | none (or a display name, e.g. 'Falling Leaves')",
+    }
+)
 def set_anim(c, name, host=DEFAULT_HOST):
-    body = _request(host, "/api/settings", method="POST", payload={"clock_anim": name})
+    anim = ANIM_NAMES.get(name.lower(), name)
+    body = _request(host, "/api/settings", method="POST", payload={"clock_anim": anim})
     if body is not None:
         print(body.decode(errors="replace"))
 

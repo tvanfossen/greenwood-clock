@@ -30,6 +30,7 @@ const clock_anim_t CLOCK_ANIM_MENU_ORDER[CLOCK_ANIM_COUNT] = {
  * @brief Read the stored choice, defaulting to the hummingbird.
  * @version 1
  * @req REQ-ANIM-001
+ * @req REQ-SET-002
  * @return Stored choice or CLOCK_ANIM_HUMMINGBIRD.
  */
 clock_anim_t clock_anim_pref_get(void)
@@ -56,6 +57,7 @@ clock_anim_t clock_anim_pref_get(void)
  * @brief Write the choice and commit.
  * @version 1
  * @req REQ-ANIM-001
+ * @req REQ-SET-002
  * @return ESP_OK or the failing NVS error (logged).
  */
 esp_err_t clock_anim_pref_set(clock_anim_t anim)
