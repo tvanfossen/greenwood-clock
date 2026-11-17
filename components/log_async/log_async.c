@@ -93,20 +93,23 @@ static int log_async_vprintf(const char *fmt, va_list args)
 
 /**
  * @brief Writer task: emit queued lines through the previous hook chain, and report drops.
- * @version 1
+ * v2: takes the ring handle as its task argument. It read s_rb, which log_async_init()
+ *     publishes only after creating this task (so the hook stays synchronous until ready);
+ *     the task ran first and asserted in xRingbufferReceive(NULL) at every boot.
+ * @version 2
  * @req REQ-LOG-005
  * @callback
  */
 static void log_async_writer(void *arg)
 {
-    (void)arg;
+    RingbufHandle_t rb = (RingbufHandle_t)arg;
     uint32_t reported = 0;
     while (true) {
         size_t len = 0;
-        char *line = (char *)xRingbufferReceive(s_rb, &len, portMAX_DELAY);
+        char *line = (char *)xRingbufferReceive(rb, &len, portMAX_DELAY);
         if (line) {
             forward_prev("%s", line);   // NUL-terminated by the producer's vsnprintf
-            vRingbufferReturnItem(s_rb, line);
+            vRingbufferReturnItem(rb, line);
         }
         uint32_t dropped = atomic_load(&s_dropped);
         if (dropped != reported) {
@@ -119,7 +122,8 @@ static void log_async_writer(void *arg)
 
 /**
  * @brief Install the ring buffer + writer task in front of the current log hook chain.
- * @version 1
+ * v2: passes the ring handle to the writer task as its argument (startup race fix).
+ * @version 2
  * @req REQ-LOG-005
  * @return ESP_OK, or ESP_ERR_NO_MEM (logging then stays synchronous).
  */
@@ -134,7 +138,7 @@ esp_err_t log_async_init(void)
         return ESP_ERR_NO_MEM;
     }
     // Stack in internal RAM: the writer does SD (FATFS) I/O, which needs an internal stack.
-    if (xTaskCreatePinnedToCoreWithCaps(log_async_writer, "log_async", LOG_ASYNC_TASK_STACK, NULL,
+    if (xTaskCreatePinnedToCoreWithCaps(log_async_writer, "log_async", LOG_ASYNC_TASK_STACK, rb,
                                         LOG_ASYNC_TASK_PRIO, &s_writer, tskNO_AFFINITY,
                                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) != pdPASS) {
         vRingbufferDeleteWithCaps(rb);
