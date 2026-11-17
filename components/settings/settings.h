@@ -93,6 +93,27 @@ esp_err_t settings_save(const clock_settings_t* in);
 esp_err_t settings_reset(void);
 
 /**
+ * @brief Change settings in place: called with the freshly loaded settings; return true to save.
+ * @param cfg  Settings loaded under the settings lock; modify in place.
+ * @param ctx  Caller context passed through from settings_update().
+ * @return true to persist the modified settings, false to leave NVS unchanged.
+ */
+typedef bool (*settings_mutator_t)(clock_settings_t *cfg, void *ctx);
+
+/**
+ * @brief Atomic read-modify-write of the settings: lock, load, mutate, save if requested, unlock.
+ *
+ * Use this instead of settings_load() + settings_save() for any change. Writers run on
+ * several tasks (HTTP API, LVGL settings screen, NWS); an unlocked load-modify-save on
+ * one could silently undo another's concurrent write.
+ *
+ * @param fn   Mutator applied to the loaded settings.
+ * @param ctx  Passed to @p fn.
+ * @return ESP_OK (also when @p fn chose not to save), ESP_ERR_INVALID_ARG, or the save error.
+ */
+esp_err_t settings_update(settings_mutator_t fn, void *ctx);
+
+/**
  * @brief Get pointer to default settings (read-only)
  * @return Pointer to default settings structure
  */

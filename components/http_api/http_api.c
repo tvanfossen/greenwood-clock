@@ -2074,6 +2074,26 @@ static void notify_schedule_config(const clock_settings_t *cfg)
     }
 }
 
+/** settings_update context for a schedule POST: the parsed body and the saved result. */
+typedef struct {
+    const cJSON      *root;
+    clock_settings_t  saved;
+} schedule_post_ctx_t;
+
+/**
+ * @brief settings_update mutator: merge the schedule fields of the JSON body into @p cfg.
+ * @version 1
+ * @dg_internal
+ * @return true (always save).
+ */
+static bool schedule_mutator(clock_settings_t *cfg, void *ctx)
+{
+    schedule_post_ctx_t *pc = (schedule_post_ctx_t *)ctx;
+    parse_schedule_fields(pc->root, cfg);
+    pc->saved = *cfg;
+    return true;
+}
+
 /**
  * @brief Update display schedule configuration.
  * POST /api/display/schedule — body: {"weather_show_s":30, ...}
@@ -2081,7 +2101,8 @@ static void notify_schedule_config(const clock_settings_t *cfg)
  * Persists to NVS and pushes the new timings to the display FSM.
  *
  * @param req  Incoming request.
- * @version 1
+ * v2: atomic read-modify-write via settings_update (no lost concurrent writes).
+ * @version 2
  * @callback
  * @return ESP_OK on success; ESP_FAIL after sending a 4xx/5xx.
  * @req REQ-API-003
@@ -2103,18 +2124,15 @@ static esp_err_t schedule_post_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    clock_settings_t cfg;
-    settings_load(&cfg);
-    parse_schedule_fields(root, &cfg);
+    schedule_post_ctx_t pc = {.root = root};
+    esp_err_t err = settings_update(schedule_mutator, &pc);
     cJSON_Delete(root);
-
-    esp_err_t err = settings_save(&cfg);
     if (err != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save settings");
         return ESP_FAIL;
     }
 
-    notify_schedule_config(&cfg);
+    notify_schedule_config(&pc.saved);
 
     ESP_LOGI(TAG, "Schedule config updated");
     httpd_resp_set_type(req, "application/json");
@@ -2330,22 +2348,36 @@ static esp_err_t settings_apply_anim(clock_anim_t anim)
     return ESP_OK;
 }
 
+/** settings_update context for a settings POST: the parsed body, the changes, the saved result. */
+typedef struct {
+    const cJSON        *root;
+    settings_changes_t *ch;
+    clock_settings_t    saved;
+} settings_post_ctx_t;
+
 /**
- * @brief Persist and apply live: refresh background / text colour, switch clock animation.
- * v2: the blob and the animation preference are saved and applied independently, so a
- *     failed animation save no longer leaves a saved-but-unapplied background/colour;
- *     brightness is now applied live too.
- * @version 2
+ * @brief settings_update mutator: merge the POSTed blob fields; save only if one changed.
+ * @version 1
  * @dg_internal
- * @return ESP_OK, or the first persistence error (logged).
+ * @return true if a blob field (brightness / text_color / background_image) changed.
  */
-static esp_err_t settings_persist_and_apply(const clock_settings_t *cfg, const settings_changes_t *ch)
+static bool settings_post_mutator(clock_settings_t *cfg, void *ctx)
 {
-    esp_err_t err = settings_save(cfg);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Settings save failed: %s", esp_err_to_name(err));
-        return err;
-    }
+    settings_post_ctx_t *pc = (settings_post_ctx_t *)ctx;
+    settings_merge_blob_fields(pc->root, cfg, pc->ch);
+    pc->saved = *cfg;
+    return pc->ch->brightness || pc->ch->bg || pc->ch->text_color;
+}
+
+/**
+ * @brief Apply saved changes live: brightness, background, text colour, clock animation.
+ * Replaces settings_persist_and_apply(): saving now happens atomically in settings_update().
+ * @version 1
+ * @dg_internal
+ * @return ESP_OK, or the clock-animation save error.
+ */
+static esp_err_t settings_apply_live(const clock_settings_t *cfg, const settings_changes_t *ch)
+{
     if (ch->brightness) display_fsm_refresh_brightness(cfg->brightness);
     if (ch->bg) display_fsm_refresh_background();
     if (ch->text_color) display_fsm_refresh_text_color();
@@ -2359,7 +2391,8 @@ static esp_err_t settings_persist_and_apply(const clock_settings_t *cfg, const s
 /**
  * @brief Update settings. POST /api/settings with any of brightness, text_color,
  *        background_image, clock_anim. Changes take effect immediately.
- * @version 2
+ * v3: atomic read-modify-write via settings_update; invalid clock_anim still saves nothing.
+ * @version 3
  * @req REQ-ANIM-001
  * @return ESP_OK on success; ESP_FAIL after sending a 4xx/5xx.
  * @req REQ-API-002
@@ -2379,14 +2412,15 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    clock_settings_t cfg;
-    settings_load(&cfg);
     settings_changes_t ch = {0};
-    settings_merge_blob_fields(root, &cfg, &ch);
-    bool anim_ok = settings_parse_anim(root, &ch);
+    bool anim_ok = settings_parse_anim(root, &ch);   // validate before saving anything
+    esp_err_t err = ESP_ERR_INVALID_ARG;
+    if (anim_ok) {
+        settings_post_ctx_t pc = {.root = root, .ch = &ch};
+        err = settings_update(settings_post_mutator, &pc);
+        if (err == ESP_OK) err = settings_apply_live(&pc.saved, &ch);
+    }
     cJSON_Delete(root);
-
-    esp_err_t err = anim_ok ? settings_persist_and_apply(&cfg, &ch) : ESP_ERR_INVALID_ARG;
     if (err != ESP_OK) {
         httpd_resp_send_err(req, anim_ok ? HTTPD_500_INTERNAL_SERVER_ERROR : HTTPD_400_BAD_REQUEST,
                             anim_ok ? "Failed to save settings" : "Unknown clock_anim");

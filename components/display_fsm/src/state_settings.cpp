@@ -341,6 +341,59 @@ static lv_obj_t *s_wifi_status_label = nullptr;
 static char s_selected_ssid[33]      = "";
 static char s_wifi_password[64]      = "";
 
+// settings_update() mutators: each sets one field on the freshly loaded settings under the
+// settings lock (atomic read-modify-write; other tasks also write settings).
+/**
+ * @brief settings_update mutator: store the selected SSID/password and mark Wi-Fi configured.
+ * @version 1
+ * @dg_internal
+ * @return true (always save).
+ */
+static bool wifi_creds_mutator(clock_settings_t *cfg, void *)
+{
+    strlcpy(cfg->wifi_ssid, s_selected_ssid, sizeof(cfg->wifi_ssid));
+    strlcpy(cfg->wifi_password, s_wifi_password, sizeof(cfg->wifi_password));
+    cfg->wifi_configured = true;
+    return true;
+}
+
+/**
+ * @brief settings_update mutator: store the brightness percentage in @p ctx (uint8_t).
+ * @version 1
+ * @dg_internal
+ * @return true (always save).
+ */
+static bool brightness_mutator(clock_settings_t *cfg, void *ctx)
+{
+    cfg->brightness = *(const uint8_t *)ctx;
+    return true;
+}
+
+/**
+ * @brief settings_update mutator: store "A:<filename>" (@p ctx) as the background image.
+ * @version 1
+ * @dg_internal
+ * @return true (always save).
+ */
+static bool background_mutator(clock_settings_t *cfg, void *ctx)
+{
+    snprintf(cfg->background_image, sizeof(cfg->background_image), "A:%s", (const char *)ctx);
+    return true;
+}
+
+/**
+ * @brief settings_update mutator: store the text colour in @p ctx (uint32_t 0xRRGGBB).
+ * @version 1
+ * @dg_internal
+ * @return true (always save).
+ */
+static bool text_color_mutator(clock_settings_t *cfg, void *ctx)
+{
+    cfg->text_color = *(const uint32_t *)ctx;
+    return true;
+}
+
+
 /**
  * @brief Append a network button (lock marker, SSID, RSSI) to the WiFi list, storing an lv_malloc'd SSID copy as user data.
  * @version 1
@@ -451,7 +504,8 @@ static void wifi_network_select_cb(lv_event_t *e)
 
 /**
  * @brief Connect button handler: connect to the selected SSID with the LVGL lock released and persist credentials to NVS on success.
- * @version 1
+ * v2: atomic read-modify-write via settings_update (no lost concurrent writes).
+ * @version 2
  * @callback
  * @req REQ-NET-002
  * @req REQ-UI-001
@@ -479,14 +533,7 @@ static void wifi_connect_btn_cb(lv_event_t *e)
     lvgl_port_unlock();
     esp_err_t err = network_connect(s_selected_ssid, s_wifi_password);
     if (err == ESP_OK) {
-        clock_settings_t cfg;
-        if (settings_load(&cfg) == ESP_OK) {
-            strncpy(cfg.wifi_ssid, s_selected_ssid, sizeof(cfg.wifi_ssid) - 1);
-            cfg.wifi_ssid[sizeof(cfg.wifi_ssid) - 1] = '\0';
-            strncpy(cfg.wifi_password, s_wifi_password, sizeof(cfg.wifi_password) - 1);
-            cfg.wifi_password[sizeof(cfg.wifi_password) - 1] = '\0';
-            cfg.wifi_configured = true;
-            settings_save(&cfg);
+        if (settings_update(wifi_creds_mutator, nullptr) == ESP_OK) {
             ESP_LOGI(TAG, "WiFi credentials saved for SSID: %s", s_selected_ssid);
         }
     }
@@ -570,7 +617,8 @@ static lv_obj_t *create_sub_wifi(lv_obj_t *parent)
 
 /**
  * @brief Slider handler: apply the new backlight brightness, update the label and save it to NVS with the LVGL lock released.
- * @version 1
+ * v2: atomic read-modify-write via settings_update (no lost concurrent writes).
+ * @version 2
  * @callback
  * @req REQ-UI-001
  */
@@ -590,10 +638,9 @@ static void brightness_slider_cb(lv_event_t *e)
 
     // Save to NVS (release LVGL lock)
     lvgl_port_unlock();
-    clock_settings_t cfg;
-    if (settings_load(&cfg) == ESP_OK) {
-        cfg.brightness = (uint8_t)value;
-        esp_err_t err = settings_save(&cfg);
+    {
+        uint8_t brightness = (uint8_t)value;
+        esp_err_t err = settings_update(brightness_mutator, &brightness);
         if (err == ESP_OK) {
             ESP_LOGI(TAG, "Brightness %ld%% saved", value);
         } else {
@@ -671,7 +718,8 @@ static void bg_path_cleanup_cb(lv_event_t *e)
 
 /**
  * @brief Background button handler: save the chosen image path to NVS, refresh the background and show success.
- * @version 1
+ * v2: atomic read-modify-write via settings_update (no lost concurrent writes).
+ * @version 2
  * @callback
  * @req REQ-UI-001
  * @req REQ-BG-001
@@ -685,12 +733,7 @@ static void background_select_cb(lv_event_t *e)
 
     // Save to NVS
     lvgl_port_unlock();
-    clock_settings_t cfg;
-    esp_err_t err = settings_load(&cfg);
-    if (err == ESP_OK) {
-        snprintf(cfg.background_image, sizeof(cfg.background_image), "A:%s", filename);
-        err = settings_save(&cfg);
-    }
+    esp_err_t err = settings_update(background_mutator, (void *)filename);
     lvgl_port_lock(0);
 
     if (err != ESP_OK) {
@@ -798,7 +841,8 @@ static constexpr int NUM_COLOR_PRESETS = sizeof(COLOR_PRESETS) / sizeof(COLOR_PR
 
 /**
  * @brief Color button handler: save the chosen text color to NVS, refresh the clock text color and show success.
- * @version 1
+ * v2: atomic read-modify-write via settings_update (no lost concurrent writes).
+ * @version 2
  * @callback
  * @req REQ-UI-001
  */
@@ -809,12 +853,7 @@ static void color_select_cb(lv_event_t *e)
     ESP_LOGI(TAG, "Text color selected: 0x%06lX", color_value);
 
     lvgl_port_unlock();
-    clock_settings_t cfg;
-    esp_err_t err = settings_load(&cfg);
-    if (err == ESP_OK) {
-        cfg.text_color = color_value;
-        err = settings_save(&cfg);
-    }
+    esp_err_t err = settings_update(text_color_mutator, &color_value);
     lvgl_port_lock(0);
 
     if (err != ESP_OK) {
