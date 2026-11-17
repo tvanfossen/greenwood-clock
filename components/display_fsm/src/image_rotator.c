@@ -241,8 +241,9 @@ void image_rotator_step(image_rotator_t *r)
 // Decode image `idx` into pending_dsc (off-lock). No-op if pending already holds
 // it (prefetch hit) — that makes the next present() an instant swap.
 /**
- * @brief Load image @p idx into the pending slot off the LVGL lock: prefetch hit, RAM-cache hit, .r565 cache file, or PNG decode + flip + cache write.
- * @version 1
+ * @brief Load image @p idx into the pending slot off the LVGL lock: prefetch hit, RAM-cache hit, .r565 cache file, or PNG decode + cache write.
+ * v2: no flip after decode (decode is pinned top-down; existing .r565 caches are top-down).
+ * @version 2
  * @req REQ-PHOTO-001
  */
 static void decode_into_pending(image_rotator_t *r, int idx)
@@ -269,7 +270,7 @@ static void decode_into_pending(image_rotator_t *r, int idx)
     lvgl_to_posix(r->paths[idx], posix, sizeof(posix));
     int64_t t0 = esp_timer_get_time();
 
-    // Fast path: a previously-cached, already-flipped RGB565 .r565 file.
+    // Fast path: a previously-cached top-down RGB565 .r565 file.
     char cache[MAX_PATH_LEN + 8];
     snprintf(cache, sizeof(cache), "%s.r565", posix);
     lv_image_dsc_t *dsc = image_decode_load_raw_rgb565(cache);
@@ -281,14 +282,13 @@ static void decode_into_pending(image_rotator_t *r, int idx)
         return;
     }
 
-    // Slow path: decode the PNG (~2s), flip upright (stb row order, same as the
-    // clock background), then write the .r565 cache so future loads are fast.
+    // Slow path: decode the PNG (~2s, top-down), then write the .r565 cache so
+    // future loads are fast.
     dsc = image_decode_png_file_rgb565(posix);
     if (!dsc) {
         ESP_LOGW(TAG, "decode failed [%d] %s", idx, posix);
         return;
     }
-    image_decode_flip_vertical(dsc);
     image_decode_save_raw_rgb565(cache, dsc);
     r->pending_dsc   = dsc;
     r->pending_index = idx;

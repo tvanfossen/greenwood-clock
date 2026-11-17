@@ -10,10 +10,12 @@
 #include "display_widgets.h"
 #include "display_fsm.h"
 #include "ui_contrast.h"
+#include "image_decode.h"
 #include "nws.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -159,27 +161,49 @@ static bool resolve_condition_asset(const condition_asset_t *a, const char *desc
 
 /** Resolved forecast-icon LVGL path per [condition][is_daytime]; "" = no icon (text fallback). */
 static char s_icon_lvgl[WX_CONDITION_COUNT][2][64];
+/** Pre-decoded icon per slot (SPIRAM, ARGB8888). Decoded once and never freed: a strip
+ *  being rendered may reference it, so a rescan must not replace it under the renderer. */
+static lv_image_dsc_t *s_icon_dsc[WX_CONDITION_COUNT][2];
 
 /**
- * @brief Re-resolve every condition's forecast icon into s_icon_lvgl. Does SD stat() calls:
- *        call OFF the LVGL lock (FSM task, before dispatch); readers run on the same task.
+ * @brief Resolve one icon slot and decode it once (off-lock) if it is not decoded yet.
  * @version 1
+ * @req REQ-WX-006
+ * @return true if the slot has an icon (decoded, or path resolvable for fallback).
+ */
+static bool icon_slot_load(int c, int day)
+{
+    char posix[128], lvgl[128];
+    bool ok = resolve_base_asset(&WX_ASSET_ICON, WX_CONDITIONS[c].base, day != 0, posix,
+                                 sizeof(posix), lvgl, sizeof(lvgl));
+    strlcpy(s_icon_lvgl[c][day], ok ? lvgl : "", sizeof(s_icon_lvgl[c][day]));
+    if (ok && !s_icon_dsc[c][day]) {
+        s_icon_dsc[c][day] = image_decode_png_file(posix);   // NULL → strip falls back to the path
+    }
+    return ok;
+}
+
+/**
+ * @brief Re-resolve every condition's forecast icon and pre-decode any not yet decoded.
+ *        Does SD I/O and PNG decode: call OFF the LVGL lock (FSM task, before dispatch);
+ *        readers run on the same task.
+ * v2: pre-decodes icons into RAM, so drawing the strip under the LVGL lock does no file
+ *     I/O or PNG decode (strip_upd measured 63-68 ms on device with path sources).
+ * @version 2
  * @req REQ-WX-006
  */
 void forecast_icons_rescan(void)
 {
-    char posix[128], lvgl[128];
-    int found = 0;
+    int64_t t0 = esp_timer_get_time();
+    int found = 0, decoded = 0;
     for (int c = 0; c < WX_CONDITION_COUNT; c++) {
         for (int day = 0; day < 2; day++) {
-            bool ok = resolve_base_asset(&WX_ASSET_ICON, WX_CONDITIONS[c].base, day != 0, posix,
-                                         sizeof(posix), lvgl, sizeof(lvgl));
-            strlcpy(s_icon_lvgl[c][day], ok ? lvgl : "", sizeof(s_icon_lvgl[c][day]));
-            found += ok ? 1 : 0;
+            found += icon_slot_load(c, day) ? 1 : 0;
+            decoded += s_icon_dsc[c][day] ? 1 : 0;
         }
     }
-    ESP_LOGI(TAG, "forecast icons rescanned: %d/%d condition slots have an icon", found,
-             WX_CONDITION_COUNT * 2);
+    ESP_LOGI(TAG, "forecast icons rescanned: %d/%d slots have an icon, %d decoded (%lld ms)",
+             found, WX_CONDITION_COUNT * 2, decoded, (esp_timer_get_time() - t0) / 1000);
 }
 
 // ============================================================================
@@ -652,15 +676,18 @@ void forecast_strip_set_contrast(forecast_strip_t *s, lv_color_t base)
  * @brief Show the static condition icon for a day, or the text if no icon asset exists.
  * v2: looks the icon up in the off-lock cache (forecast_icons_rescan) instead of stat()ing the
  *     SD card here, under the LVGL lock.
- * @version 2
+ * v3: uses the pre-decoded descriptor when available (no file read/decode under the lock).
+ * @version 3
  * @req REQ-WX-006
  */
 static void strip_set_condition(forecast_strip_t *s, int day, const char *desc, bool is_daytime)
 {
-    const char *lvgl = s_icon_lvgl[condition_index(desc)][is_daytime ? 1 : 0];
+    int c = condition_index(desc), tod = is_daytime ? 1 : 0;
+    const char *lvgl = s_icon_lvgl[c][tod];
     bool icon = lvgl[0] != '\0';
     if (icon) {
-        lv_image_set_src(s->days[day].img_icon, lvgl);
+        if (s_icon_dsc[c][tod]) lv_image_set_src(s->days[day].img_icon, s_icon_dsc[c][tod]);
+        else lv_image_set_src(s->days[day].img_icon, lvgl);   // decode failed: path fallback
         lv_obj_clear_flag(s->days[day].img_icon, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s->days[day].lbl_condition, LV_OBJ_FLAG_HIDDEN);
     } else {

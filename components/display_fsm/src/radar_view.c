@@ -142,7 +142,7 @@ static bool read_map_rows(FILE *f, uint8_t *mpix, uint16_t mw, uint16_t mh,
 // Takes ownership of mpix (frees it if the descriptor alloc fails).
 //
 // No vertical flip: the radar map + overlay composite via LVGL's software draw
-// path (upright). Only the full-screen background uses the flipping PPA path.
+// path (upright). No image path flips; stb decode is pinned top-down.
 // Verified with a colour-coded orientation test card.
 /**
  * @brief Cache-sync the filled map buffer and publish it as an XRGB8888 image
@@ -381,10 +381,10 @@ lv_obj_t *radar_view_container(const radar_view_t *rv)
 }
 
 /**
- * @brief Decode a radar PNG to ARGB8888 off the LVGL lock, flip it vertically
- *        (north up) and stage it as the pending overlay, replacing any unconsumed
- *        pending one.
- * @version 1
+ * @brief Decode a radar PNG to top-down (north-up) ARGB8888 off the LVGL lock and
+ *        stage it as the pending overlay, replacing any unconsumed pending one.
+ * v2: no flip; decode is pinned top-down (the old flip undid stb's accidental bottom-up decode).
+ * @version 2
  * @req REQ-RADAR-001
  */
 void radar_view_predecode(const uint8_t *png_data, size_t len)
@@ -398,12 +398,7 @@ void radar_view_predecode(const uint8_t *png_data, size_t len)
         return;
     }
 
-    // stb-decoded images render vertically flipped on this device (same as the
-    // clock background); the raw-fread map does NOT. So flip the overlay to put
-    // north at the top, aligning it with the (unflipped, north-up) basemap.
-    // Verified against a fresh basemap+NWS radar composite for the configured
-    // bbox: heavy precip belongs lower/south, not upper/north.
-    image_decode_flip_vertical(dsc);
+    // Decode is top-down (north up), matching the raw north-up basemap.
 
     // Stage new radar (free previous pending if unconsumed). Pixel buffer and
     // descriptor are tracked separately to match the active/pending swap in
