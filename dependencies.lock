@@ -20,48 +20,14 @@ dependencies:
       require: private
       version: '>=5.2'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.1.4
   espressif/esp32_p4_function_ev_board:
-    component_hash: 1f4b2c19014601c3e143af42dab0364ed0007e9d5b9dff41f879c7812b872d76
-    dependencies:
-    - name: espressif/esp_codec_dev
-      registry_url: https://components.espressif.com
-      require: public
-      version: 1.2.*
-    - name: espressif/esp_lcd_ek79007
-      registry_url: https://components.espressif.com
-      require: private
-      version: 1.*
-    - name: espressif/esp_lcd_ili9881c
-      registry_url: https://components.espressif.com
-      require: private
-      version: 1.*
-    - name: espressif/esp_lcd_touch_gt911
-      registry_url: https://components.espressif.com
-      require: private
-      version: ^1
-    - name: espressif/esp_lcd_lt8912b
-      registry_url: https://components.espressif.com
-      require: private
-      version: '>=0.1.1,<1.0.0'
-    - name: espressif/esp_lvgl_port
-      registry_url: https://components.espressif.com
-      require: public
-      version: ^2
-    - name: idf
-      require: private
-      version: '>=5.3'
-    - name: lvgl/lvgl
-      registry_url: https://components.espressif.com
-      require: private
-      version: '>=8,<10'
+    dependencies: []
     source:
-      registry_url: https://components.espressif.com/
-      type: service
-    targets:
-    - esp32p4
+      path: /home/tvanfossen/Projects/greenwood-clock/components/espressif__esp32_p4_function_ev_board
+      type: local
     version: 5.0.0~1
   espressif/esp_codec_dev:
     component_hash: 014948481bda426cd46714f297fe1891711246c62bea288863a8cc8cf13ef1f0
@@ -70,18 +36,14 @@ dependencies:
       require: private
       version: '>=4.0'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.2.0
   espressif/esp_hosted:
-    component_hash: 9eea9ce83444a412b4a02311f787f3639a5d29fe67e6df83863010dd68ab250b
-    dependencies:
-    - name: idf
-      require: private
-      version: '>=5.3'
+    dependencies: []
     source:
-      registry_url: https://components.espressif.com/
-      type: service
+      path: /home/tvanfossen/Projects/greenwood-clock/components/espressif__esp_hosted
+      type: local
     version: 2.12.0
   espressif/esp_lcd_ek79007:
     component_hash: 8005700b7f10c7136b6e2a3f19a48f972aa1d13ed107ed298574e8d24d17ea83
@@ -106,7 +68,7 @@ dependencies:
       require: private
       version: '>=5.3'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     targets:
     - esp32p4
@@ -118,7 +80,7 @@ dependencies:
       require: private
       version: '>=5.3'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 0.2.0
   espressif/esp_lcd_touch:
@@ -142,7 +104,7 @@ dependencies:
       require: private
       version: '>=4.4.2'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.2.0~1
   espressif/esp_lvgl_port:
@@ -156,7 +118,7 @@ dependencies:
       require: public
       version: '>=8,<10'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 2.7.2
   espressif/esp_serial_slave_link:
@@ -202,20 +164,28 @@ dependencies:
   idf:
     source:
       type: idf
-    version: 5.5.0
+    version: 5.5.6
   lvgl/lvgl:
     component_hash: 184e532558c1c45fefed631f3e235423d22582aafb4630f3e8885c35281a49ae
     dependencies: []
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 9.5.0
 direct_dependencies:
+- espressif/eppp_link
 - espressif/esp32_p4_function_ev_board
+- espressif/esp_codec_dev
 - espressif/esp_hosted
 - espressif/esp_lcd_ek79007
+- espressif/esp_lcd_ili9881c
+- espressif/esp_lcd_lt8912b
+- espressif/esp_lcd_touch_gt911
+- espressif/esp_lvgl_port
 - espressif/esp_wifi_remote
 - espressif/mdns
-manifest_hash: 0ba642d641554387eb1c1daa30b55ada313223b7eeb364ed4970ff7acc763d33
+- idf
+- lvgl/lvgl
+manifest_hash: dedb3406312119a8dd897cab97923e6811d6a094ea0c41406ad50d65f31db3fe
 target: esp32p4
 version: 2.0.0

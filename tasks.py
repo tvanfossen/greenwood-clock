@@ -27,6 +27,12 @@ SECRETS_H = REPO / "components" / "secrets" / "secrets.h"
 DEFAULT_HOST = os.environ.get("GREENWOOD_HOST", "greenwood-clock.local")
 TIMEOUT_S = 120
 
+#: ESP-IDF checkout used for builds. A released 5.5.x is required: v5.5-beta1 never hands
+#: sdkconfig.json to the component-manager solver, so any dependency re-solve fails.
+IDF_PATH = Path(
+    os.environ.get("GREENWOOD_IDF_PATH", Path.home() / "esp" / "esp-idf-v5.5.6")
+)
+
 #: ESP-IDF's managed Python env — owns esp_coredump and the rest of the IDF tooling.
 IDF_PYTHON = (
     Path.home() / ".espressif" / "python_env" / "idf5.5_py3.10_env" / "bin" / "python"
@@ -293,15 +299,11 @@ def reboot(c, host=DEFAULT_HOST):
 
 ## @brief Incremental firmware build through ESP-IDF (sources export.sh first).
 ## @utility
-## @version 1
+## @version 2
 @task
 def build(c):
-    export = Path.home() / "esp" / "esp-idf" / "export.sh"
-    # The registry's newest esp_lvgl_port/lvgl manifests reference Kconfig keys this project
-    # lacks (LV_USE_FREETYPE), crashing the advisory new-version check. Builds use
-    # dependencies.lock regardless, so skipping the check changes nothing that ships.
-    env = {"IDF_COMPONENT_CHECK_NEW_VERSION": "0"}
-    c.run(f"bash -c '. {export} >/dev/null 2>&1 && cd {REPO} && idf.py build'", env=env)
+    export = IDF_PATH / "export.sh"
+    c.run(f"bash -c '. {export} >/dev/null 2>&1 && cd {REPO} && idf.py build'")
 
 
 ## @brief Push build/greenwood-clock.bin to the device over HTTP OTA (token from secrets.h).
