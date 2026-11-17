@@ -24,6 +24,7 @@ LV_FONT_DECLARE(nunito_256);
 // the 1 bpp fonts were re-expanded per glyph for every small dirty area (snowfall).
 LV_FONT_DECLARE(nunito_clock_256);
 LV_FONT_DECLARE(nunito_clock_128);
+LV_FONT_DECLARE(nunito_clock_48);
 
 // ---------------------------------------------------------------------------
 // Internal struct
@@ -136,7 +137,8 @@ static void format_time(const struct tm *ti, char *buf_time, size_t time_sz,
 /**
  * @brief Full-mode layout: 256pt time, 48pt AM/PM baseline-aligned to it, 48pt date at the bottom; does not move the container.
  * v2: time uses the 8 bpp static-bitmap digit font (same metrics).
- * @version 2
+ * v3: AM/PM and date use the 8 bpp static-bitmap 48 pt font (same metrics).
+ * @version 3
  * @req REQ-CLOCK-001
  */
 static void apply_full_layout(clock_widget_t *w)
@@ -150,11 +152,11 @@ static void apply_full_layout(clock_widget_t *w)
     // Verified: LV_ALIGN_OUT_RIGHT_BOTTOM sets y = h(base)-h(obj)+y_ofs = 265-50-43 = 172
     //   time baseline  = 265 - 53 = 212
     //   ampm baseline  = 172 + 50 - 10 = 212  (same pixel row)
-    lv_obj_set_style_text_font(w->lbl_ampm, &nunito_48, 0);
+    lv_obj_set_style_text_font(w->lbl_ampm, &nunito_clock_48, 0);
     lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_BOTTOM, 8, -43);
 
     // Date: 48pt, bottom center
-    lv_obj_set_style_text_font(w->lbl_date, &nunito_48, 0);
+    lv_obj_set_style_text_font(w->lbl_date, &nunito_clock_48, 0);
     lv_obj_align(w->lbl_date, LV_ALIGN_BOTTOM_MID, 0, -16);
 
     lv_obj_clear_flag(w->container, LV_OBJ_FLAG_HIDDEN);
@@ -165,7 +167,8 @@ static void apply_full_layout(clock_widget_t *w)
 /**
  * @brief Minimized-mode layout: 128pt time shifted left so time + 48pt AM/PM are centred, 24pt date below; does not move the container.
  * v2: time uses the 8 bpp static-bitmap digit font (same metrics).
- * @version 2
+ * v3: AM/PM uses the 8 bpp static-bitmap 48 pt font (same metrics).
+ * @version 3
  * @req REQ-CLOCK-002
  */
 static void apply_minimized_layout(clock_widget_t *w)
@@ -181,7 +184,7 @@ static void apply_minimized_layout(clock_widget_t *w)
     // Verified: y = h(base)-h(obj)+y_ofs = 133-50-17 = 66
     //   time baseline  = 133 - 27 = 106
     //   ampm baseline  = 66 + 50 - 10 = 106  (same pixel row)
-    lv_obj_set_style_text_font(w->lbl_ampm, &nunito_48, 0);
+    lv_obj_set_style_text_font(w->lbl_ampm, &nunito_clock_48, 0);
     lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_BOTTOM, 8, -17);
 
     // Date: 24pt, below time

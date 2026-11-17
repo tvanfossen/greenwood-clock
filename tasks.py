@@ -469,8 +469,13 @@ def _push_staging_tree(c, subdir, pattern, host):
         )
 
 
-#: Clock digit fonts: (point size, original 1 bpp font whose line metrics they must keep).
-CLOCK_FONTS = ((256, "nunito_256"), (128, "nunito_128"))
+#: Clock fonts: (point size, original 1 bpp font whose line metrics they keep, glyph selector).
+#: Time digits only at 256/128 pt; printable ASCII at 48 pt (AM/PM + weekday/month names).
+CLOCK_FONTS = (
+    (256, "nunito_256", "--symbols '0123456789:'"),
+    (128, "nunito_128", "--symbols '0123456789:'"),
+    (48, "nunito_48", "--range 0x20-0x7E"),
+)
 FONTS_DIR = REPO / "components" / "fonts"
 
 
@@ -492,24 +497,25 @@ def _patch_clock_font(src, original):
     return src
 
 
-## @brief Generate the 8 bpp static-bitmap clock digit fonts (0-9 and ':') from Nunito-ExtraBold.
+## @brief Generate the 8 bpp static-bitmap clock fonts (time digits; 48 pt printable ASCII) from Nunito-ExtraBold.
 ## The 1 bpp fonts made LVGL expand each whole glyph for every dirty area touching the digits
 ## (snowfall redraws ~120 small areas per frame); 8 bpp static glyphs blend straight from flash
 ## and are anti-aliased. Line metrics are copied from the original fonts so layout is unchanged.
+## v2: also a 48 pt printable-ASCII font for the AM/PM and date labels.
 ## @req REQ-CLOCK-001
 ## @req REQ-ANIM-004
-## @version 1
+## @version 2
 @task
 def gen_fonts(c):
     conv = REPO / "tools" / "fonts" / "node_modules" / ".bin" / "lv_font_conv"
     if not conv.exists():
         c.run(f"npm ci --prefix {REPO / 'tools' / 'fonts'} --no-fund --no-audit")
     ttf = FONTS_DIR / "fonts" / "Nunito-ExtraBold.ttf"
-    for size, original in CLOCK_FONTS:
+    for size, original, glyphs in CLOCK_FONTS:
         name = f"nunito_clock_{size}"
         out = FONTS_DIR / "c_array" / f"{name}.c"
         c.run(
-            f"{conv} --font {ttf} --size {size} --bpp 8 --no-compress --symbols '0123456789:' "
+            f"{conv} --font {ttf} --size {size} --bpp 8 --no-compress {glyphs} "
             f"--format lvgl --lv-font-name {name} -o {out}"
         )
         orig = (FONTS_DIR / "c_array" / f"{original}.c").read_text()
