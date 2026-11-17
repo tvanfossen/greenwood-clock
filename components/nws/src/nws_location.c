@@ -52,23 +52,31 @@ static bool location_cached(float lat, float lon, nws_location_t *out)
 }
 
 /**
- * @brief Persist the resolved office, grid and station into the NVS settings blob.
+ * @brief settings_update mutator: copy the resolved office, grid and station from @p ctx into @p cfg.
  * @version 1
+ * @dg_internal
+ * @return true (always save).
+ */
+static bool location_cache_mutator(clock_settings_t *cfg, void *ctx)
+{
+    const nws_location_t *loc = (const nws_location_t *)ctx;
+    snprintf(cfg->nws_office, sizeof(cfg->nws_office), "%s", loc->office);
+    cfg->nws_grid_x = loc->grid_x;
+    cfg->nws_grid_y = loc->grid_y;
+    snprintf(cfg->nws_station, sizeof(cfg->nws_station), "%s", loc->station);
+    return true;
+}
+
+/**
+ * @brief Persist the resolved office, grid and station into the NVS settings blob.
+ * v2: atomic read-modify-write via settings_update (no lost concurrent writes).
+ * @version 2
  * @req REQ-WX-001
  * @return ESP_OK, or the settings_load / settings_save error.
  */
 static esp_err_t location_cache_save(const nws_location_t *loc)
 {
-    clock_settings_t cfg;
-    esp_err_t err = settings_load(&cfg);
-    if (err != ESP_OK) return err;
-
-    snprintf(cfg.nws_office, sizeof(cfg.nws_office), "%s", loc->office);
-    cfg.nws_grid_x = loc->grid_x;
-    cfg.nws_grid_y = loc->grid_y;
-    snprintf(cfg.nws_station, sizeof(cfg.nws_station), "%s", loc->station);
-
-    return settings_save(&cfg);
+    return settings_update(location_cache_mutator, (void *)loc);
 }
 
 // ---------------------------------------------------------------------------

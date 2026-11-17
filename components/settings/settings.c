@@ -9,6 +9,8 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include <string.h>
 
 static const char* TAG = "settings";
@@ -190,14 +192,40 @@ static esp_err_t settings_erase_and_commit(nvs_handle_t handle)
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+/** Recursive: settings_update() holds it across its own load + save. Created in settings_init()
+ *  at boot, before any other task can write settings. */
+static SemaphoreHandle_t s_settings_mutex;
+
+/**
+ * @brief Take the settings lock (no-op before settings_init()).
+ * @version 1
+ * @dg_internal
+ */
+static void settings_lock(void)
+{
+    if (s_settings_mutex) xSemaphoreTakeRecursive(s_settings_mutex, portMAX_DELAY);
+}
+
+/**
+ * @brief Release the settings lock (no-op before settings_init()).
+ * @version 1
+ * @dg_internal
+ */
+static void settings_unlock(void)
+{
+    if (s_settings_mutex) xSemaphoreGiveRecursive(s_settings_mutex);
+}
+
 /**
  * @brief Initialise the NVS flash partition, erasing and retrying if it is truncated or from a newer version.
- * @version 1
+ * v2: creates the recursive settings lock used by settings_update/save/reset.
+ * @version 2
  * @req REQ-SET-001
  * @return ESP_OK on success, or the nvs_flash_init error.
  */
 esp_err_t settings_init(void) {
     ESP_LOGI(TAG, "Initializing settings system");
+    if (!s_settings_mutex) s_settings_mutex = xSemaphoreCreateRecursiveMutex();
 
     // Initialize NVS
     esp_err_t err = nvs_flash_init();
@@ -249,7 +277,8 @@ esp_err_t settings_load(clock_settings_t* out) {
  *
  * @param in  Settings to save.
  * @return ESP_OK on success; error code on failure.
- * @version 1
+ * v2: writes under the settings lock (cannot interleave a settings_update).
+ * @version 2
  * @req REQ-SET-001
  */
 esp_err_t settings_save(const clock_settings_t* in) {
@@ -261,7 +290,9 @@ esp_err_t settings_save(const clock_settings_t* in) {
         ESP_LOGE(TAG, "Failed to open NVS for writing: %d", (int)err);
         return err;
     }
+    settings_lock();
     err = settings_write_and_commit(handle, in);
+    settings_unlock();
     nvs_close(handle);
     if (err == ESP_OK) ESP_LOGI(TAG, "Settings saved successfully");
     return err;
@@ -271,7 +302,8 @@ esp_err_t settings_save(const clock_settings_t* in) {
  * @brief Erase persisted settings from NVS (restores defaults on next load).
  *
  * @return ESP_OK on success; error code on commit failure.
- * @version 1
+ * v2: erases under the settings lock.
+ * @version 2
  * @req REQ-SET-001
  */
 esp_err_t settings_reset(void) {
@@ -282,9 +314,30 @@ esp_err_t settings_reset(void) {
         ESP_LOGW(TAG, "No settings to erase");
         return ESP_OK;
     }
+    settings_lock();
     err = settings_erase_and_commit(handle);
+    settings_unlock();
     nvs_close(handle);
     if (err == ESP_OK) ESP_LOGI(TAG, "Settings reset complete");
+    return err;
+}
+
+/**
+ * @brief Atomic read-modify-write: lock, load, apply @p fn, save if it returns true, unlock.
+ * @version 1
+ * @req REQ-SET-001
+ * @return ESP_OK (also when @p fn chose not to save), ESP_ERR_INVALID_ARG, or the save error.
+ */
+esp_err_t settings_update(settings_mutator_t fn, void *ctx) {
+    if (!fn) return ESP_ERR_INVALID_ARG;
+    settings_lock();
+    clock_settings_t cfg;
+    esp_err_t err = settings_load(&cfg);
+    if (err == ESP_OK && fn(&cfg, ctx)) {
+        err = settings_save(&cfg);
+    }
+    settings_unlock();
+    if (err != ESP_OK) ESP_LOGE(TAG, "settings_update failed: %s", esp_err_to_name(err));
     return err;
 }
 
