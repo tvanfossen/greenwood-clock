@@ -1,0 +1,34 @@
+--- a/esp32_p4_function_ev_board.c	2025-06-18 20:50:52.064866115 -0400
++++ b/esp32_p4_function_ev_board.c	2026-11-16 00:20:56.497979833 -0500
+@@ -92,6 +92,9 @@
+         .sda_io_num = BSP_I2C_SDA,
+         .scl_io_num = BSP_I2C_SCL,
+         .i2c_port = BSP_I2C_NUM,
++        /* greenwood patch: the board has external pull-ups; the internal ~45k in parallel is
++         * electrically negligible and silences IDF's "check pull-up resistances" warning. */
++        .flags.enable_internal_pullup = true,
+     };
+     BSP_ERROR_CHECK_RETURN_ERR(i2c_new_master_bus(&i2c_bus_conf, &i2c_handle));
+ 
+@@ -471,6 +474,13 @@
+ 
+ esp_err_t bsp_display_brightness_init(void)
+ {
++    /* greenwood patch: bsp_display_start_with_config() and bsp_display_new_with_handles() both
++     * call this; the second LEDC claim of the backlight GPIO logged "GPIO 26 is not usable".
++     * Configure once. */
++    static bool s_brightness_initialized = false;
++    if (s_brightness_initialized) {
++        return ESP_OK;
++    }
+     // Setup LEDC peripheral for PWM backlight control
+     const ledc_channel_config_t LCD_backlight_channel = {
+         .gpio_num = BSP_LCD_BACKLIGHT,
+@@ -491,6 +501,7 @@
+ 
+     BSP_ERROR_CHECK_RETURN_ERR(ledc_timer_config(&LCD_backlight_timer));
+     BSP_ERROR_CHECK_RETURN_ERR(ledc_channel_config(&LCD_backlight_channel));
++    s_brightness_initialized = true;
+     return ESP_OK;
+ }
+ 
