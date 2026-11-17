@@ -10,3 +10,14 @@ dependencies:
   espressif/esp_lcd_ek79007: "*"
 
   espressif/mdns: "*"
+
+  # Transitive deps pinned to the versions this firmware was validated on, so an
+  # IDF bump or lock re-solve can't silently upgrade the display/touch stack.
+  # Bump deliberately, then re-verify on hardware.
+  espressif/esp_lvgl_port: "2.7.2"
+  espressif/esp_lcd_touch_gt911: "1.2.0~1"
+  espressif/esp_lcd_lt8912b: "0.2.0"
+  espressif/eppp_link: "1.1.4"
+
+  # Built from components/lvgl (our fork, v9.5.0+); pinned so the lock matches it.
+  lvgl/lvgl: "9.5.0"
