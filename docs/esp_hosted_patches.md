@@ -1,11 +1,14 @@
-# ESP-Hosted (C6 Wi-Fi) local patches — REAPPLY AFTER COMPONENT RE-FETCH
+# ESP-Hosted (C6 Wi-Fi) local patches: VENDORED
 
-`managed_components/` is **git-ignored**. The edits below live only in the working
-tree and are **lost whenever the ESP-Hosted component is re-fetched** (e.g. the
-component manager restores it on a hash mismatch during `idf.py reconfigure`).
-If Wi-Fi/TLS breaks after a clean checkout or a component update, reapply these.
+Since 2026-11-17, esp_hosted 2.12.0 is vendored in `components/espressif__esp_hosted/`
+as the pristine registry copy plus `patches/esp_hosted-2.12.0-sdio-rx-bound.patch`, and
+committed. Before that, these edits lived only in the git-ignored `managed_components/`
+and were silently lost on every component re-fetch.
 
-File: `managed_components/espressif__esp_hosted/host/drivers/transport/sdio/sdio_drv.c`
+When updating esp_hosted: download the new version from the registry, re-apply the
+patch (or confirm upstream fixed it), and regenerate the patch file.
+
+File: `components/espressif__esp_hosted/host/drivers/transport/sdio/sdio_drv.c`
 Function: `sdio_read_task()` RX path (~line 1150).
 
 ## Why (root cause, verified 2026-07-05)
