@@ -1,3 +1,8 @@
+/**
+ * @fileoverview Web control panel script (served from /www): display state, surprise, weather, schedule, settings, assets and device info via the local API.
+ * @brief Web control panel logic for the Greenwood Clock.
+ * @version 1
+ */
 // Greenwood Clock — Control Page
 // Vanilla JS, no dependencies
 
@@ -5,6 +10,11 @@ const API = '';  // same origin
 
 // ---- Utility ----
 
+/**
+ * Show @p msg in a toast element (created on first use) for 2.5 s.
+ * @version 1
+ * @utility
+ */
 function toast(msg) {
   let el = document.querySelector('.toast');
   if (!el) {
@@ -17,6 +27,12 @@ function toast(msg) {
   setTimeout(() => el.classList.remove('show'), 2500);
 }
 
+/**
+ * Fetch an API path on the same origin; throws (after logging) on network errors or a non-OK status, using the body text as the message.
+ * @version 1
+ * @utility
+ * @return Promise resolving to the parsed JSON response.
+ */
 async function api(path, opts) {
   try {
     const res = await fetch(API + path, opts);
@@ -33,6 +49,11 @@ async function api(path, opts) {
 
 // ---- Display Control ----
 
+/**
+ * Show the current display FSM state from GET /api/display/state and set the connection indicator by whether it answered.
+ * @version 1
+ * @req REQ-UI-002
+ */
 async function refreshState() {
   try {
     const data = await api('/api/display/state');
@@ -43,6 +64,11 @@ async function refreshState() {
   }
 }
 
+/**
+ * POST a display state to /api/display/state, toast the result and re-read the state after 500 ms.
+ * @version 1
+ * @req REQ-UI-002
+ */
 async function forceState(state) {
   try {
     await api('/api/display/state', {
@@ -59,6 +85,11 @@ async function forceState(state) {
 
 // ---- Surprise Message ----
 
+/**
+ * Build a one-label surprise layout from the message, colour and duration inputs and POST it to /api/display/surprise.
+ * @version 1
+ * @req REQ-UI-002
+ */
 async function sendSurprise() {
   const text = document.getElementById('surprise-text').value.trim();
   if (!text) { toast('Enter a message'); return; }
@@ -95,9 +126,26 @@ async function sendSurprise() {
 
 // ---- Weather ----
 
+/**
+ * Convert Celsius to Fahrenheit.
+ * @version 1
+ * @utility
+ * @return Fahrenheit rounded to a whole-number string.
+ */
 function cToF(c) { return (c * 9/5 + 32).toFixed(0); }
+/**
+ * Convert km/h to mph.
+ * @version 1
+ * @utility
+ * @return mph rounded to a whole-number string.
+ */
 function kmhToMph(k) { return (k * 0.621371).toFixed(0); }
 
+/**
+ * Render current conditions from GET /api/weather/current (temp, description, feels-like, wind, humidity in imperial units).
+ * @version 1
+ * @req REQ-UI-002
+ */
 async function refreshWeather() {
   try {
     const c = await api('/api/weather/current');
@@ -119,6 +167,30 @@ async function refreshWeather() {
   }
 }
 
+/**
+ * Build one forecast tile for period i, pairing a day period with the night after it.
+ * @version 1
+ * @req REQ-UI-002
+ * @return Tile HTML, or '' for a standalone night period that is not first.
+ */
+function forecastDayHtml(periods, i) {
+  const p = periods[i];
+  if (!p.daytime && i > 0) return '';  // skip standalone night periods
+  const night = periods[i + 1];
+  const hi = p.daytime ? p.temp : (night ? night.temp : '');
+  const lo = night && !night.daytime ? night.temp : '';
+  return '<div class="forecast-day">' +
+    '<div class="day-name">' + p.name.substring(0, 3) + '</div>' +
+    '<div>' + p.short + '</div>' +
+    '<div class="temps">' + hi + '/' + (lo || '--') + '</div>' +
+  '</div>';
+}
+
+/**
+ * Render the forecast from GET /api/weather/forecast as one tile per day with high/low temperatures.
+ * @version 2
+ * @req REQ-UI-002
+ */
 async function refreshForecast() {
   try {
     const fc = await api('/api/weather/forecast');
@@ -130,16 +202,7 @@ async function refreshForecast() {
     // Group into days (pair day + night periods)
     let html = '';
     for (let i = 0; i < fc.periods.length; i++) {
-      const p = fc.periods[i];
-      if (!p.daytime && i > 0) continue;  // skip standalone night periods
-      const night = fc.periods[i+1];
-      const hi = p.daytime ? p.temp : (night ? night.temp : '');
-      const lo = night && !night.daytime ? night.temp : '';
-      html += '<div class="forecast-day">' +
-        '<div class="day-name">' + p.name.substring(0, 3) + '</div>' +
-        '<div>' + p.short + '</div>' +
-        '<div class="temps">' + hi + '/' + (lo || '--') + '</div>' +
-      '</div>';
+      html += forecastDayHtml(fc.periods, i);
     }
     el.innerHTML = html;
   } catch {
@@ -147,6 +210,11 @@ async function refreshForecast() {
   }
 }
 
+/**
+ * Render active alerts from GET /api/weather/alerts as banners styled by severity.
+ * @version 1
+ * @req REQ-UI-002
+ */
 async function refreshAlerts() {
   try {
     const al = await api('/api/weather/alerts');
@@ -184,6 +252,11 @@ const SCHED_FIELDS = [
   {key: 'ambient_show_s', label: 'Ambient Show', unit: 's'},
 ];
 
+/**
+ * Build the schedule number inputs (SCHED_FIELDS) filled from GET /api/display/schedule.
+ * @version 1
+ * @req REQ-UI-002
+ */
 async function refreshSchedule() {
   try {
     const data = await api('/api/display/schedule');
@@ -203,6 +276,11 @@ async function refreshSchedule() {
   }
 }
 
+/**
+ * POST the schedule inputs (integers, 0 when empty) to /api/display/schedule.
+ * @version 1
+ * @req REQ-UI-002
+ */
 async function saveSchedule() {
   const body = {};
   for (const f of SCHED_FIELDS) {
@@ -223,6 +301,32 @@ async function saveSchedule() {
 
 // ---- Settings ----
 
+/**
+ * Fill the background dropdown with "None", every backgrounds asset, and the current value if it is not an asset.
+ * @version 1
+ * @req REQ-UI-002
+ */
+async function populateBackgroundSelect(sel, bg) {
+  sel.innerHTML = '<option value="">None</option>';
+  try {
+    const assets = await api('/api/assets/list');
+    const backgrounds = (assets.assets || []).filter(a => a.category === 'backgrounds');
+    for (const a of backgrounds) {
+      const path = 'A:/backgrounds/' + a.name;
+      sel.innerHTML += '<option value="' + path + '"' +
+        (bg === path ? ' selected' : '') + '>' + a.name + '</option>';
+    }
+  } catch { /* no assets */ }
+  if (bg && !sel.querySelector('[value="' + bg + '"]')) {
+    sel.innerHTML += '<option value="' + bg + '" selected>' + bg + '</option>';
+  }
+}
+
+/**
+ * Fill brightness, text colour and the background dropdown (backgrounds assets plus the current value) from GET /api/settings and /api/assets/list.
+ * @version 2
+ * @req REQ-UI-002
+ */
 async function refreshSettings() {
   try {
     const data = await api('/api/settings');
@@ -231,24 +335,8 @@ async function refreshSettings() {
     document.getElementById('set-text-color').value = data.text_color || '#ffffff';
 
     // Populate background dropdown from assets
-    const bg = data.background_image || '';
-    const sel = document.getElementById('set-background');
-    sel.innerHTML = '<option value="">None</option>';
-    try {
-      const assets = await api('/api/assets/list');
-      if (assets.assets) {
-        for (const a of assets.assets) {
-          if (a.category === 'backgrounds') {
-            const path = 'A:/backgrounds/' + a.name;
-            sel.innerHTML += '<option value="' + path + '"' +
-              (bg === path ? ' selected' : '') + '>' + a.name + '</option>';
-          }
-        }
-      }
-    } catch { /* no assets */ }
-    if (bg && !sel.querySelector('[value="' + bg + '"]')) {
-      sel.innerHTML += '<option value="' + bg + '" selected>' + bg + '</option>';
-    }
+    await populateBackgroundSelect(document.getElementById('set-background'),
+                                   data.background_image || '');
   } catch {
     // silent
   }
@@ -258,6 +346,11 @@ document.getElementById('set-brightness').addEventListener('input', function() {
   document.getElementById('brightness-val').textContent = this.value + '%';
 });
 
+/**
+ * POST brightness, text colour and background image to /api/settings.
+ * @version 1
+ * @req REQ-UI-002
+ */
 async function saveSettings() {
   const body = {
     brightness: parseInt(document.getElementById('set-brightness').value),
@@ -278,6 +371,11 @@ async function saveSettings() {
 
 // ---- Asset Manager ----
 
+/**
+ * List assets with sizes from GET /api/assets/list.
+ * @version 1
+ * @req REQ-UI-002
+ */
 async function refreshAssets() {
   try {
     const data = await api('/api/assets/list');
@@ -300,6 +398,11 @@ async function refreshAssets() {
   }
 }
 
+/**
+ * Upload the chosen file to <category>/<name> via POST /api/assets/upload, then refresh the asset list.
+ * @version 1
+ * @req REQ-UI-002
+ */
 async function uploadAsset() {
   const fileInput = document.getElementById('asset-file');
   const category = document.getElementById('asset-category').value;
@@ -324,6 +427,11 @@ async function uploadAsset() {
 
 // ---- Device Info ----
 
+/**
+ * Show uptime (minutes), free heap (KB) and SD card state from GET /api/status.
+ * @version 1
+ * @req REQ-UI-002
+ */
 async function refreshDeviceInfo() {
   try {
     const data = await api('/api/status');
@@ -340,6 +448,11 @@ async function refreshDeviceInfo() {
   }
 }
 
+/**
+ * After a confirm dialog, POST /debug/reboot and toast the result.
+ * @version 1
+ * @req REQ-UI-002
+ */
 async function rebootDevice() {
   if (!confirm('Reboot the clock?')) return;
   try {
@@ -352,6 +465,11 @@ async function rebootDevice() {
 
 // ---- Init ----
 
+/**
+ * Refresh every panel section once.
+ * @version 1
+ * @req REQ-UI-002
+ */
 function refreshAll() {
   refreshState();
   refreshWeather();

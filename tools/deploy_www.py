@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+## @file deploy_www.py
+## @brief Host tool: upload the web control panel (index.html, style.css, app.js) to /sdcard/www/ via POST /files/.
+## @version 1
 """Deploy web control page files to the clock's SD card via HTTP API."""
 
 import argparse
@@ -14,6 +17,10 @@ WWW_FILES = [
 ]
 
 
+## @brief POST one local file's bytes to /files/<remote_path> on the device and print the size and HTTP status.
+## v2: drop the unused response-body variable (ruff F841); the response is still drained.
+## @version 2
+## @req REQ-TOOL-002
 def push_file(host: str, local_path: str, remote_path: str) -> None:
     url = f"http://{host}/files/{remote_path}"
     with open(local_path, "rb") as f:
@@ -26,10 +33,13 @@ def push_file(host: str, local_path: str, remote_path: str) -> None:
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=60) as resp:
-        body = resp.read().decode(errors="replace")
+        resp.read()  # drain the response before the connection closes
         print(f"  {len(data):>6,} bytes -> /sdcard/{remote_path}  ({resp.status})")
 
 
+## @brief CLI entry: push every WWW_FILES entry to the device, skipping missing files; exit 1 if any file failed.
+## @version 1
+## @req REQ-TOOL-002
 def main():
     parser = argparse.ArgumentParser(description="Deploy web UI to clock SD card")
     parser.add_argument(

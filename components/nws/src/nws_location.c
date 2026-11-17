@@ -1,7 +1,10 @@
-// components/nws/src/nws_location.c
-//
-// Resolve lat/lon to NWS grid coordinates and nearest observation station.
-// Caches result in NVS to avoid redundant /points calls on reboot.
+/**
+ * @file nws_location.c
+ * @version 1
+ * @brief Resolve lat/lon to NWS grid coordinates and nearest observation station.
+ *
+ * Caches the result in NVS to avoid redundant /points calls on reboot.
+ */
 
 #include "nws_internal.h"
 #include "settings.h"
@@ -14,6 +17,12 @@ static const char *TAG = "nws_loc";
 // NVS cache helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief Fill @p out from the NVS-cached NWS location if it matches @p lat / @p lon (~100 m).
+ * @version 1
+ * @req REQ-WX-001
+ * @return true on a cache hit (out resolved), false if absent or the location moved.
+ */
 static bool location_cached(float lat, float lon, nws_location_t *out)
 {
     clock_settings_t cfg;
@@ -42,6 +51,12 @@ static bool location_cached(float lat, float lon, nws_location_t *out)
     return true;
 }
 
+/**
+ * @brief Persist the resolved office, grid and station into the NVS settings blob.
+ * @version 1
+ * @req REQ-WX-001
+ * @return ESP_OK, or the settings_load / settings_save error.
+ */
 static esp_err_t location_cache_save(const nws_location_t *loc)
 {
     clock_settings_t cfg;
@@ -60,6 +75,81 @@ static esp_err_t location_cache_save(const nws_location_t *loc)
 // Parse /points response
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief Copy the first feature's stationIdentifier from a /stations response into @p out.
+ * @version 1
+ * @req REQ-WX-001
+ * @return true if a station ID was found and copied.
+ */
+static bool station_id_from_features(const cJSON *st_root, nws_location_t *out)
+{
+    const cJSON *features = cJSON_GetObjectItemCaseSensitive(st_root, "features");
+    if (!cJSON_IsArray(features) || cJSON_GetArraySize(features) == 0) {
+        return false;
+    }
+    const cJSON *first = cJSON_GetArrayItem(features, 0);
+    const cJSON *st_props = cJSON_GetObjectItemCaseSensitive(first, "properties");
+    const cJSON *st_id = st_props
+        ? cJSON_GetObjectItemCaseSensitive(st_props, "stationIdentifier") : NULL;
+    bool found = cJSON_IsString(st_id) && st_id->valuestring;
+    if (found) {
+        snprintf(out->station, sizeof(out->station), "%s", st_id->valuestring);
+    }
+    return found;
+}
+
+/**
+ * @brief Fetch the observation-stations list at @p url and take the nearest (first) station.
+ * @version 1
+ * @req REQ-WX-001
+ */
+static void fetch_nearest_station(const char *url, nws_location_t *out)
+{
+    char *stations_json = nws_http_fetch_json(TAG, url);
+    if (!stations_json) {
+        return;
+    }
+    cJSON *st_root = cJSON_Parse(stations_json);
+    if (st_root && station_id_from_features(st_root, out)) {
+        ESP_LOGI(TAG, "nearest station: %s", out->station);
+    }
+    cJSON_Delete(st_root);  // NULL-safe
+    free(stations_json);
+}
+
+/**
+ * @brief Extract office (cwa), grid X/Y and the observationStations URL from /points properties.
+ * @version 1
+ * @req REQ-WX-001
+ */
+static void parse_points_props(const cJSON *props, nws_location_t *out,
+                               char *station_list_url, size_t url_len)
+{
+    // Extract grid office (e.g. "https://api.weather.gov/offices/GRR" → "GRR")
+    const cJSON *forecast_office = cJSON_GetObjectItemCaseSensitive(props, "cwa");
+    if (cJSON_IsString(forecast_office) && forecast_office->valuestring) {
+        snprintf(out->office, sizeof(out->office), "%s", forecast_office->valuestring);
+    }
+
+    // Grid coordinates
+    const cJSON *gx = cJSON_GetObjectItemCaseSensitive(props, "gridX");
+    const cJSON *gy = cJSON_GetObjectItemCaseSensitive(props, "gridY");
+    if (cJSON_IsNumber(gx)) out->grid_x = gx->valueint;
+    if (cJSON_IsNumber(gy)) out->grid_y = gy->valueint;
+
+    // Observation stations URL — we need to follow this to get station ID
+    const cJSON *stations_url = cJSON_GetObjectItemCaseSensitive(props, "observationStations");
+    if (cJSON_IsString(stations_url) && stations_url->valuestring) {
+        snprintf(station_list_url, url_len, "%s", stations_url->valuestring);
+    }
+}
+
+/**
+ * @brief Parse a /points response into @p out, then resolve the nearest observation station.
+ * @version 2
+ * @req REQ-WX-001
+ * @return ESP_OK when office and grid were found; ESP_ERR_INVALID_RESPONSE otherwise.
+ */
 static esp_err_t parse_points_response(const char *json_str, nws_location_t *out)
 {
     cJSON *root = cJSON_Parse(json_str);
@@ -75,25 +165,8 @@ static esp_err_t parse_points_response(const char *json_str, nws_location_t *out
         return ESP_ERR_INVALID_RESPONSE;
     }
 
-    // Extract grid office (e.g. "https://api.weather.gov/offices/GRR" → "GRR")
-    const cJSON *forecast_office = cJSON_GetObjectItemCaseSensitive(props, "cwa");
-    if (cJSON_IsString(forecast_office) && forecast_office->valuestring) {
-        snprintf(out->office, sizeof(out->office), "%s", forecast_office->valuestring);
-    }
-
-    // Grid coordinates
-    const cJSON *gx = cJSON_GetObjectItemCaseSensitive(props, "gridX");
-    const cJSON *gy = cJSON_GetObjectItemCaseSensitive(props, "gridY");
-    if (cJSON_IsNumber(gx)) out->grid_x = gx->valueint;
-    if (cJSON_IsNumber(gy)) out->grid_y = gy->valueint;
-
-    // Observation stations URL — we need to follow this to get station ID
-    const cJSON *stations_url = cJSON_GetObjectItemCaseSensitive(props, "observationStations");
     char station_list_url[256] = "";
-    if (cJSON_IsString(stations_url) && stations_url->valuestring) {
-        snprintf(station_list_url, sizeof(station_list_url), "%s", stations_url->valuestring);
-    }
-
+    parse_points_props(props, out, station_list_url, sizeof(station_list_url));
     cJSON_Delete(root);
 
     if (out->office[0] == '\0' || out->grid_x == 0) {
@@ -105,26 +178,7 @@ static esp_err_t parse_points_response(const char *json_str, nws_location_t *out
 
     // Fetch observation stations list to get nearest station
     if (station_list_url[0] != '\0') {
-        char *stations_json = nws_http_fetch_json(TAG, station_list_url);
-        if (stations_json) {
-            cJSON *st_root = cJSON_Parse(stations_json);
-            if (st_root) {
-                const cJSON *features = cJSON_GetObjectItemCaseSensitive(st_root, "features");
-                if (cJSON_IsArray(features) && cJSON_GetArraySize(features) > 0) {
-                    const cJSON *first = cJSON_GetArrayItem(features, 0);
-                    const cJSON *st_props = cJSON_GetObjectItemCaseSensitive(first, "properties");
-                    if (st_props) {
-                        const cJSON *st_id = cJSON_GetObjectItemCaseSensitive(st_props, "stationIdentifier");
-                        if (cJSON_IsString(st_id) && st_id->valuestring) {
-                            snprintf(out->station, sizeof(out->station), "%s", st_id->valuestring);
-                            ESP_LOGI(TAG, "nearest station: %s", out->station);
-                        }
-                    }
-                }
-                cJSON_Delete(st_root);
-            }
-            free(stations_json);
-        }
+        fetch_nearest_station(station_list_url, out);
     }
 
     // Fallback if station fetch failed
@@ -141,6 +195,12 @@ static esp_err_t parse_points_response(const char *json_str, nws_location_t *out
 // Public API
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief Resolve lat/lon to NWS office, grid and nearest station (NVS cache first, then /points).
+ * @version 1
+ * @req REQ-WX-001
+ * @return ESP_OK when resolved; ESP_ERR_HTTP_CONNECT or ESP_ERR_INVALID_RESPONSE on failure.
+ */
 esp_err_t nws_resolve_location(float lat, float lon, nws_location_t *out)
 {
     memset(out, 0, sizeof(*out));
