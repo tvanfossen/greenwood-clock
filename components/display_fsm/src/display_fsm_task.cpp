@@ -10,6 +10,7 @@
 #include "display_scheduler.h"
 #include "image_decode.h"
 #include "ui_contrast.h"
+#include "clock_animation.h"
 
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
@@ -54,7 +55,13 @@ static QueueHandle_t s_event_queue = NULL;
 
 static QueueHandle_t s_loader_queue = NULL;
 
-// Read a Lottie JSON file into a fresh SPIRAM buffer (off the LVGL lock).
+/**
+ * @brief Read a Lottie JSON file into a fresh SPIRAM buffer (off the LVGL lock).
+ *
+ * @dg_internal
+ * @version 1
+ * @return Heap buffer (caller frees with heap_caps_free) with *size_out set, or NULL on open/alloc/read failure.
+ */
 static uint8_t *read_lottie_file(const char *path, size_t *size_out)
 {
     FILE *f = fopen(path, "rb");
@@ -77,14 +84,21 @@ static uint8_t *read_lottie_file(const char *path, size_t *size_out)
     return buf;
 }
 
-// Attach already-read Lottie data and retime to the target FPS. Holds the LVGL
-// lock across BOTH parse and finalize: the widget may be destroyed (e.g. user
-// swipes away from the weather screen) while we read the file off-lock. Widget
-// destruction runs under the LVGL lock on the FSM task, so taking the lock here
-// and validating the widget BEFORE touching it makes the parse+finalize atomic
-// w.r.t. deletion — closing the use-after-free where the loader called
-// tvg_animation_get_total_frame on a freed widget (this=0x1f8 crash).
-// ThorVG copies the buffer (copy=true), so the caller frees it afterwards.
+/**
+ * @brief Attach already-read Lottie data to the job's widget and retime it to the target FPS.
+ *
+ * Attach already-read Lottie data and retime to the target FPS. Holds the LVGL
+ * lock across BOTH parse and finalize: the widget may be destroyed (e.g. user
+ * swipes away from the weather screen) while we read the file off-lock. Widget
+ * destruction runs under the LVGL lock on the FSM task, so taking the lock here
+ * and validating the widget BEFORE touching it makes the parse+finalize atomic
+ * w.r.t. deletion — closing the use-after-free where the loader called
+ * tvg_animation_get_total_frame on a freed widget (this=0x1f8 crash).
+ * ThorVG copies the buffer (copy=true), so the caller frees it afterwards.
+ *
+ * @dg_internal
+ * @version 1
+ */
 static void apply_lottie_src(const lottie_load_job_t *job, const uint8_t *data, size_t size)
 {
     lvgl_port_lock(0);
@@ -113,6 +127,12 @@ static void apply_lottie_src(const lottie_load_job_t *job, const uint8_t *data, 
     lvgl_port_unlock();
 }
 
+/**
+ * @brief Persistent Lottie loader task: dequeue jobs, read the file off-lock, then parse/apply under the LVGL lock.
+ *
+ * @dg_internal
+ * @version 1
+ */
 static void lottie_loader_task(void *arg)
 {
     (void)arg;
@@ -140,6 +160,12 @@ static void lottie_loader_task(void *arg)
     }
 }
 
+/**
+ * @brief Create the Lottie loader job queue and spawn the SPIRAM-stack loader task (idempotent).
+ *
+ * @dg_internal
+ * @version 1
+ */
 static void lottie_loader_init(void)
 {
     if (s_loader_queue) return;
@@ -163,6 +189,12 @@ static void lottie_loader_init(void)
 // Event dispatch — maps C event struct to TinyFSM event dispatch
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief Map a C display_event_t onto the matching TinyFSM event and dispatch it to DisplayFsm.
+ *
+ * @dg_internal
+ * @version 1
+ */
 static void dispatch_event(const display_event_t *evt)
 {
     switch (evt->type) {
@@ -242,13 +274,25 @@ static void dispatch_event(const display_event_t *evt)
 // Background image loading (moved from ui.c)
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief Check whether a path has a .gif extension (case-insensitive).
+ *
+ * @dg_internal
+ * @version 1
+ * @return true if the path ends in .gif, false otherwise.
+ */
 static bool is_gif_path(const char *path)
 {
     const char *ext = strrchr(path, '.');
     return ext && strcasecmp(ext, ".gif") == 0;
 }
 
-// Translate an LVGL drive path ("A:/..", "B:/..") to a POSIX mount path.
+/**
+ * @brief Translate an LVGL drive path ("A:/..", "B:/..") to a POSIX mount path.
+ *
+ * @dg_internal
+ * @version 1
+ */
 static void bg_lvgl_to_fs_path(const char *lvgl_path, char *out, size_t out_sz)
 {
     if (lvgl_path[0] && lvgl_path[1] == ':') {
@@ -263,12 +307,20 @@ static void bg_lvgl_to_fs_path(const char *lvgl_path, char *out, size_t out_sz)
 static lv_obj_t *s_bg_img = NULL;
 static lv_image_dsc_t *s_bg_dsc = NULL;   // persistent decoded background (non-GIF)
 
-// Predecode a non-GIF background PNG ONCE (outside the LVGL lock — SD I/O + a
-// ~2.5MB alloc) into a persistent SPIRAM descriptor. Handing LVGL a static
-// descriptor stops it re-decoding the full-screen bitmap from disk whenever its
-// image cache evicts it under memory pressure — the root cause of clock-screen
-// lag and the occasional blank background. NULL → caller uses on-demand decode.
-// MUST run in a deep-stack task (fsm_task): stb_image inflate needs ~8KB stack.
+/**
+ * @brief Predecode a non-GIF background PNG once into a persistent, vertically-flipped RGB565 SPIRAM descriptor.
+ *
+ * Predecode a non-GIF background PNG ONCE (outside the LVGL lock — SD I/O + a
+ * ~2.5MB alloc) into a persistent SPIRAM descriptor. Handing LVGL a static
+ * descriptor stops it re-decoding the full-screen bitmap from disk whenever its
+ * image cache evicts it under memory pressure — the root cause of clock-screen
+ * lag and the occasional blank background. NULL → caller uses on-demand decode.
+ * MUST run in a deep-stack task (fsm_task): stb_image inflate needs ~8KB stack.
+ *
+ * @dg_internal
+ * @version 1
+ * @return Decoded descriptor, or NULL on failure (caller then skips the background).
+ */
 static lv_image_dsc_t *predecode_bg(const char *path)
 {
     char fs_path[160];
@@ -288,8 +340,16 @@ static lv_image_dsc_t *predecode_bg(const char *path)
     return dsc;
 }
 
-// Create a looping, screen-sized GIF background. Caller holds the LVGL lock;
-// this briefly drops it for the GIF decoder init, then re-locks.
+/**
+ * @brief Create a looping, screen-sized GIF background object.
+ *
+ * Create a looping, screen-sized GIF background. Caller holds the LVGL lock;
+ * this briefly drops it for the GIF decoder init, then re-locks.
+ *
+ * @dg_internal
+ * @version 1
+ * @return The new GIF object.
+ */
 static lv_obj_t *create_gif_bg(lv_obj_t *scr, const char *path)
 {
     lv_obj_t *obj = lv_gif_create(scr);
@@ -306,8 +366,16 @@ static lv_obj_t *create_gif_bg(lv_obj_t *scr, const char *path)
     return obj;
 }
 
-// Create a static image background from a predecoded descriptor, or fall back
-// to LVGL's on-demand decode of the path.
+/**
+ * @brief Create a static image background from a predecoded descriptor, adopting it as the persistent s_bg_dsc.
+ *
+ * Create a static image background from a predecoded descriptor, or fall back
+ * to LVGL's on-demand decode of the path.
+ *
+ * @dg_internal
+ * @version 1
+ * @return The new image object, or NULL if no descriptor was decoded.
+ */
 static lv_obj_t *create_static_bg(lv_obj_t *scr, const char *path, lv_image_dsc_t *dsc)
 {
     if (!dsc) {
@@ -326,6 +394,12 @@ static lv_obj_t *create_static_bg(lv_obj_t *scr, const char *path, lv_image_dsc_
     return obj;
 }
 
+/**
+ * @brief Center the background object, send it to the back, and make it non-scrollable and layout-ignored.
+ *
+ * @dg_internal
+ * @version 1
+ */
 static void apply_bg_common_flags(lv_obj_t *obj)
 {
     lv_obj_align(obj, LV_ALIGN_CENTER, 0, 0);
@@ -334,7 +408,12 @@ static void apply_bg_common_flags(lv_obj_t *obj)
     lv_obj_add_flag(obj, LV_OBJ_FLAG_IGNORE_LAYOUT);
 }
 
-// Verify the background loaded; delete + null it out on failure. Publishes s_bg_img.
+/**
+ * @brief Verify the background loaded; delete + null it out on failure. Publishes s_bg_img.
+ *
+ * @dg_internal
+ * @version 1
+ */
 static void finalize_bg(lv_obj_t *obj, bool gif, const char *path)
 {
     bool loaded = gif ? lv_gif_is_loaded(obj) : (lv_img_get_src(obj) != NULL);
@@ -348,6 +427,12 @@ static void finalize_bg(lv_obj_t *obj, bool gif, const char *path)
     s_bg_img = obj;
 }
 
+/**
+ * @brief Load the configured background (GIF or predecoded PNG) onto the screen, degrading gracefully on failure.
+ *
+ * @dg_internal
+ * @version 1
+ */
 static void load_background(lv_obj_t *scr, const clock_settings_t *cfg)
 {
     if (!sdcard_is_mounted() || !cfg || !cfg->background_image[0]) {
@@ -372,15 +457,23 @@ static void load_background(lv_obj_t *scr, const clock_settings_t *cfg)
     lvgl_port_unlock();
 }
 
-// Sample the (predecoded) background under the full clock and set the clock text
-// colour to a guaranteed-legible variant of the user's chosen colour (keep hue,
-// adjust OKLCH lightness). The bg buffer is vertically flipped vs the screen
-// (the panel flips the RGB565 blit), so the clock's top screen region maps to the
-// bottom of the buffer. GIF backgrounds have no sampleable buffer → use the raw
-// colour.
-// Legible version of `user` over the (vertically-flipped) background image in the
-// given screen-space area. The RGB565 bg buffer is pre-flipped vs the screen, so
-// screen-Y maps to buffer-Y as h-1-y.
+/**
+ * @brief Legible version of `user` over the (vertically-flipped) background image in the given screen-space area.
+ *
+ * Sample the (predecoded) background under the full clock and set the clock text
+ * colour to a guaranteed-legible variant of the user's chosen colour (keep hue,
+ * adjust OKLCH lightness). The bg buffer is vertically flipped vs the screen
+ * (the panel flips the RGB565 blit), so the clock's top screen region maps to the
+ * bottom of the buffer. GIF backgrounds have no sampleable buffer → use the raw
+ * colour.
+ * Legible version of `user` over the (vertically-flipped) background image in the
+ * given screen-space area. The RGB565 bg buffer is pre-flipped vs the screen, so
+ * screen-Y maps to buffer-Y as h-1-y.
+ *
+ * @dg_internal
+ * @version 1
+ * @return The OKLCH-adjusted colour that contrasts with the mean background colour of the area.
+ */
 static lv_color_t bg_legible_at(lv_color_t user, const lv_area_t *a)
 {
     int32_t ih  = (int32_t)s_bg_dsc->header.h;
@@ -391,9 +484,16 @@ static lv_color_t bg_legible_at(lv_color_t user, const lv_area_t *a)
     return ui_legible(user, mean);
 }
 
-// Derive the FULL-clock colour from the background image (the clock screen's only
-// content behind the digits), NVS text colour as OKLCH base. The minimized clock
-// is handled separately by sampling the actual state screen (see below).
+/**
+ * @brief Derive the full and minimized clock colours from the background image (or the screen bg colour if none).
+ *
+ * Derive the FULL-clock colour from the background image (the clock screen's only
+ * content behind the digits), NVS text colour as OKLCH base. The minimized clock
+ * is handled separately by sampling the actual state screen (see below).
+ *
+ * @dg_internal
+ * @version 1
+ */
 static void apply_clock_bg_contrast(const clock_settings_t *cfg)
 {
     clock_widget_t *clk = DisplayFsm::get_clock();
@@ -431,11 +531,17 @@ static void apply_clock_bg_contrast(const clock_settings_t *cfg)
     lvgl_port_unlock();
 }
 
-// Re-derive the minimized clock colour from the bg image directly behind the
-// minimized clock position. States that show the clock bg behind the minimized
-// clock (weather/astronomy/ambient) call this at entry() BEFORE minimize_clock(),
-// so the colour reflects the CURRENT background and the morph recolours straight
-// to it. No-op for a GIF bg (no sampleable buffer) — the startup default stands.
+/**
+ * @brief Re-derive the minimized clock colour from the bg image directly behind the minimized clock position.
+ *
+ * Re-derive the minimized clock colour from the bg image directly behind the
+ * minimized clock position. States that show the clock bg behind the minimized
+ * clock (weather/astronomy/ambient) call this at entry() BEFORE minimize_clock(),
+ * so the colour reflects the CURRENT background and the morph recolours straight
+ * to it. No-op for a GIF bg (no sampleable buffer) — the startup default stands.
+ *
+ * @version 1
+ */
 extern "C" void display_fsm_apply_min_bg_contrast(void)
 {
     clock_widget_t *clk = DisplayFsm::get_clock();
@@ -445,9 +551,16 @@ extern "C" void display_fsm_apply_min_bg_contrast(void)
     clock_widget_set_minimized_base_color(clk, bg_legible_at(clock_widget_user_color(clk), &ma));
 }
 
-// Delete the current background (object + persistent descriptor) and reload from
-// settings. MUST run in fsm_task — load_background() decodes with a deep stack
-// outside the LVGL lock.
+/**
+ * @brief Delete the current background (object + persistent descriptor) and reload it from settings.
+ *
+ * Delete the current background (object + persistent descriptor) and reload from
+ * settings. MUST run in fsm_task — load_background() decodes with a deep stack
+ * outside the LVGL lock.
+ *
+ * @dg_internal
+ * @version 1
+ */
 static void reload_background_from_settings(void)
 {
     lv_obj_t *scr = DisplayFsm::get_screen();
@@ -478,68 +591,6 @@ static void reload_background_from_settings(void)
 }
 
 // ---------------------------------------------------------------------------
-// Lottie hummingbird loading (moved from ui.c)
-// ---------------------------------------------------------------------------
-
-#if LV_USE_LOTTIE
-
-#define CLOCK_LOTTIE_W          200
-#define CLOCK_LOTTIE_H          200
-#define CLOCK_LOTTIE_FPS        20
-#define CLOCK_LOTTIE_PATH       "/sdcard/lottie/hummingbird.json"
-
-static lv_obj_t *s_clock_lottie_widget = NULL;
-static void     *s_clock_lottie_buf    = NULL;
-
-static void load_clock_lottie(lv_obj_t *scr)
-{
-    // Allocate stride-aligned SPIRAM render buffer
-    uint32_t stride = lv_draw_buf_width_to_stride(CLOCK_LOTTIE_W,
-                                                    LV_COLOR_FORMAT_ARGB8888_PREMULTIPLIED);
-    size_t buf_sz = (size_t)stride * CLOCK_LOTTIE_H;
-    s_clock_lottie_buf = heap_caps_aligned_alloc(64, buf_sz, MALLOC_CAP_SPIRAM);
-    if (!s_clock_lottie_buf) {
-        ESP_LOGE(TAG, "lottie: SPIRAM alloc failed (%zu B)", buf_sz);
-        return;
-    }
-    // Zero the render buffer — until ThorVG produces the first frame, an uncleared
-    // SPIRAM buffer displays as random-pixel NOISE. Transparent is the correct empty.
-    memset(s_clock_lottie_buf, 0, buf_sz);
-
-    lvgl_port_lock(0);
-    lv_obj_t *widget = lv_lottie_create(scr);
-    if (!widget) {
-        ESP_LOGE(TAG, "lottie: lv_lottie_create failed");
-        lvgl_port_unlock();
-        heap_caps_free(s_clock_lottie_buf);
-        s_clock_lottie_buf = NULL;
-        return;
-    }
-    if (lv_lottie_render_failed(widget)) {
-        ESP_LOGE(TAG, "lottie: render task failed");
-        lv_obj_delete(widget);
-        lvgl_port_unlock();
-        heap_caps_free(s_clock_lottie_buf);
-        s_clock_lottie_buf = NULL;
-        return;
-    }
-    lv_obj_set_size(widget, CLOCK_LOTTIE_W, CLOCK_LOTTIE_H);
-    lv_lottie_set_buffer(widget, CLOCK_LOTTIE_W, CLOCK_LOTTIE_H, s_clock_lottie_buf);
-    lv_obj_align(widget, LV_ALIGN_BOTTOM_LEFT, 16, -16);
-    s_clock_lottie_widget = widget;
-    lvgl_port_unlock();
-
-    // Submit to shared loader task (deep recursive JSON parse by ThorVG)
-    lottie_load_job_t job = {};
-    job.widget     = widget;
-    job.target_fps = CLOCK_LOTTIE_FPS;
-    strlcpy(job.path, CLOCK_LOTTIE_PATH, sizeof(job.path));
-    display_fsm_load_lottie(&job);
-}
-
-#endif /* LV_USE_LOTTIE */
-
-// ---------------------------------------------------------------------------
 // Gesture callback — registered on the active screen
 // ---------------------------------------------------------------------------
 
@@ -549,6 +600,12 @@ static void load_clock_lottie(lv_obj_t *scr)
 #define GESTURE_DEBOUNCE_MS 500
 static uint32_t s_last_gesture_tick = 0;
 
+/**
+ * @brief Debounced LV_EVENT_GESTURE handler that enqueues a DISPLAY_EVT_GESTURE for top/left/right swipes.
+ *
+ * @callback
+ * @version 1
+ */
 static void screen_gesture_cb(lv_event_t *e)
 {
     (void)e;
@@ -578,6 +635,12 @@ static int s_last_minute = -1;
 static int8_t s_jitter_x;
 static int8_t s_jitter_y;
 
+/**
+ * @brief Burn-in mitigation timer: random-walk the clock's pixel offset by one step per axis, clamped to +/-4 px.
+ *
+ * @callback
+ * @version 1
+ */
 static void clock_jitter_cb(TimerHandle_t timer)
 {
     (void)timer;
@@ -602,6 +665,12 @@ static void clock_jitter_cb(TimerHandle_t timer)
     }
 }
 
+/**
+ * @brief 1 s timer: enqueue a DISPLAY_EVT_CLOCK_UPDATE only when the local minute has changed.
+ *
+ * @callback
+ * @version 1
+ */
 static void clock_tick_cb(TimerHandle_t timer)
 {
     (void)timer;
@@ -633,8 +702,16 @@ static void clock_tick_cb(TimerHandle_t timer)
 // FSM task — single consumer of event queue
 // ---------------------------------------------------------------------------
 
-// Clean the active screen and build the persistent UI (clock, alert banner, dot
-// indicator, gesture handler) on lv_layer_top(). Returns the screen object.
+/**
+ * @brief Clean the active screen and build the persistent UI (clock, alert banner, dot indicator, gesture handler) on lv_layer_top().
+ *
+ * Clean the active screen and build the persistent UI (clock, alert banner, dot
+ * indicator, gesture handler) on lv_layer_top(). Returns the screen object.
+ *
+ * @dg_internal
+ * @version 1
+ * @return The active screen object.
+ */
 static lv_obj_t *setup_screen_widgets(const clock_settings_t *cfg)
 {
     lvgl_port_lock(0);
@@ -682,7 +759,14 @@ static lv_obj_t *setup_screen_widgets(const clock_settings_t *cfg)
     return scr;
 }
 
-// Clock minute-tick poll (1s) + burn-in pixel jitter (10 min) timers.
+/**
+ * @brief Start the clock minute-tick poll (1s) and burn-in pixel jitter (10 min) timers.
+ *
+ * Clock minute-tick poll (1s) + burn-in pixel jitter (10 min) timers.
+ *
+ * @dg_internal
+ * @version 1
+ */
 static void start_periodic_timers(void)
 {
     TimerHandle_t clock_timer = xTimerCreate("clk_tick", pdMS_TO_TICKS(1000),
@@ -700,11 +784,18 @@ static void start_periodic_timers(void)
     }
 }
 
-// Handle one dequeued event. Radar pre-decode and background reload run OUTSIDE
-// the LVGL lock (slow stb_image work); everything else dispatches to the FSM.
-// The [XFER] log reports how long the FSM held the LVGL lock during a transition
-// — i.e. how long the display could not render. Useful for catching regressions
-// where a heavy entry() builds too much under the lock.
+/**
+ * @brief Handle one dequeued event: off-lock radar/background/photo work, otherwise FSM dispatch under the LVGL lock.
+ *
+ * Handle one dequeued event. Radar pre-decode and background reload run OUTSIDE
+ * the LVGL lock (slow stb_image work); everything else dispatches to the FSM.
+ * The [XFER] log reports how long the FSM held the LVGL lock during a transition
+ * — i.e. how long the display could not render. Useful for catching regressions
+ * where a heavy entry() builds too much under the lock.
+ *
+ * @dg_internal
+ * @version 1
+ */
 static void process_event(const display_event_t *evt)
 {
     if (evt->type == DISPLAY_EVT_RADAR_READY) {
@@ -740,6 +831,12 @@ static void process_event(const display_event_t *evt)
     }
 }
 
+/**
+ * @brief Block forever on the FSM event queue, processing each received event.
+ *
+ * @dg_internal
+ * @version 1
+ */
 static void fsm_run_event_loop(void)
 {
     display_event_t evt;
@@ -750,6 +847,12 @@ static void fsm_run_event_loop(void)
     }
 }
 
+/**
+ * @brief FSM task entry: build the screen, background, animation and scheduler, start the FSM and timers, then run the event loop.
+ *
+ * @dg_internal
+ * @version 1
+ */
 static void fsm_task(void *arg)
 {
     (void)arg;
@@ -763,9 +866,7 @@ static void fsm_task(void *arg)
     // Background + Lottie manage their own LVGL lock.
     load_background(scr, &cfg);
     apply_clock_bg_contrast(&cfg);   // legible clock colour over the bg image
-#if LV_USE_LOTTIE
-    load_clock_lottie(scr);
-#endif
+    clock_animation_init(scr);   // user-selected clock animation (hummingbird / snowfall / none)
 
     // Preload the radar basemap off-lock so the first radar transition doesn't
     // stall on a ~2.4 MB SD read while holding the LVGL lock.
@@ -788,6 +889,11 @@ static void fsm_task(void *arg)
 // C API implementations
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief Create the FSM event queue, the Lottie loader (if enabled), and the FSM task (idempotent).
+ *
+ * @version 1
+ */
 extern "C" void display_fsm_init(void)
 {
     if (s_event_queue) {
@@ -809,6 +915,12 @@ extern "C" void display_fsm_init(void)
     }
 }
 
+/**
+ * @brief Enqueue an event for the FSM task, waiting up to 100 ms for queue space.
+ *
+ * @version 1
+ * @return true if the event was queued, false if uninitialized, evt is NULL, or the queue stayed full.
+ */
 extern "C" bool display_fsm_send_event(const display_event_t *evt)
 {
     if (!s_event_queue || !evt) return false;
@@ -819,26 +931,55 @@ extern "C" bool display_fsm_send_event(const display_event_t *evt)
     return ret == pdTRUE;
 }
 
+/**
+ * @brief Get the name of the current FSM state.
+ *
+ * @version 1
+ * @return Current state name string.
+ */
 extern "C" const char *display_fsm_get_state_name(void)
 {
     return DisplayFsm::get_state_name();
 }
 
+/**
+ * @brief Get the id of the current FSM state.
+ *
+ * @version 1
+ * @return Current display_state_id_t.
+ */
 extern "C" display_state_id_t display_fsm_get_state_id(void)
 {
     return DisplayFsm::get_state_id();
 }
 
+/**
+ * @brief Get the persistent clock widget.
+ *
+ * @version 1
+ * @return Clock widget, or NULL if not yet created.
+ */
 extern "C" clock_widget_t *display_fsm_get_clock(void)
 {
     return DisplayFsm::get_clock();
 }
 
+/**
+ * @brief Get the FSM's active screen object.
+ *
+ * @version 1
+ * @return Screen object, or NULL if not yet initialized.
+ */
 extern "C" lv_obj_t *display_fsm_get_screen(void)
 {
     return DisplayFsm::get_screen();
 }
 
+/**
+ * @brief Request a background reload by enqueueing DISPLAY_EVT_REFRESH_BG for fsm_task.
+ *
+ * @version 1
+ */
 extern "C" void display_fsm_refresh_background(void)
 {
     // Callable from the LVGL/settings callback context (shallow stack). The
@@ -853,37 +994,32 @@ extern "C" void display_fsm_refresh_background(void)
     }
 }
 
+/**
+ * @brief Show the user-selected clock animation (FSM ClockFull / restore_clock).
+ * @version 2
+ * @req REQ-ANIM-002
+ */
 extern "C" void display_fsm_show_clock_lottie(void)
 {
-#if LV_USE_LOTTIE
-    if (s_clock_lottie_widget) {
-        // Resume from cache — no re-parse needed
-        lvgl_port_lock(0);
-        lv_obj_clear_flag(s_clock_lottie_widget, LV_OBJ_FLAG_HIDDEN);
-        lv_lottie_resume(s_clock_lottie_widget, CLOCK_LOTTIE_FPS);
-        lvgl_port_unlock();
-        ESP_LOGI(TAG, "Clock Lottie resumed");
-    } else {
-        // First time — full load
-        load_clock_lottie(DisplayFsm::get_screen());
-        ESP_LOGI(TAG, "Clock Lottie created");
-    }
-#endif
+    clock_animation_show();
 }
 
+/**
+ * @brief Hide the clock animation whenever the clock is minimised or covered.
+ * @version 2
+ * @req REQ-ANIM-002
+ */
 extern "C" void display_fsm_hide_clock_lottie(void)
 {
-#if LV_USE_LOTTIE
-    if (s_clock_lottie_widget) {
-        lvgl_port_lock(0);
-        lv_lottie_pause(s_clock_lottie_widget);
-        lv_obj_add_flag(s_clock_lottie_widget, LV_OBJ_FLAG_HIDDEN);
-        lvgl_port_unlock();
-    }
-    ESP_LOGI(TAG, "Clock Lottie paused");
-#endif
+    clock_animation_hide();
 }
 
+/**
+ * @brief Queue a Lottie load job for the shared loader task (no-op when Lottie is disabled).
+ *
+ * @version 1
+ * @return true if the job was queued, false if unavailable, job is NULL, or the queue stayed full.
+ */
 extern "C" bool display_fsm_load_lottie(const lottie_load_job_t *job)
 {
 #if LV_USE_LOTTIE
@@ -899,6 +1035,11 @@ extern "C" bool display_fsm_load_lottie(const lottie_load_job_t *job)
 #endif
 }
 
+/**
+ * @brief Reload the text colour from settings and apply it to the clock widget.
+ *
+ * @version 1
+ */
 extern "C" void display_fsm_refresh_text_color(void)
 {
     clock_widget_t *cw = DisplayFsm::get_clock();

@@ -25,6 +25,8 @@
 #include "bsp/esp32_p4_function_ev_board.h"
 #include "lvgl.h"
 #include "esp_lvgl_port.h"
+#include "clock_anim_pref.h"
+#include "clock_animation.h"
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
@@ -34,6 +36,12 @@ static const char* TAG = "http_api";
 static httpd_handle_t server = NULL;
 static SemaphoreHandle_t s_launch_sem = NULL;
 
+/**
+ * @brief Register the semaphore that POST /debug/launch gives to release boot_await_launch().
+ *
+ * @param sem  Launch semaphore owned by app_main().
+ * @version 1
+ */
 void http_api_set_launch_sem(SemaphoreHandle_t sem)
 {
     s_launch_sem = sem;
@@ -54,6 +62,7 @@ void http_api_set_launch_sem(SemaphoreHandle_t sem)
  *
  * @param req  Incoming request.
  * @return ESP_OK if preconditions pass; ESP_FAIL otherwise.
+ * @version 1
  */
 static esp_err_t upload_check_preconditions(httpd_req_t* req)
 {
@@ -72,6 +81,7 @@ static esp_err_t upload_check_preconditions(httpd_req_t* req)
  * @brief Create the parent directory for @p filepath if it does not exist.
  *
  * @param filepath  Full destination path (e.g. /sdcard/foo/bar.bin).
+ * @version 1
  */
 static void upload_ensure_dir(const char* filepath)
 {
@@ -97,6 +107,7 @@ static void upload_ensure_dir(const char* filepath)
  * @param buf_size  Size of @p buf.
  * @param remaining Bytes still expected from the client.
  * @return Bytes written (>0), 0 on timeout (retry), -1 on error.
+ * @version 1
  */
 static int upload_recv_chunk(httpd_req_t* req, FILE* f, const char* filepath,
                               char* buf, size_t buf_size, size_t remaining)
@@ -121,6 +132,7 @@ static int upload_recv_chunk(httpd_req_t* req, FILE* f, const char* filepath,
  * @param filepath   Path used only for unlinking on error.
  * @param total_out  Set to bytes written on success.
  * @return ESP_OK or ESP_FAIL.
+ * @version 1
  */
 static esp_err_t upload_receive_loop(httpd_req_t* req, FILE* f,
                                       const char* filepath, size_t* total_out)
@@ -139,14 +151,12 @@ static esp_err_t upload_receive_loop(httpd_req_t* req, FILE* f,
 }
 
 /**
- * @brief Open @p filepath for writing and receive the full request body.
+ * @brief Recursively create parent directories for a file path (like mkdir -p).
  *
- * @param req        Incoming request.
- * @param filepath   Destination path.
- * @param total_out  Set to bytes received on success.
- * @return ESP_OK or ESP_FAIL.
+ * @param filepath  Full file path whose parent directories are created.
+ * @version 1
+ * @dg_internal
  */
-// Recursively create parent directories for a file path (like mkdir -p).
 static void mkdirs(const char *filepath)
 {
     char tmp[256];
@@ -160,6 +170,18 @@ static void mkdirs(const char *filepath)
     }
 }
 
+/**
+ * @brief Open @p filepath for writing and receive the full request body.
+ *
+ * Creates parent directories first via mkdirs().
+ *
+ * @param req        Incoming request.
+ * @param filepath   Destination path.
+ * @param total_out  Set to bytes received on success.
+ * @version 1
+ * @dg_internal
+ * @return ESP_OK or ESP_FAIL.
+ */
 static esp_err_t upload_open_and_receive(httpd_req_t* req, const char* filepath,
                                           size_t* total_out)
 {
@@ -179,6 +201,7 @@ static esp_err_t upload_open_and_receive(httpd_req_t* req, const char* filepath,
  * @param req       Incoming request.
  * @param filepath  Path where the file was written.
  * @param total     Number of bytes written.
+ * @version 1
  */
 static void upload_send_success(httpd_req_t* req, const char* filepath, size_t total)
 {
@@ -204,6 +227,7 @@ static void upload_send_success(httpd_req_t* req, const char* filepath, size_t t
  * @param filepath Path to check.
  * @param st_out   Populated with stat result on success.
  * @return ESP_OK, or an error code with HTTP response already sent.
+ * @version 1
  */
 static esp_err_t download_resolve_path(httpd_req_t* req, const char* filepath,
                                         struct stat* st_out)
@@ -228,6 +252,7 @@ static esp_err_t download_resolve_path(httpd_req_t* req, const char* filepath,
  * @param dirpath   Parent directory path.
  * @param entry     Directory entry.
  * @param first_out Tracks whether a comma separator is needed; updated in place.
+ * @version 1
  */
 static void download_send_dir_entry(httpd_req_t* req, const char* dirpath,
                                      const struct dirent* entry, bool* first_out)
@@ -252,6 +277,7 @@ static void download_send_dir_entry(httpd_req_t* req, const char* dirpath,
  * @param req      Incoming request.
  * @param dir      Open directory handle.
  * @param filepath Parent directory path.
+ * @version 1
  */
 static void download_scan_dir(httpd_req_t* req, DIR* dir, const char* filepath)
 {
@@ -271,6 +297,7 @@ static void download_scan_dir(httpd_req_t* req, DIR* dir, const char* filepath)
  * @param req       Incoming request.
  * @param filepath  Directory path.
  * @return ESP_OK or ESP_FAIL.
+ * @version 1
  */
 static esp_err_t download_list_directory(httpd_req_t* req, const char* filepath)
 {
@@ -293,6 +320,7 @@ static esp_err_t download_list_directory(httpd_req_t* req, const char* filepath)
  *
  * @param req       Incoming request.
  * @param filepath  Path used to derive the filename.
+ * @version 1
  */
 static void download_set_file_headers(httpd_req_t* req, const char* filepath)
 {
@@ -313,6 +341,7 @@ static void download_set_file_headers(httpd_req_t* req, const char* filepath)
  * @param req  Incoming request.
  * @param f    Open file handle positioned at start.
  * @return ESP_OK or ESP_FAIL if a chunk send fails.
+ * @version 1
  */
 static esp_err_t download_pump_file(httpd_req_t* req, FILE* f)
 {
@@ -331,6 +360,7 @@ static esp_err_t download_pump_file(httpd_req_t* req, FILE* f)
  * @param req       Incoming request.
  * @param filepath  Path to the file to send.
  * @return ESP_OK or ESP_FAIL.
+ * @version 1
  */
 static esp_err_t download_stream_file(httpd_req_t* req, const char* filepath)
 {
@@ -354,6 +384,7 @@ static esp_err_t download_stream_file(httpd_req_t* req, const char* filepath)
  * @brief Set HTTP headers appropriate for a debug log download.
  *
  * @param req  Incoming request.
+ * @version 1
  */
 static void logs_set_response_headers(httpd_req_t* req)
 {
@@ -367,6 +398,7 @@ static void logs_set_response_headers(httpd_req_t* req)
  * @param req       Incoming request.
  * @param log_path  Path to the log file.
  * @return ESP_OK or ESP_FAIL.
+ * @version 1
  */
 static esp_err_t logs_open_and_send(httpd_req_t* req, const char* log_path)
 {
@@ -390,6 +422,7 @@ static esp_err_t logs_open_and_send(httpd_req_t* req, const char* log_path)
  * @brief Send a 401 Unauthorized response (HTTP server API has no 401 code).
  *
  * @param req  Incoming request.
+ * @version 1
  */
 static void ota_send_unauthorized(httpd_req_t* req)
 {
@@ -405,6 +438,7 @@ static void ota_send_unauthorized(httpd_req_t* req)
  *
  * @param req  Incoming request.
  * @return ESP_OK on success; ESP_FAIL on auth failure.
+ * @version 1
  */
 static esp_err_t ota_push_check_auth(httpd_req_t* req)
 {
@@ -431,6 +465,7 @@ static esp_err_t ota_push_check_auth(httpd_req_t* req)
  *
  * @param req  Incoming request.
  * @return ESP_OK on success; ESP_FAIL if content_len is 0.
+ * @version 1
  */
 static esp_err_t ota_push_check_size(httpd_req_t* req)
 {
@@ -447,6 +482,7 @@ static esp_err_t ota_push_check_size(httpd_req_t* req)
  * @param req        Incoming request.
  * @param total_size Expected firmware size (from Content-Length).
  * @return ESP_OK on success; ESP_FAIL on receive or write error.
+ * @version 1
  */
 static esp_err_t ota_push_receive_loop(httpd_req_t* req, size_t total_size)
 {
@@ -468,6 +504,7 @@ static esp_err_t ota_push_receive_loop(httpd_req_t* req, size_t total_size)
  *
  * @param req  Incoming request.
  * @return ESP_OK on success.
+ * @version 1
  */
 static esp_err_t ota_push_start(httpd_req_t* req)
 {
@@ -484,6 +521,7 @@ static esp_err_t ota_push_start(httpd_req_t* req)
  *
  * @param req  Incoming request.
  * @return ESP_OK on success.
+ * @version 1
  */
 static esp_err_t ota_push_download(httpd_req_t* req)
 {
@@ -505,6 +543,7 @@ static esp_err_t ota_push_download(httpd_req_t* req)
  *
  * @param req  Incoming request.
  * @return Error code on failure; does not return on success (device reboots).
+ * @version 1
  */
 static esp_err_t ota_push_complete(httpd_req_t* req)
 {
@@ -524,6 +563,7 @@ static esp_err_t ota_push_complete(httpd_req_t* req)
  *
  * @param req  Incoming request (auth and size already verified).
  * @return Error code on failure; does not return on success (device reboots).
+ * @version 1
  */
 static esp_err_t ota_push_execute(httpd_req_t* req)
 {
@@ -572,6 +612,7 @@ static esp_err_t settings_post_handler(httpd_req_t *req);
  * @brief Apply non-default httpd configuration values.
  *
  * @param config  Configuration struct to populate.
+ * @version 1
  */
 static void http_api_configure_server(httpd_config_t* config)
 {
@@ -586,13 +627,27 @@ static void http_api_configure_server(httpd_config_t* config)
 // Decode the served blob with: esp-coredump info_corefile -c core.elf <elf>
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief Look up the coredump data partition.
+ * @version 1
+ * @dg_internal
+ * @return Partition handle, or NULL if the table has no coredump partition.
+ */
 static const esp_partition_t *coredump_partition(void)
 {
     return esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
                                     ESP_PARTITION_SUBTYPE_DATA_COREDUMP, NULL);
 }
 
-// GET /api/coredump/info → {"present":bool,"size":N,"partition":bool}
+/**
+ * @brief Report whether a coredump is stored and its size (Bearer auth required).
+ * GET /api/coredump/info → {"present":bool,"size":N,"partition":bool}
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK on success; ESP_FAIL on auth failure.
+ */
 static esp_err_t coredump_info_handler(httpd_req_t *req)
 {
     if (ota_push_check_auth(req) != ESP_OK) return ESP_FAIL;
@@ -609,7 +664,15 @@ static esp_err_t coredump_info_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-// GET /api/coredump → raw ELF coredump blob.
+/**
+ * @brief Stream the stored coredump partition contents in 2 KB chunks (Bearer auth required).
+ * GET /api/coredump → raw ELF coredump blob.
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK on success; ESP_FAIL on auth failure, no dump, OOM, or read/send error.
+ */
 static esp_err_t coredump_get_handler(httpd_req_t *req)
 {
     if (ota_push_check_auth(req) != ESP_OK) return ESP_FAIL;
@@ -642,10 +705,18 @@ static esp_err_t coredump_get_handler(httpd_req_t *req)
     return err;
 }
 
-// GET /api/screenshot → grab the active display framebuffer (the REAL on-screen
-// pixels, including any SW/PPA composite artifacts) and stream it. Response:
-// an ASCII header line "w h stride cf\n" followed by the raw pixel data.
-// Decode + view with tools/screenshot.py.
+/**
+ * @brief Snapshot the active display framebuffer under the LVGL lock and stream it.
+ * GET /api/screenshot → grab the active display framebuffer (the REAL on-screen
+ * pixels, including any SW/PPA composite artifacts) and stream it. Response:
+ * an ASCII header line "w h stride cf\n" followed by the raw pixel data.
+ * Decode + view with tools/screenshot.py.
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK on success; ESP_FAIL if no display, capture fails, or a send fails.
+ */
 static esp_err_t screenshot_get_handler(httpd_req_t *req)
 {
     lv_display_t *disp = lv_display_get_default();
@@ -694,7 +765,15 @@ static esp_err_t screenshot_get_handler(httpd_req_t *req)
     return err;
 }
 
-// POST /api/coredump/erase → clear the stored coredump.
+/**
+ * @brief Erase the stored coredump image (Bearer auth required).
+ * POST /api/coredump/erase → clear the stored coredump.
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK on success; ESP_FAIL on auth failure or erase error.
+ */
 static esp_err_t coredump_erase_handler(httpd_req_t *req)
 {
     if (ota_push_check_auth(req) != ESP_OK) return ESP_FAIL;
@@ -712,6 +791,7 @@ static esp_err_t coredump_erase_handler(httpd_req_t *req)
  * @brief Register file, status, and log URI handlers.
  *
  * @param srv  Running httpd server handle.
+ * @version 1
  */
 static void http_api_register_file_handlers(httpd_handle_t srv)
 {
@@ -799,6 +879,7 @@ static void http_api_register_file_handlers(httpd_handle_t srv)
  * @brief Register OTA push and status URI handlers.
  *
  * @param srv  Running httpd server handle.
+ * @version 1
  */
 static void http_api_register_ota_handlers(httpd_handle_t srv)
 {
@@ -820,6 +901,7 @@ static void http_api_register_ota_handlers(httpd_handle_t srv)
  * @brief Register debug endpoint handlers (UDP log, reboot).
  *
  * @param srv  Running httpd server handle.
+ * @version 1
  */
 static void http_api_register_debug_handlers(httpd_handle_t srv)
 {
@@ -853,6 +935,7 @@ static void http_api_register_debug_handlers(httpd_handle_t srv)
  * @brief Register display control and weather data URI handlers.
  *
  * @param srv  Running httpd server handle.
+ * @version 1
  */
 static void http_api_register_display_handlers(httpd_handle_t srv)
 {
@@ -941,6 +1024,7 @@ static void http_api_register_display_handlers(httpd_handle_t srv)
  * @brief Register all URI handlers with the running server.
  *
  * @param srv  Running httpd server handle.
+ * @version 1
  */
 static void http_api_register_handlers(httpd_handle_t srv)
 {
@@ -957,6 +1041,11 @@ static void http_api_register_handlers(httpd_handle_t srv)
 /**
  * @brief Upload file to SD card.
  * POST /files/[path] — body is raw file data (application/octet-stream).
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK on success; ESP_FAIL after sending an HTTP error.
  */
 static esp_err_t upload_file_handler(httpd_req_t *req)
 {
@@ -975,6 +1064,11 @@ static esp_err_t upload_file_handler(httpd_req_t *req)
 /**
  * @brief Download a file or list directory contents.
  * GET /files/[path]
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK on success; an error code after sending an HTTP error.
  */
 static esp_err_t download_file_handler(httpd_req_t *req)
 {
@@ -988,10 +1082,6 @@ static esp_err_t download_file_handler(httpd_req_t *req)
     return download_stream_file(req, filepath);
 }
 
-/**
- * @brief Return basic device status as JSON.
- * GET /api/status
- */
 extern bool main_tsens_get_last(float *out_last, float *out_min, float *out_max);
 
 // Mirror of struct boot_hist_entry_t in main.cpp (packed 8 bytes).
@@ -1003,10 +1093,17 @@ struct boot_hist_entry_t {
 extern size_t main_boot_history_get(struct boot_hist_entry_t *out, size_t cap);
 
 /**
+ * @brief Report SD card filesystem usage and card hardware info as JSON.
  * GET /api/disk
  * Returns SD card capacity: total bytes, free bytes, used bytes,
  * percent used. Uses esp_vfs_fat_info() — the ESP-IDF wrapper that
- * walks the FAT cluster table for free count.
+ * walks the FAT cluster table for free count. Also reports card name,
+ * CSD capacity, and negotiated/max bus frequency.
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK on success; ESP_FAIL if esp_vfs_fat_info() fails.
  */
 static esp_err_t disk_usage_handler(httpd_req_t *req)
 {
@@ -1056,6 +1153,7 @@ static esp_err_t disk_usage_handler(httpd_req_t *req)
 }
 
 /**
+ * @brief Reformat the SD card FAT filesystem (Bearer auth required).
  * POST /api/sdcard/format
  *
  * Reformats the SD card FAT filesystem in place. Wipes all user files on
@@ -1064,6 +1162,11 @@ static esp_err_t disk_usage_handler(httpd_req_t *req)
  *
  * The debug log is paused for the duration so its file handle doesn't
  * fight with the format operation.
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK on success; ESP_FAIL on auth failure, missing card, or format error.
  */
 static esp_err_t sdcard_format_handler(httpd_req_t *req)
 {
@@ -1116,6 +1219,15 @@ static esp_err_t sdcard_format_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/**
+ * @brief Return the recorded boot reset reasons and timestamps as JSON.
+ * GET /api/boot_history → {"boot_history":[{"reason":N,"timestamp":N},...]}
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK.
+ */
 static esp_err_t boot_history_handler(httpd_req_t *req)
 {
     struct boot_hist_entry_t entries[16];
@@ -1137,6 +1249,15 @@ static esp_err_t boot_history_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/**
+ * @brief Return basic device status as JSON.
+ * GET /api/status — uptime, free heap, SD/debug-log state, and chip temperature when available.
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK.
+ */
 static esp_err_t status_handler(httpd_req_t *req)
 {
     char response[640];
@@ -1189,6 +1310,11 @@ static esp_err_t status_handler(httpd_req_t *req)
 /**
  * @brief Trigger a test write to the debug log.
  * GET /api/logs/test
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return Result of debug_log_test_write().
  */
 static esp_err_t logs_test_handler(httpd_req_t *req)
 {
@@ -1213,6 +1339,11 @@ static esp_err_t logs_test_handler(httpd_req_t *req)
  * Temporarily closes the debug log write handle before reading because FAT32
  * does not support concurrent file handles on the same path.  The handle is
  * reopened immediately after the transfer completes.
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK on success; ESP_FAIL if logging inactive or transfer fails.
  */
 static esp_err_t logs_download_handler(httpd_req_t *req)
 {
@@ -1233,6 +1364,7 @@ static esp_err_t logs_download_handler(httpd_req_t *req)
  * @param filepath  Path to check.
  * @param st_out    Populated with stat result on success.
  * @return ESP_OK, or ESP_FAIL with HTTP response already sent.
+ * @version 1
  */
 static esp_err_t delete_resolve_and_stat(httpd_req_t* req, const char* filepath,
                                           struct stat* st_out)
@@ -1255,6 +1387,7 @@ static esp_err_t delete_resolve_and_stat(httpd_req_t* req, const char* filepath,
  * @param filepath  Path to delete.
  * @param st        Stat result used to distinguish file from directory.
  * @return ESP_OK or ESP_FAIL.
+ * @version 1
  */
 static esp_err_t delete_perform(httpd_req_t* req, const char* filepath,
                                  const struct stat* st)
@@ -1276,6 +1409,11 @@ static esp_err_t delete_perform(httpd_req_t* req, const char* filepath,
 /**
  * @brief Delete a file or empty directory from the SD card.
  * DELETE /files/[path]
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK on success; ESP_FAIL after sending an HTTP error.
  */
 static esp_err_t delete_file_handler(httpd_req_t *req)
 {
@@ -1302,6 +1440,7 @@ static esp_err_t delete_file_handler(httpd_req_t *req)
  * @param out      Destination buffer.
  * @param out_len  Size of @p out.
  * @return ESP_OK on success, ESP_FAIL if key not found or value malformed.
+ * @version 1
  */
 static esp_err_t parse_json_string_field(const char* body, const char* key,
                                           char* out, size_t out_len)
@@ -1324,6 +1463,7 @@ static esp_err_t parse_json_string_field(const char* body, const char* key,
  * @param body     Null-terminated request body.
  * @param port_out Receives the parsed port (1–65535).
  * @return ESP_OK on success, ESP_FAIL if field is missing or out of range.
+ * @version 1
  */
 static esp_err_t parse_json_port_field(const char* body, uint16_t* port_out)
 {
@@ -1345,6 +1485,7 @@ static esp_err_t parse_json_port_field(const char* body, uint16_t* port_out)
  * @param host_len  Size of host_out.
  * @param port_out  Receives the parsed port number.
  * @return ESP_OK on success, ESP_FAIL if body is missing or malformed.
+ * @version 1
  */
 static esp_err_t debug_parse_udp_log_body(httpd_req_t* req,
                                            char* host_out, size_t host_len,
@@ -1361,6 +1502,11 @@ static esp_err_t debug_parse_udp_log_body(httpd_req_t* req,
 /**
  * @brief Start UDP log streaming.
  * POST /debug/udp_log — body: {"host":"192.168.1.x","port":5555}
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK on success; ESP_FAIL on bad body; udp_log_init() error otherwise.
  */
 static esp_err_t debug_udp_log_start_handler(httpd_req_t *req)
 {
@@ -1385,6 +1531,11 @@ static esp_err_t debug_udp_log_start_handler(httpd_req_t *req)
 /**
  * @brief Stop UDP log streaming.
  * DELETE /debug/udp_log
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK.
  */
 static esp_err_t debug_udp_log_stop_handler(httpd_req_t *req)
 {
@@ -1396,6 +1547,7 @@ static esp_err_t debug_udp_log_stop_handler(httpd_req_t *req)
 
 /**
  * @brief Reboot task — delays briefly so the HTTP response can flush.
+ * @version 1
  */
 static void reboot_task(void* arg)
 {
@@ -1407,6 +1559,13 @@ static void reboot_task(void* arg)
 /**
  * @brief Trigger a device reboot via HTTP.
  * POST /debug/reboot
+ *
+ * Responds first, then spawns reboot_task() to restart after a short delay.
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK.
  */
 static esp_err_t debug_reboot_handler(httpd_req_t *req)
 {
@@ -1425,6 +1584,11 @@ static esp_err_t debug_reboot_handler(httpd_req_t *req)
  * app_main() blocks on the semaphore in boot_await_launch() and will
  * proceed to boot_display_init() + display_fsm_init() upon waking.
  * No-op if the semaphore has not been registered yet (clock already running).
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK.
  */
 static esp_err_t debug_launch_handler(httpd_req_t *req)
 {
@@ -1445,6 +1609,11 @@ static esp_err_t debug_launch_handler(httpd_req_t *req)
  *
  * Requires Authorization: Bearer <OTA_API_TOKEN>.
  * Reboots the device on success; returns error code on failure.
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return Error code on failure; does not return on success (device reboots).
  */
 static esp_err_t ota_push_handler(httpd_req_t *req)
 {
@@ -1461,6 +1630,11 @@ static esp_err_t ota_push_handler(httpd_req_t *req)
  *
  * Response: {"state":"idle"|"receiving"|"validating"|"rebooting"|"error",
  *            "bytes_written":N,"total_bytes":N,"error":"..."}
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK.
  */
 static esp_err_t ota_status_handler(httpd_req_t *req)
 {
@@ -1485,6 +1659,11 @@ static esp_err_t ota_status_handler(httpd_req_t *req)
 
 /**
  * @brief Determine MIME type from file extension.
+ *
+ * @param path  File path whose extension is inspected.
+ * @version 1
+ * @dg_internal
+ * @return Static MIME type string; "application/octet-stream" if unknown.
  */
 static const char *www_mime_type(const char *path)
 {
@@ -1505,6 +1684,11 @@ static const char *www_mime_type(const char *path)
 /**
  * @brief Serve static files from SD card /sdcard/www/.
  * GET /www/... serves from /sdcard/www/...
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK on success; ESP_FAIL if SD unmounted, file missing, or a send fails.
  */
 static esp_err_t www_file_handler(httpd_req_t *req)
 {
@@ -1546,7 +1730,12 @@ static esp_err_t www_file_handler(httpd_req_t *req)
 
 /**
  * @brief Get current display state.
- * GET /api/display/state → {"state":"clock"}
+ * GET /api/display/state → {"state":"clock","uptime":N}
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK.
  */
 static esp_err_t display_state_get_handler(httpd_req_t *req)
 {
@@ -1563,6 +1752,7 @@ static esp_err_t display_state_get_handler(httpd_req_t *req)
 /**
  * @brief Map state name string to display_state_id_t.
  * @return DISPLAY_STATE_MAX if not found.
+ * @version 1
  */
 static display_state_id_t state_name_to_id(const char *name)
 {
@@ -1583,6 +1773,11 @@ static display_state_id_t state_name_to_id(const char *name)
 /**
  * @brief Force display to a specific state.
  * POST /api/display/state — body: {"state":"weather"}
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK on success; ESP_FAIL on missing/invalid body or unknown state.
  */
 static esp_err_t display_state_post_handler(httpd_req_t *req)
 {
@@ -1628,7 +1823,13 @@ static esp_err_t display_state_post_handler(httpd_req_t *req)
 
 /**
  * @brief Push a surprise message layout.
- * POST /api/display/surprise — body is JSON layout DSL
+ * POST /api/display/surprise — body is JSON layout DSL (max 8 KB, optional "duration_s", default 30).
+ * The SPIRAM body buffer is handed to the display FSM, which takes ownership.
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK on success; ESP_FAIL on bad size, OOM, or receive error.
  */
 static esp_err_t display_surprise_handler(httpd_req_t *req)
 {
@@ -1688,6 +1889,11 @@ static esp_err_t display_surprise_handler(httpd_req_t *req)
 /**
  * @brief Get display schedule configuration.
  * GET /api/display/schedule
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK.
  */
 static esp_err_t schedule_get_handler(httpd_req_t *req)
 {
@@ -1718,18 +1924,28 @@ static esp_err_t schedule_get_handler(httpd_req_t *req)
 }
 
 /**
- * @brief Update display schedule configuration.
- * POST /api/display/schedule — body: {"weather_show_s":30, ...}
- * Only provided fields are updated; others keep their current value.
+ * @brief Copy a uint16 JSON field into @p out if present and numeric.
+ *
+ * @param root  Parsed JSON object.
+ * @param key   Field name to look up.
+ * @param out   Destination; left unchanged if the field is absent or non-numeric.
+ * @version 1
+ * @dg_internal
  */
-// Copy a uint16 JSON field into *out if present and numeric.
 static void json_copy_u16(const cJSON *root, const char *key, uint16_t *out)
 {
     const cJSON *j = cJSON_GetObjectItem(root, key);
     if (j && cJSON_IsNumber(j)) *out = (uint16_t)j->valueint;
 }
 
-// Overlay any present schedule timing fields from JSON onto cfg.
+/**
+ * @brief Overlay any present schedule timing fields from JSON onto @p cfg.
+ *
+ * @param root  Parsed JSON request body.
+ * @param cfg   Settings to update in place.
+ * @version 1
+ * @dg_internal
+ */
 static void parse_schedule_fields(const cJSON *root, clock_settings_t *cfg)
 {
     json_copy_u16(root, "weather_show_s",     &cfg->weather_show_s);
@@ -1744,7 +1960,13 @@ static void parse_schedule_fields(const cJSON *root, clock_settings_t *cfg)
     json_copy_u16(root, "ambient_show_s",     &cfg->ambient_show_s);
 }
 
-// Push each state's updated duration/cooldown to the FSM scheduler.
+/**
+ * @brief Push each state's updated duration/cooldown to the FSM scheduler.
+ *
+ * @param cfg  Settings holding the new schedule timings.
+ * @version 1
+ * @dg_internal
+ */
 static void notify_schedule_config(const clock_settings_t *cfg)
 {
     struct { display_state_id_t id; uint16_t show_s; uint16_t cooldown_s; } sched[] = {
@@ -1765,6 +1987,17 @@ static void notify_schedule_config(const clock_settings_t *cfg)
     }
 }
 
+/**
+ * @brief Update display schedule configuration.
+ * POST /api/display/schedule — body: {"weather_show_s":30, ...}
+ * Only provided fields are updated; others keep their current value.
+ * Persists to NVS and pushes the new timings to the display FSM.
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK on success; ESP_FAIL after sending a 4xx/5xx.
+ */
 static esp_err_t schedule_post_handler(httpd_req_t *req)
 {
     char body[512];
@@ -1806,6 +2039,7 @@ static esp_err_t schedule_post_handler(httpd_req_t *req)
 
 /**
  * @brief List contents of a single SD card directory, appending to chunked response.
+ * @version 1
  */
 static void assets_list_dir(httpd_req_t *req, const char *sd_path,
                             const char *category, bool *first_entry)
@@ -1838,6 +2072,11 @@ static void assets_list_dir(httpd_req_t *req, const char *sd_path,
 /**
  * @brief List asset files across known SD card directories.
  * GET /api/assets/list → {"assets":[{"name":"clear.json","category":"lottie","size":1234},...]}
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK on success; ESP_FAIL if the SD card is not mounted.
  */
 static esp_err_t assets_list_handler(httpd_req_t *req)
 {
@@ -1864,6 +2103,11 @@ static esp_err_t assets_list_handler(httpd_req_t *req)
  * @brief Upload an asset file to the SD card.
  * POST /api/assets/upload?path=lottie/weather/day/clear.json
  * Body is raw file content.
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK on success; ESP_FAIL on missing path or upload error.
  */
 static esp_err_t assets_upload_handler(httpd_req_t *req)
 {
@@ -1901,8 +2145,11 @@ static esp_err_t assets_upload_handler(httpd_req_t *req)
 // =============================================================================
 
 /**
- * @brief Get device settings (brightness, text color, background).
- * GET /api/settings
+ * @brief Get device settings. GET /api/settings
+ *        → {"brightness":N,"text_color":"#rrggbb","background_image":"A:/..","clock_anim":"Snowfall"}
+ * @version 2
+ * @req REQ-ANIM-001
+ * @return ESP_OK.
  */
 static esp_err_t settings_get_handler(httpd_req_t *req)
 {
@@ -1911,68 +2158,121 @@ static esp_err_t settings_get_handler(httpd_req_t *req)
 
     char response[384];
     snprintf(response, sizeof(response),
-             "{\"brightness\":%u,"
-             "\"text_color\":\"#%06lx\","
-             "\"background_image\":\"%s\"}\n",
-             cfg.brightness,
-             (unsigned long)cfg.text_color,
-             cfg.background_image);
+             "{\"brightness\":%u,\"text_color\":\"#%06lx\",\"background_image\":\"%s\","
+             "\"clock_anim\":\"%s\"}\n",
+             cfg.brightness, (unsigned long)cfg.text_color, cfg.background_image,
+             clock_anim_name(clock_anim_pref_get()));
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
+/** What a settings POST changed, so the handler applies only those parts live. */
+typedef struct {
+    bool bg;
+    bool text_color;
+    bool anim;
+    clock_anim_t anim_value;
+} settings_changes_t;
+
 /**
- * @brief Update device settings.
- * POST /api/settings — body: {"brightness":75, "text_color":"#ff0000", "background_image":"A:/bg.png"}
+ * @brief Merge brightness / text_color / background_image from @p root into @p cfg.
+ * @version 1
+ * @dg_internal
+ */
+static void settings_merge_blob_fields(const cJSON *root, clock_settings_t *cfg, settings_changes_t *ch)
+{
+    const cJSON *j;
+    if ((j = cJSON_GetObjectItem(root, "brightness")) && cJSON_IsNumber(j) &&
+        j->valueint >= 0 && j->valueint <= 100) {
+        cfg->brightness = (uint8_t)j->valueint;
+    }
+    if ((j = cJSON_GetObjectItem(root, "text_color")) && cJSON_IsString(j) &&
+        j->valuestring[0] == '#' && strlen(j->valuestring) == 7) {
+        cfg->text_color = (uint32_t)strtoul(j->valuestring + 1, NULL, 16);
+        ch->text_color = true;
+    }
+    if ((j = cJSON_GetObjectItem(root, "background_image")) && cJSON_IsString(j)) {
+        strlcpy(cfg->background_image, j->valuestring, sizeof(cfg->background_image));
+        ch->bg = true;
+    }
+}
+
+/**
+ * @brief Parse "clock_anim" (Hummingbird / Snowfall / None) from @p root.
+ * @version 1
+ * @dg_internal
+ * @return false when present but unrecognised (caller rejects the request).
+ */
+static bool settings_parse_anim(const cJSON *root, settings_changes_t *ch)
+{
+    const cJSON *j = cJSON_GetObjectItem(root, "clock_anim");
+    if (!j || !cJSON_IsString(j)) return true;
+    ch->anim_value = clock_anim_from_name(j->valuestring);
+    ch->anim = ch->anim_value != CLOCK_ANIM_COUNT;
+    if (!ch->anim) ESP_LOGW(TAG, "Settings: unknown clock_anim '%s'", j->valuestring);
+    return ch->anim;
+}
+
+/**
+ * @brief Persist and apply live: refresh background / text colour, switch clock animation.
+ * @version 1
+ * @dg_internal
+ * @return ESP_OK, or the first persistence error (logged).
+ */
+static esp_err_t settings_persist_and_apply(const clock_settings_t *cfg, const settings_changes_t *ch)
+{
+    esp_err_t err = settings_save(cfg);
+    if (err == ESP_OK && ch->anim) err = clock_anim_pref_set(ch->anim_value);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Settings save failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    if (ch->bg) display_fsm_refresh_background();       // previously saved but never applied
+    if (ch->text_color) display_fsm_refresh_text_color();
+    if (ch->anim) clock_animation_select(ch->anim_value);
+    ESP_LOGI(TAG, "Settings updated: brightness=%u text_color=#%06lx bg=%s anim=%s",
+             cfg->brightness, (unsigned long)cfg->text_color, cfg->background_image,
+             ch->anim ? clock_anim_name(ch->anim_value) : "(unchanged)");
+    return ESP_OK;
+}
+
+/**
+ * @brief Update settings. POST /api/settings with any of brightness, text_color,
+ *        background_image, clock_anim. Changes take effect immediately.
+ * @version 2
+ * @req REQ-ANIM-001
+ * @return ESP_OK on success; ESP_FAIL after sending a 4xx/5xx.
  */
 static esp_err_t settings_post_handler(httpd_req_t *req)
 {
     char body[384];
     int received = httpd_req_recv(req, body, sizeof(body) - 1);
-    if (received <= 0) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing body");
-        return ESP_FAIL;
+    cJSON *root = NULL;
+    if (received > 0) {
+        body[received] = '\0';
+        root = cJSON_Parse(body);
     }
-    body[received] = '\0';
-
-    cJSON *root = cJSON_Parse(body);
     if (!root) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        ESP_LOGW(TAG, "Settings POST: missing or invalid JSON body");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid JSON");
         return ESP_FAIL;
     }
 
     clock_settings_t cfg;
     settings_load(&cfg);
-
-    const cJSON *j;
-    if ((j = cJSON_GetObjectItem(root, "brightness")) && cJSON_IsNumber(j)) {
-        int v = j->valueint;
-        if (v >= 0 && v <= 100) cfg.brightness = (uint8_t)v;
-    }
-    if ((j = cJSON_GetObjectItem(root, "text_color")) && cJSON_IsString(j)) {
-        // Parse "#RRGGBB" hex string
-        const char *s = j->valuestring;
-        if (s[0] == '#' && strlen(s) == 7) {
-            cfg.text_color = (uint32_t)strtoul(s + 1, NULL, 16);
-        }
-    }
-    if ((j = cJSON_GetObjectItem(root, "background_image")) && cJSON_IsString(j)) {
-        strncpy(cfg.background_image, j->valuestring, sizeof(cfg.background_image) - 1);
-        cfg.background_image[sizeof(cfg.background_image) - 1] = '\0';
-    }
-
+    settings_changes_t ch = {0};
+    settings_merge_blob_fields(root, &cfg, &ch);
+    bool anim_ok = settings_parse_anim(root, &ch);
     cJSON_Delete(root);
 
-    esp_err_t err = settings_save(&cfg);
+    esp_err_t err = anim_ok ? settings_persist_and_apply(&cfg, &ch) : ESP_ERR_INVALID_ARG;
     if (err != ESP_OK) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save settings");
+        httpd_resp_send_err(req, anim_ok ? HTTPD_500_INTERNAL_SERVER_ERROR : HTTPD_400_BAD_REQUEST,
+                            anim_ok ? "Failed to save settings" : "Unknown clock_anim");
         return ESP_FAIL;
     }
-
-    ESP_LOGI(TAG, "Settings updated: brightness=%u text_color=#%06lx bg=%s",
-             cfg.brightness, (unsigned long)cfg.text_color, cfg.background_image);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"status\":\"ok\"}\n", HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
@@ -1984,7 +2284,12 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
 
 /**
  * @brief Serialize conditions to JSON and send.
- * GET /api/weather/current
+ * GET /api/weather/current — {"valid":false} when no conditions are cached.
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK.
  */
 static esp_err_t weather_current_handler(httpd_req_t *req)
 {
@@ -2016,7 +2321,12 @@ static esp_err_t weather_current_handler(httpd_req_t *req)
 
 /**
  * @brief Serialize forecast periods to JSON and send.
- * GET /api/weather/forecast
+ * GET /api/weather/forecast — {"valid":false} when no forecast is cached.
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK.
  */
 static esp_err_t weather_forecast_handler(httpd_req_t *req)
 {
@@ -2050,7 +2360,12 @@ static esp_err_t weather_forecast_handler(httpd_req_t *req)
 
 /**
  * @brief Serialize active alerts to JSON and send.
- * GET /api/weather/alerts
+ * GET /api/weather/alerts — {"valid":false,"count":0} when no alerts are cached.
+ *
+ * @param req  Incoming request.
+ * @version 1
+ * @callback
+ * @return ESP_OK.
  */
 static esp_err_t weather_alerts_handler(httpd_req_t *req)
 {
@@ -2089,6 +2404,11 @@ static esp_err_t weather_alerts_handler(httpd_req_t *req)
 // Public API
 // =============================================================================
 
+/**
+ * @brief Start the HTTP API server on port 80 and register all URI handlers.
+ * @version 1
+ * @return ESP_OK on success or if already running; httpd_start() error otherwise.
+ */
 esp_err_t http_api_start(void)
 {
     if (server != NULL) {
@@ -2108,6 +2428,11 @@ esp_err_t http_api_start(void)
     return ESP_OK;
 }
 
+/**
+ * @brief Stop the HTTP API server if running.
+ * @version 1
+ * @return ESP_OK if not running; httpd_stop() result otherwise.
+ */
 esp_err_t http_api_stop(void)
 {
     if (server == NULL) {
@@ -2120,6 +2445,11 @@ esp_err_t http_api_stop(void)
     return ret;
 }
 
+/**
+ * @brief Report whether the HTTP API server is running.
+ * @version 1
+ * @return true if the server handle is active.
+ */
 bool http_api_is_running(void)
 {
     return (server != NULL);
