@@ -19,6 +19,7 @@ idf_component_register(
         sdcard                      # SD card support
         http_api                    # HTTP server for file management
         debug_log                   # Debug log capture to SD card
+        log_async                   # non-blocking log output (ring buffer + writer task)
         display_fsm                 # Display state machine
         nws                         # NWS weather service
         mdns                        # mDNS service advertisement

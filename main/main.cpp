@@ -33,6 +33,7 @@
 #include "sdcard.h"
 #include "http_api.h"
 #include "debug_log.h"
+#include "log_async.h"
 #include "display_fsm.h"
 #include "nws.h"
 #include "mdns.h"
@@ -1161,9 +1162,11 @@ static void boot_health_loop(void)
 
 /**
  * @brief ESP-IDF entry point: snapshot RTC crash context, run the boot stages, then hand off to the display FSM and health loop.
+ * v2: installs non-blocking logging (log_async) right after the SD log mirror.
  * @callback
- * @version 1
+ * @version 2
  * @req REQ-BOOT-001
+ * @req REQ-LOG-005
  */
 extern "C" void app_main()
 {
@@ -1189,6 +1192,7 @@ extern "C" void app_main()
 
     boot_settings_init(&cfg);
     boot_sdcard_init(&ctx);
+    log_async_init();           // ← logging non-blocking from here (forwards to the SD mirror + console)
     tsens_init();               // ← internal chip-temp telemetry available from here
     boot_network_early(&cfg);   // ← ROLLBACK BOUNDARY: ota_mark_app_valid() fires here
     boot_sntp_wait(&cfg);

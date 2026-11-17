@@ -179,6 +179,19 @@ requirements:
     description: Recent boots (reason, stage, time) are recorded and exposed at /api/boot_history.
     acceptance_criteria: inv boot-history lists recent boots.
 
+  REQ-LOG-005:
+    name: Logging never stalls the caller
+    subsystem: LOG
+    description: >-
+      Log output is queued to a ring buffer and written to the console and SD mirror by a
+      low-priority task, so logging from the display/FSM path (which holds the LVGL lock)
+      does not wait on the 115200-baud UART or the SD card. Lines are never truncated; when
+      the buffer is full, lines are dropped and the drop count is reported.
+    acceptance_criteria: >-
+      A display transition that logs 8 lines holds the LVGL lock under 10 ms longer than the
+      same transition with no logging; every logged line still reaches the console and SD
+      log in order, and a forced overflow produces a reported drop count instead of a stall.
+
   # ---------------------------------------------------------------- API
   REQ-API-001:
     name: Local REST API on port 80
