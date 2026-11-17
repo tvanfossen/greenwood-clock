@@ -56,6 +56,8 @@ static const char* NTP_SERVERS[] = {
  * @brief Save a Unix timestamp to NVS for use as a time fallback after reboot.
  * @param current_time  Timestamp to store.
  * @return ESP_OK on success.
+ * @version 1
+ * @dg_internal
  */
 static esp_err_t save_time_to_nvs(time_t current_time) {
     nvs_handle_t handle;
@@ -76,6 +78,8 @@ static esp_err_t save_time_to_nvs(time_t current_time) {
 /**
  * @brief Load the last saved timestamp from NVS and apply it as the system clock.
  * @return ESP_OK if a valid timestamp was found and applied.
+ * @version 1
+ * @dg_internal
  */
 static esp_err_t load_time_from_nvs(void) {
     nvs_handle_t handle;
@@ -113,6 +117,8 @@ static esp_err_t load_time_from_nvs(void) {
  * SNTP client asserts in sntp_setoperatingmode() if the operating mode is set
  * while the client is already running, so re-init on reconnect would PANIC.
  * Guard against that: if SNTP is already enabled, just force a resync.
+ * @version 1
+ * @dg_internal
  */
 static void network_start_sntp(void) {
     if (esp_sntp_enabled()) {
@@ -130,6 +136,8 @@ static void network_start_sntp(void) {
 
 /**
  * @brief Handle IP_EVENT_STA_GOT_IP — update state and start SNTP.
+ * @version 1
+ * @dg_internal
  */
 static void network_handle_got_ip(void) {
     ESP_LOGI(TAG, "Got IP, starting SNTP");
@@ -138,7 +146,11 @@ static void network_handle_got_ip(void) {
     network_start_sntp();
 }
 
-/** @brief One-shot timer callback: attempt a (backed-off) reconnect. */
+/**
+ * @brief One-shot timer callback: attempt a (backed-off) reconnect unless a scan is running.
+ * @version 1
+ * @callback
+ */
 static void reconnect_timer_cb(void* arg) {
     (void)arg;
     if (s_scanning) return;   // a scan started meanwhile — it will resume the connect
@@ -150,6 +162,8 @@ static void reconnect_timer_cb(void* arg) {
  *
  * Never calls esp_wifi_connect() synchronously from the event task in a loop —
  * that is what caused the too-frequent retries with wrong credentials.
+ * @version 1
+ * @dg_internal
  */
 static void schedule_reconnect(void) {
     if (!s_reconnect_timer) { esp_wifi_connect(); return; }   // fallback: timer not ready
@@ -160,38 +174,74 @@ static void schedule_reconnect(void) {
     s_reconnect_backoff_ms = (next > RECONNECT_BACKOFF_MAX_MS) ? RECONNECT_BACKOFF_MAX_MS : next;
 }
 
+/** Set once STA credentials are applied; gates the STA_START auto-connect. */
+static bool s_have_credentials = false;
+
+/**
+ * @brief Start a connection attempt and log any immediate failure.
+ * @version 1
+ * @dg_internal
+ */
+static void network_connect_now(const char* why) {
+    esp_err_t err = esp_wifi_connect();
+    if (err != ESP_OK) ESP_LOGW(TAG, "connect (%s) failed: %s", why, esp_err_to_name(err));
+}
+
+/**
+ * @brief Handle one WIFI_EVENT: scan done, STA start, STA disconnected.
+ *
+ * - WIFI_EVENT_SCAN_DONE → set SCAN_DONE_BIT
+ * - WIFI_EVENT_STA_START → connect, but only once credentials are set
+ * - WIFI_EVENT_STA_DISCONNECTED → reconnect with exponential backoff (unless scanning)
+ * @version 1
+ * @dg_internal
+ */
+static void on_wifi_driver_event(int32_t ev_id, void* ev_data)
+{
+    if (ev_id == WIFI_EVENT_SCAN_DONE) {
+        const wifi_event_sta_scan_done_t* d = (const wifi_event_sta_scan_done_t*)ev_data;
+        if (d)
+            ESP_LOGI(TAG, "SCAN_DONE: status=%u number=%u id=%u",
+                     (unsigned)d->status, (unsigned)d->number, (unsigned)d->scan_id);
+        xEventGroupSetBits(s_wifi_event_group, SCAN_DONE_BIT);
+    } else if (ev_id == WIFI_EVENT_STA_START) {
+        // Only with credentials: infrastructure init starts the STA before
+        // network_init() sets them, and that credential-less connect overlapped the
+        // real one, failing it with ESP_ERR_WIFI_CONN (RPC 0x21a) and ~3 s of retry.
+        if (s_have_credentials) network_connect_now("STA start");
+        else ESP_LOGI(TAG, "STA started without credentials — not connecting");
+    } else if (ev_id == WIFI_EVENT_STA_DISCONNECTED) {
+        ESP_LOGI(TAG, "Wi-Fi disconnected%s", s_scanning ? " (scan in progress)" : "");
+        // Suppress auto-reconnect during a scan — network_scan() aborts the
+        // connect on purpose and resumes it when done. Otherwise back off.
+        if (!s_scanning) schedule_reconnect();
+    }
+}
+
 /**
  * @brief Unified event handler for WIFI_EVENT and IP_EVENT_STA_GOT_IP.
  *
- * - WIFI_EVENT_STA_START → connect immediately (first attempt)
- * - WIFI_EVENT_STA_DISCONNECTED → reconnect with exponential backoff
- * - IP_EVENT_STA_GOT_IP → reset backoff, update state + start SNTP
+ * WIFI_EVENT → on_wifi_driver_event(); IP_EVENT_STA_GOT_IP → reset backoff, update
+ * state + start SNTP.
+ * @version 3
+ * @callback
  */
 static void on_wifi_event(void* arg, esp_event_base_t ev_base,
                           int32_t ev_id, void* ev_data)
 {
     if (ev_base == WIFI_EVENT) {
-        if (ev_id == WIFI_EVENT_SCAN_DONE) {
-            const wifi_event_sta_scan_done_t* d = (const wifi_event_sta_scan_done_t*)ev_data;
-            if (d)
-                ESP_LOGI(TAG, "SCAN_DONE: status=%u number=%u id=%u",
-                         (unsigned)d->status, (unsigned)d->number, (unsigned)d->scan_id);
-            xEventGroupSetBits(s_wifi_event_group, SCAN_DONE_BIT);
-        } else if (ev_id == WIFI_EVENT_STA_START) {
-            esp_wifi_connect();                       // initial attempt, immediate
-        } else if (ev_id == WIFI_EVENT_STA_DISCONNECTED) {
-            ESP_LOGI(TAG, "Wi-Fi disconnected%s", s_scanning ? " (scan in progress)" : "");
-            // Suppress auto-reconnect during a scan — network_scan() aborts the
-            // connect on purpose and resumes it when done. Otherwise back off.
-            if (!s_scanning) schedule_reconnect();
-        }
+        on_wifi_driver_event(ev_id, ev_data);
     } else if (ev_base == IP_EVENT && ev_id == IP_EVENT_STA_GOT_IP) {
         s_reconnect_backoff_ms = RECONNECT_BACKOFF_MIN_MS;   // connected — reset backoff
         network_handle_got_ip();
     }
 }
 
-/** @brief Track disconnect in the event-group and clear the connected flag. */
+/**
+ * @brief Track disconnect in the event-group and clear the connected flag.
+ * @version 1
+ * @callback
+ */
 static void on_wifi_disconnect(void* arg, esp_event_base_t ev_base,
                                 int32_t ev_id, void* ev_data)
 {
@@ -206,7 +256,9 @@ static void on_wifi_disconnect(void* arg, esp_event_base_t ev_base,
 // =============================================================================
 
 /**
- * @brief Initialise the TCP/IP stack and default event loop.
+ * @brief Initialise the TCP/IP stack, default event loop, and default STA netif.
+ * @version 1
+ * @dg_internal
  */
 static void network_init_tcp_stack(void) {
     ESP_ERROR_CHECK(esp_netif_init());
@@ -216,6 +268,8 @@ static void network_init_tcp_stack(void) {
 
 /**
  * @brief Initialise the Wi-Fi driver with default configuration.
+ * @version 1
+ * @dg_internal
  */
 static void network_init_wifi_driver(void) {
     wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -224,6 +278,8 @@ static void network_init_wifi_driver(void) {
 
 /**
  * @brief Register all event handler instances required for STA operation.
+ * @version 1
+ * @dg_internal
  */
 static void network_register_event_handlers(void) {
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
@@ -235,7 +291,9 @@ static void network_register_event_handlers(void) {
 }
 
 /**
- * @brief Create the event group, configure storage/mode, and start Wi-Fi.
+ * @brief Create the event group and reconnect timer, configure storage/mode, and start Wi-Fi.
+ * @version 1
+ * @dg_internal
  */
 static void network_configure_and_start(void) {
     s_wifi_event_group = xEventGroupCreate();
@@ -253,6 +311,11 @@ static void network_configure_and_start(void) {
 // Public: infrastructure init
 // =============================================================================
 
+/**
+ * @brief Bring up TCP/IP, the Wi-Fi driver, event handlers and start STA mode without connecting.
+ * @version 1
+ * @return ESP_OK (also when already initialized).
+ */
 esp_err_t network_init_infrastructure(void) {
     if (s_wifi_initialized) {
         ESP_LOGW(TAG, "WiFi already initialized");
@@ -275,18 +338,28 @@ esp_err_t network_init_infrastructure(void) {
  * @brief Write SSID/password into a wifi_config_t and apply it to the STA interface.
  * @param ssid      Network SSID.
  * @param password  Network password; may be NULL for open networks.
+ * @version 2
+ * @dg_internal
  */
 static void network_set_credentials(const char* ssid, const char* password) {
     wifi_config_t wcfg = {};
     strlcpy((char*)wcfg.sta.ssid,     ssid,     sizeof(wcfg.sta.ssid));
     strlcpy((char*)wcfg.sta.password, password, sizeof(wcfg.sta.password));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wcfg));
+    s_have_credentials = ssid[0] != '\0';
 }
 
 // =============================================================================
 // Public: network_init
 // =============================================================================
 
+/**
+ * @brief Ensure infrastructure is up, apply STA credentials, and restart Wi-Fi to connect.
+ * @param ssid      Network SSID.
+ * @param password  Network password.
+ * @version 1
+ * @return ESP_OK on success, or the infrastructure init error.
+ */
 esp_err_t network_init(const char* ssid, const char* password) {
     if (!s_wifi_initialized) {
         esp_err_t err = network_init_infrastructure();
@@ -311,6 +384,8 @@ esp_err_t network_init(const char* ssid, const char* password) {
  *
  * @param max_retries  Maximum poll attempts.
  * @return true if the clock synchronised within max_retries attempts.
+ * @version 1
+ * @dg_internal
  */
 static bool sntp_poll_until_synced(int max_retries) {
     int delay_ms = 1000;
@@ -337,6 +412,13 @@ static bool sntp_poll_until_synced(int max_retries) {
 // itself in the background.
 #define WIFI_CONNECT_BOOT_WAIT_MS   20000
 
+/**
+ * @brief Wait (bounded) for Wi-Fi, then for SNTP sync; persist synced time or fall back to NVS time.
+ *
+ * If Wi-Fi does not connect within WIFI_CONNECT_BOOT_WAIT_MS, loads the last-known
+ * time from NVS and returns so boot can continue.
+ * @version 1
+ */
 void network_wait_for_time(void) {
     EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT,
                         pdFALSE, pdTRUE, pdMS_TO_TICKS(WIFI_CONNECT_BOOT_WAIT_MS));
@@ -369,6 +451,8 @@ void network_wait_for_time(void) {
  *
  * @param ptr  Required non-NULL pointer (e.g. output buffer or SSID string).
  * @return ESP_OK if all preconditions pass.
+ * @version 1
+ * @dg_internal
  */
 static esp_err_t network_check_ready(const void* ptr) {
     if (!ptr) return ESP_ERR_INVALID_ARG;
@@ -387,6 +471,8 @@ static esp_err_t network_check_ready(const void* ptr) {
  * @param ap_count   Number of APs reported by the driver.
  * @param actual_out Set to the number of records actually returned.
  * @return Heap buffer on success, NULL on OOM.
+ * @version 1
+ * @dg_internal
  */
 static wifi_ap_record_t* network_fetch_scan_records(uint16_t ap_count, uint16_t* actual_out)
 {
@@ -406,6 +492,8 @@ static wifi_ap_record_t* network_fetch_scan_records(uint16_t ap_count, uint16_t*
  * @param dst  Destination array.
  * @param src  Source raw records.
  * @param n    Number of entries to copy.
+ * @version 1
+ * @dg_internal
  */
 static void network_copy_ap_records(wifi_ap_info_t* dst, const wifi_ap_record_t* src,
                                      uint16_t n)
@@ -424,6 +512,8 @@ static void network_copy_ap_records(wifi_ap_info_t* dst, const wifi_ap_record_t*
  * @param max_aps   Maximum entries to copy.
  * @param found     Set to the number of entries copied.
  * @return ESP_OK, ESP_ERR_NO_MEM on OOM, or ESP_OK with *found=0 if empty.
+ * @version 1
+ * @dg_internal
  */
 static esp_err_t network_scan_results(wifi_ap_info_t* ap_list, uint16_t max_aps,
                                        uint16_t* found)
@@ -447,9 +537,17 @@ static esp_err_t network_scan_results(wifi_ap_info_t* ap_list, uint16_t max_aps,
 // Public: network_scan
 // =============================================================================
 
-// Run a NON-blocking scan and wait for WIFI_EVENT_SCAN_DONE. On esp_hosted the
-// blocking form (esp_wifi_scan_start(cfg, true)) often returns before results are
-// ready, so esp_wifi_scan_get_ap_num() reads 0 — this waits for the event instead.
+/**
+ * @brief Run a NON-blocking scan and wait (up to 10 s) for WIFI_EVENT_SCAN_DONE.
+ *
+ * On esp_hosted the blocking form (esp_wifi_scan_start(cfg, true)) often returns
+ * before results are ready, so esp_wifi_scan_get_ap_num() reads 0 — this waits
+ * for the event instead.
+ * @param cfg  Scan configuration.
+ * @version 1
+ * @return ESP_OK when the scan completed, ESP_ERR_TIMEOUT, or the scan-start error.
+ * @dg_internal
+ */
 static esp_err_t network_run_scan(const wifi_scan_config_t* cfg) {
     xEventGroupClearBits(s_wifi_event_group, SCAN_DONE_BIT);
     esp_err_t err = esp_wifi_scan_start(cfg, false);
@@ -470,9 +568,17 @@ static esp_err_t network_run_scan(const wifi_scan_config_t* cfg) {
     return ESP_OK;
 }
 
-// Give the scan exclusive use of the radio: suppress our reconnect, abort the
-// in-progress connect, and clear the STA config so nothing keeps chasing the stored
-// AP during the scan. Saves the prior config for scan_resume_connect() to restore.
+/**
+ * @brief Give the scan exclusive use of the radio by suppressing reconnect and clearing the STA config.
+ *
+ * Suppresses our reconnect, aborts the in-progress connect, and clears the STA
+ * config so nothing keeps chasing the stored AP during the scan. Saves the prior
+ * config for scan_resume_connect() to restore.
+ * @param saved    Receives the prior STA config.
+ * @param had_cfg  Set true if the prior config was read successfully.
+ * @version 1
+ * @dg_internal
+ */
 static void scan_preempt_connect(wifi_config_t* saved, bool* had_cfg) {
     s_scanning = true;
     *had_cfg = (esp_wifi_get_config(WIFI_IF_STA, saved) == ESP_OK);
@@ -482,13 +588,28 @@ static void scan_preempt_connect(wifi_config_t* saved, bool* had_cfg) {
     vTaskDelay(pdMS_TO_TICKS(200));   // let the connect fully stand down
 }
 
-/** @brief Restore the STA config saved by scan_preempt_connect() and reconnect. */
-static void scan_resume_connect(const wifi_config_t* saved, bool had_cfg) {
-    if (had_cfg) esp_wifi_set_config(WIFI_IF_STA, saved);
+/**
+ * @brief Restore the STA config saved by scan_preempt_connect() and reconnect.
+ * @version 2
+ * @dg_internal
+ */
+static void scan_resume_connect(wifi_config_t* saved, bool had_cfg) {
+    // Non-const: esp_wifi_set_config() takes a mutable pointer (was a -Wdiscarded-qualifiers warning).
+    esp_err_t err = had_cfg ? esp_wifi_set_config(WIFI_IF_STA, saved) : ESP_OK;
+    if (err != ESP_OK) ESP_LOGE(TAG, "scan: restore STA config failed: %s", esp_err_to_name(err));
     s_scanning = false;
-    esp_wifi_connect();
+    err = esp_wifi_connect();
+    if (err != ESP_OK) ESP_LOGW(TAG, "scan: reconnect after scan failed: %s", esp_err_to_name(err));
 }
 
+/**
+ * @brief Scan for nearby APs, pre-empting any in-progress connect, and copy results to ap_list.
+ * @param ap_list  Destination buffer.
+ * @param max_aps  Maximum entries to copy.
+ * @param found    Set to the number of entries copied.
+ * @version 1
+ * @return ESP_OK on success, ESP_ERR_INVALID_ARG/ESP_ERR_INVALID_STATE on bad input/state, or a scan error.
+ */
 esp_err_t network_scan(wifi_ap_info_t* ap_list, uint16_t max_aps, uint16_t* found) {
     esp_err_t err = network_check_ready(ap_list);
     if (err != ESP_OK || !found) return err ? err : ESP_ERR_INVALID_ARG;
@@ -533,6 +654,8 @@ esp_err_t network_scan(wifi_ap_info_t* ap_list, uint16_t max_aps, uint16_t* foun
  * @param ssid      Network SSID.
  * @param password  Network password; NULL for open networks.
  * @return ESP_OK on successful initiation.
+ * @version 1
+ * @dg_internal
  */
 static esp_err_t network_set_and_connect(const char* ssid, const char* password) {
     wifi_config_t wcfg = {};
@@ -556,6 +679,13 @@ static esp_err_t network_set_and_connect(const char* ssid, const char* password)
 // Public: network_connect
 // =============================================================================
 
+/**
+ * @brief Cancel pending retries, reset backoff, drop any live link, and connect to the given AP.
+ * @param ssid      Network SSID.
+ * @param password  Network password; NULL for open networks.
+ * @version 1
+ * @return ESP_OK on successful initiation, or a precondition/driver error.
+ */
 esp_err_t network_connect(const char* ssid, const char* password) {
     esp_err_t err = network_check_ready(ssid);
     if (err != ESP_OK) return err;
@@ -573,10 +703,21 @@ esp_err_t network_connect(const char* ssid, const char* password) {
 // Public: status / info
 // =============================================================================
 
+/**
+ * @brief Report whether the STA currently holds an IP address.
+ * @version 1
+ * @return true if connected.
+ */
 bool network_is_connected(void) {
     return s_wifi_connected;
 }
 
+/**
+ * @brief Copy the configured STA SSID into the caller's buffer (at least 33 bytes).
+ * @param ssid  Destination buffer.
+ * @version 1
+ * @return ESP_OK on success, or a precondition/driver error.
+ */
 esp_err_t network_get_ssid(char* ssid) {
     esp_err_t err = network_check_ready(ssid);
     if (err != ESP_OK) return err;
