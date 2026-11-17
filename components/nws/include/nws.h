@@ -138,24 +138,6 @@ esp_err_t nws_fetch_radar(float lat, float lon, uint8_t **png_buf, size_t *png_l
 esp_err_t nws_fetch_kp_index(float *kp_out);
 
 // ============================================================================
-// Condition-to-Lottie mapping
-// ============================================================================
-
-/**
- * @brief Map NWS short_forecast string to a Lottie animation file path.
- *
- * Uses substring matching against known NWS condition patterns.
- * Falls back to "mostly_cloudy" if no pattern matches.
- *
- * @param short_forecast  NWS short forecast text (e.g., "Partly Cloudy")
- * @param is_daytime      true for day variant, false for night
- * @param path_out        Output buffer for LVGL file path (e.g., "A:/lottie/weather/day/clear.json")
- * @param max_len         Size of path_out buffer
- */
-void nws_condition_to_lottie_path(const char *short_forecast, bool is_daytime,
-                                   char *path_out, size_t max_len);
-
-// ============================================================================
 // Cached data accessors (thread-safe reads of last successful fetch)
 // ============================================================================
 

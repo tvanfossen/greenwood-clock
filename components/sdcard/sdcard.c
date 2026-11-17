@@ -244,19 +244,6 @@ esp_err_t sdcard_get_info(sdcard_info_t* info)
 }
 
 /**
- * @brief Stub: formatting through this module is not implemented; logs a hint to format on a PC (remote format is done by the HTTP /api/sdcard/format handler).
- * @version 1
- * @req REQ-SD-002
- * @return ESP_ERR_NOT_SUPPORTED (always).
- */
-esp_err_t sdcard_format(void)
-{
-    ESP_LOGW(TAG, "Format via BSP not yet implemented");
-    ESP_LOGW(TAG, "Please format the SD card using a PC (FAT32)");
-    return ESP_ERR_NOT_SUPPORTED;
-}
-
-/**
  * @brief Create the standard application directories on the SD card.
  *
  * Silently skips directories that already exist.

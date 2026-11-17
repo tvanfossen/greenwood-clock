@@ -7,7 +7,6 @@ idf_component_register(
         "src/display_scheduler.cpp"
         "src/clock_widget.c"
         "src/weather_widgets.c"
-        "src/particle_effects.c"
         "src/snow_physics.c"
         "src/particle_view.c"
         "src/snowfall_view.c"
