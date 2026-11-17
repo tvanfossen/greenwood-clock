@@ -41,6 +41,9 @@ LINEAR_2 = {"i": {"x": [0, 0], "y": [0, 0]}, "o": {"x": [1, 1], "y": [1, 1]}}
 SOFT_DECEL = {"i": {"x": [0.25], "y": [0.1]}, "o": {"x": [0.25], "y": [1]}}
 
 
+## @brief Create a scalar/vector keyframe; easing=None marks the last keyframe.
+## @version 1
+## @return Keyframe dict with t, s (list-wrapped) and optional easing i/o.
 def kf(t, s, easing=None):
     """Create a keyframe. If easing is None, this is the last keyframe."""
     frame = {"t": t, "s": s if isinstance(s, list) else [s]}
@@ -49,6 +52,37 @@ def kf(t, s, easing=None):
     return frame
 
 
+## @brief Build keyframes for a value repeating every op frames, wrapping sample times into [0, op) with matching seam keys at 0 and op for a seamless loop.
+## @version 1
+## @return List of keyframe dicts with strictly increasing times.
+def cyclic_kfs(points, op, easing):
+    """Keyframes for a value that repeats every `op` frames.
+
+    `points` are (time, value) samples over one period; times may lie outside
+    [0, op) (phase-shifted copies). They are wrapped into [0, op), sorted, and
+    bracketed by seam keys at 0 and op holding the same value (linearly
+    interpolated across the wrap), so keyframe times strictly increase and the
+    loop ends exactly where it starts. Replaces ad-hoc `(t + offset) % op`
+    construction, which produced backwards keyframe times (visible jumps).
+    """
+    wrapped = {}
+    for t, v in points:
+        wrapped.setdefault(int(t) % op, v if isinstance(v, list) else [v])
+    keys = sorted(wrapped.items())
+    (t_last, v_last), (t_first, v_first) = keys[-1], keys[0]
+    span = (t_first + op) - t_last
+    frac = (op - t_last) / span if span else 0.0
+    seam = [a + (b - a) * frac for a, b in zip(v_last, v_first)]
+    if keys[0][0] != 0:
+        keys.insert(0, (0, seam))
+    frames = [kf(t, v, easing) for t, v in keys]
+    frames.append(kf(op, seam))  # equals the t=0 value: seamless loop
+    return frames
+
+
+## @brief Create a position keyframe with optional easing and spatial tangents (to/ti).
+## @version 1
+## @return Position keyframe dict.
 def kf_pos(t, s, easing=None, to=None, ti=None):
     """Create a position keyframe with spatial tangents."""
     frame = {"t": t, "s": s}
@@ -62,16 +96,25 @@ def kf_pos(t, s, easing=None, to=None, ti=None):
     return frame
 
 
+## @brief Wrap a value as a static (non-animated) Lottie property.
+## @version 1
+## @return Property dict {a: 0, k: val}.
 def static(val):
     """Static (non-animated) property."""
     return {"a": 0, "k": val}
 
 
+## @brief Wrap a keyframe list as an animated Lottie property.
+## @version 1
+## @return Property dict {a: 1, k: keyframes}.
 def animated(keyframes):
     """Animated property."""
     return {"a": 1, "k": keyframes}
 
 
+## @brief Build a layer transform (ks), defaulting anchor, scale, rotation and opacity to identity values.
+## @version 1
+## @return Transform dict with p, a, s, r, o.
 def layer_transform(pos, anchor=None, scale=None, rotation=None, opacity=None):
     """Build layer transform object."""
     ks = {
@@ -84,6 +127,9 @@ def layer_transform(pos, anchor=None, scale=None, rotation=None, opacity=None):
     return ks
 
 
+## @brief Create a Lottie shape layer (ty 4) from shapes and a transform.
+## @version 1
+## @return Shape layer dict.
 def shape_layer(name, shapes, ks, ip=0, op=240, st=0):
     """Create a shape layer."""
     return {
@@ -99,6 +145,9 @@ def shape_layer(name, shapes, ks, ip=0, op=240, st=0):
     }
 
 
+## @brief Create an ellipse shape at a static position; size is static if numeric, else used as an animated property.
+## @version 1
+## @return Ellipse shape dict (ty el).
 def ellipse(name, pos, size):
     return {
         "ty": "el",
@@ -108,10 +157,16 @@ def ellipse(name, pos, size):
     }
 
 
+## @brief Create an ellipse shape with a static position and an animated size property.
+## @version 1
+## @return Ellipse shape dict (ty el).
 def ellipse_animated_size(name, pos, size_anim):
     return {"ty": "el", "nm": name, "p": static(pos), "s": size_anim}
 
 
+## @brief Create a rectangle shape with static position and size, and optional corner roundness.
+## @version 1
+## @return Rectangle shape dict (ty rc).
 def rect(name, pos, size, roundness=0):
     r = {"ty": "rc", "nm": name, "p": static(pos), "s": static(size)}
     if roundness:
@@ -119,12 +174,18 @@ def rect(name, pos, size, roundness=0):
     return r
 
 
+## @brief Create a solid fill with static color; opacity is static if numeric, else used as an animated property.
+## @version 1
+## @return Fill shape dict (ty fl).
 def fill(name, color, opacity=100):
     f = {"ty": "fl", "nm": name, "c": static(color), "r": 1}
     f["o"] = static(opacity) if isinstance(opacity, (int, float)) else opacity
     return f
 
 
+## @brief Create a stroke with static color, opacity and width plus line cap/join.
+## @version 1
+## @return Stroke shape dict (ty st).
 def stroke(name, color, width, opacity=100, lc=2, lj=2):
     return {
         "ty": "st",
@@ -137,6 +198,9 @@ def stroke(name, color, width, opacity=100, lc=2, lj=2):
     }
 
 
+## @brief Create a static bezier path from vertices, defaulting in/out tangents to zero.
+## @version 1
+## @return Path shape dict (ty sh).
 def path_shape(name, vertices, in_pts=None, out_pts=None, closed=False):
     n = len(vertices)
     return {
@@ -154,6 +218,9 @@ def path_shape(name, vertices, in_pts=None, out_pts=None, closed=False):
     }
 
 
+## @brief Create a shape group from items, appending the given transform or an identity transform.
+## @version 1
+## @return Group shape dict (ty gr).
 def group(name, items, transform=None):
     """Shape group with optional transform."""
     it = list(items)
@@ -170,6 +237,9 @@ def group(name, items, transform=None):
     return {"ty": "gr", "nm": name, "it": it}
 
 
+## @brief Build a group transform (ty tr); numeric rotation/opacity become static, otherwise used as animated properties.
+## @version 1
+## @return Group transform dict.
 def group_transform(pos=None, rotation=0, scale=None, opacity=100):
     tr = {"ty": "tr"}
     tr["p"] = pos or static([0, 0])
@@ -180,6 +250,9 @@ def group_transform(pos=None, rotation=0, scale=None, opacity=100):
     return tr
 
 
+## @brief Build the top-level Lottie composition (v5.7.0, 60 fps) for the given size, length and layers.
+## @version 1
+## @return Lottie composition dict.
 def lottie(name, w, h, op, layers):
     return {
         "v": "5.7.0",
@@ -194,6 +267,8 @@ def lottie(name, w, h, op, layers):
     }
 
 
+## @brief Write a composition as indented JSON under OUTPUT_DIR (creating directories) and print its size and layer count.
+## @version 1
 def write_lottie(subpath, data):
     path = os.path.join(OUTPUT_DIR, subpath)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -208,6 +283,9 @@ def write_lottie(subpath, data):
 # =============================================================================
 
 
+## @brief Create cloud shapes from overlapping ellipses (lobe_specs of (x, y, w, h)) plus one fill.
+## @version 1
+## @return List of ellipse shapes followed by the cloud fill.
 def make_cloud_shapes(color, lobe_specs):
     """Create cloud from overlapping ellipses.
     lobe_specs: list of (x, y, w, h) tuples.
@@ -219,6 +297,9 @@ def make_cloud_shapes(color, lobe_specs):
     return shapes
 
 
+## @brief Cloud shape layer with looping horizontal drift, optional vertical bob and optional staggered lobe breathing.
+## @version 1
+## @return Cloud shape layer dict.
 def cloud_layer(
     name, pos_start, pos_mid, lobes, color, op, opacity=85, bob_y=0, lobe_breathe=False
 ):
@@ -257,16 +338,15 @@ def cloud_layer(
             dw, dh = w * 0.06, h * 0.06
             offset = i * (op // len(lobes))
             size_kf = animated(
-                [
-                    kf(0, [w, h], EASE_IN_OUT_2),
-                    kf((op // 3 + offset) % op, [w + dw, h + dh], EASE_IN_OUT_2),
-                    kf(
-                        (2 * op // 3 + offset) % op,
-                        [w - dw * 0.5, h - dh * 0.5],
-                        EASE_IN_OUT_2,
-                    ),
-                    kf(op, [w, h]),
-                ]
+                cyclic_kfs(
+                    [
+                        (offset, [w, h]),
+                        (op // 3 + offset, [w + dw, h + dh]),
+                        (2 * op // 3 + offset, [w - dw * 0.5, h - dh * 0.5]),
+                    ],
+                    op,
+                    EASE_IN_OUT_2,
+                )
             )
             shapes.append(ellipse_animated_size(f"lobe-{i+1}", [x, y], size_kf))
         else:
@@ -283,6 +363,9 @@ def cloud_layer(
 # =============================================================================
 
 
+## @brief Single rain drop layer that falls linearly over fall_dur frames (default op) with fade in/out.
+## @version 1
+## @return Rain drop shape layer dict.
 def rain_drop_layer(
     name,
     x,
@@ -337,6 +420,9 @@ def rain_drop_layer(
 # =============================================================================
 
 
+## @brief Single snowflake layer drifting down over fall_dur frames (default op) with horizontal sway, fade in/out and gentle rotation.
+## @version 1
+## @return Snowflake shape layer dict.
 def snowflake_layer(
     name,
     x_center,
@@ -427,6 +513,9 @@ def snowflake_layer(
 # =============================================================================
 
 
+## @brief Create n_rays rounded-rect ray groups, each rotated manually (no repeater).
+## @version 1
+## @return List of ray group dicts.
 def sun_ray_groups(n_rays, ray_length, ray_width, ray_dist, color):
     """Create N ray groups, each rotated manually (no repeater)."""
     groups = []
@@ -450,6 +539,9 @@ def sun_ray_groups(n_rays, ray_length, ray_width, ray_dist, color):
     return groups
 
 
+## @brief Sun ray, glow and disc layers with rotating rays and offset breathing scale/opacity.
+## @version 1
+## @return List [ray_layer, glow_layer, disc_layer].
 def sun_layers(cx, cy, op, disc_r=40, glow_r=70, ray_length=42, n_rays=8):
     """Sun disc + glow + ray layer with breathing animation."""
     half = op // 2
@@ -543,6 +635,9 @@ def sun_layers(cx, cy, op, disc_r=40, glow_r=70, ray_length=42, n_rays=8):
 # =============================================================================
 
 
+## @brief Crescent moon from a breathing lavender glow, a bright disc and an offset night-sky shadow disc.
+## @version 1
+## @return List [glow_layer, bright, shadow].
 def moon_layers(cx, cy, op, disc_r=30, shadow_offset=15):
     """Crescent moon via bright disc + dark shadow disc."""
     half = op // 2
@@ -595,6 +690,9 @@ def moon_layers(cx, cy, op, disc_r=30, shadow_offset=15):
     return [glow_layer, bright, shadow]
 
 
+## @brief Twinkling star layers at (x, y, size) positions, each with phase-offset opacity and scale pulses.
+## @version 1
+## @return List of star shape layers.
 def star_layers(positions, op):
     """Twinkling stars at given positions. Each star twinkles independently."""
     layers = []
@@ -649,6 +747,9 @@ def star_layers(positions, op):
 # =============================================================================
 
 
+## @brief Stroked lightning bolt path layer that double-flashes at bolt_time.
+## @version 1
+## @return Bolt shape layer dict.
 def lightning_bolt_layer(name, vertices, bolt_time, op, color=None):
     """Lightning bolt that double-flashes at bolt_time."""
     if color is None:
@@ -679,6 +780,9 @@ def lightning_bolt_layer(name, vertices, bolt_time, op, color=None):
     )
 
 
+## @brief Animate cloud color to flash brighter around each bolt time, returning to base color.
+## @version 1
+## @return Animated color property.
 def cloud_illumination_kf(bolt_times, op, base_color, flash_color):
     """Animate cloud color to flash brighter during lightning."""
     kfs = []
@@ -697,12 +801,18 @@ def cloud_illumination_kf(bolt_times, op, base_color, flash_color):
 # =============================================================================
 
 
+## @brief Generate the day clear-sky animation: breathing sun on a 300x300, 240-frame canvas.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_day_clear():
     op = 240
     layers = sun_layers(150, 150, op, disc_r=40, glow_r=72, ray_length=44, n_rays=8)
     return lottie("weather-day-clear", 300, 300, op, layers)
 
 
+## @brief Generate day partly-cloudy: bobbing breathing cloud and drifting shadow in front of a sun.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_day_partly_cloudy():
     op = 300
     sun = sun_layers(120, 115, op, disc_r=30, glow_r=55, ray_length=32, n_rays=8)
@@ -747,6 +857,9 @@ def gen_day_partly_cloudy():
     return lottie("weather-day-partly-cloudy", 300, 300, op, [cloud, shadow] + sun)
 
 
+## @brief Generate day mostly-cloudy: three drifting cloud layers (front, mid, back).
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_day_mostly_cloudy():
     op = 300
     front = cloud_layer(
@@ -782,6 +895,9 @@ def gen_day_mostly_cloudy():
     return lottie("weather-day-mostly-cloudy", 300, 300, op, [front, mid, back])
 
 
+## @brief Generate day rain: dark cloud with 14 staggered steel-blue rain drops on a 120-frame loop.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_day_rain():
     op = 120  # 2-second loop for continuous rain
     # Cloud at top
@@ -840,6 +956,9 @@ def gen_day_rain():
     return lottie("weather-day-rain", 300, 300, op, [cloud] + drops)
 
 
+## @brief Generate day thunderstorm: lightning-illuminated dark cloud, four timed bolts and 14 rain drops.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_day_thunderstorm():
     op = 180  # 3-second loop — shorter = more intense
 
@@ -945,6 +1064,9 @@ def gen_day_thunderstorm():
     )
 
 
+## @brief Generate day snow: breathing cloud with 14 staggered drifting snowflakes.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_day_snow():
     op = 300  # 5-second loop
 
@@ -998,6 +1120,9 @@ def gen_day_snow():
     return lottie("weather-day-snow", 300, 300, op, [cloud] + flakes)
 
 
+## @brief Generate night clear: five twinkling stars and a crescent moon.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_night_clear():
     op = 300
     stars = star_layers(
@@ -1014,6 +1139,9 @@ def gen_night_clear():
     return lottie("weather-night-clear", 300, 300, op, stars + moon)
 
 
+## @brief Generate night partly-cloudy: night cloud in front of three stars and a crescent moon.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_night_partly_cloudy():
     op = 300
     stars = star_layers(
@@ -1039,6 +1167,9 @@ def gen_night_partly_cloudy():
     return lottie("weather-night-partly-cloudy", 300, 300, op, [cloud] + stars + moon)
 
 
+## @brief Generate night rain: night cloud with 12 staggered night-blue rain drops.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_night_rain():
     op = 120
     cloud = cloud_layer(
@@ -1093,6 +1224,9 @@ def gen_night_rain():
 # =============================================================================
 
 
+## @brief Generate the loading spinner: three orbiting dots of decreasing size/opacity (already validated, keep as-is).
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_ui_loading():
     """3 orbiting dots — already validated, keep as-is."""
     op = 120
@@ -1127,6 +1261,9 @@ def gen_ui_loading():
 # =============================================================================
 
 
+## @brief Generate day overcast: three slow-drifting cloud layers on a 360-frame loop.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_day_overcast():
     op = 360  # 6-second loop — very slow, heavy
     front = cloud_layer(
@@ -1160,6 +1297,9 @@ def gen_day_overcast():
     return lottie("weather-day-overcast", 300, 300, op, [front, mid, back])
 
 
+## @brief Generate day drizzle: cloud with six sparse, thin, slow rain drops.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_day_drizzle():
     op = 150  # 2.5-second loop
     cloud = cloud_layer(
@@ -1201,6 +1341,9 @@ def gen_day_drizzle():
     return lottie("weather-day-drizzle", 300, 300, op, [cloud] + drops)
 
 
+## @brief Generate day ice: dark cloud with 12 fast, short, wide ice pellets on a 90-frame loop.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_day_ice():
     op = 90  # 1.5-second loop — fast pellets
     cloud = cloud_layer(
@@ -1248,6 +1391,9 @@ def gen_day_ice():
     return lottie("weather-day-ice", 300, 300, op, [cloud] + drops)
 
 
+## @brief Generate day fog: four translucent rounded bands drifting horizontally with opacity breathing.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_day_fog():
     op = 480  # 8-second loop — very slow drift
     layers = []
@@ -1292,6 +1438,9 @@ def gen_day_fog():
     return lottie("weather-day-fog", 300, 300, op, layers)
 
 
+## @brief Generate day windy: four thin wind streaks moving right across the canvas.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_day_windy():
     op = 180  # 3-second loop
     layers = []
@@ -1325,6 +1474,9 @@ def gen_day_windy():
     return lottie("weather-day-windy", 300, 300, op, layers)
 
 
+## @brief Generate day haze: three large translucent ellipses with slow scale/opacity breathing.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_day_haze():
     op = 360  # 6-second loop — subtle shimmer
     layers = []
@@ -1371,6 +1523,9 @@ def gen_day_haze():
 # =============================================================================
 
 
+## @brief Generate night mostly-cloudy: two night cloud layers in front of two stars and a moon.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_night_mostly_cloudy():
     op = 300
     stars = star_layers([(80, 50, 3.5), (220, 40, 3)], op)
@@ -1399,6 +1554,9 @@ def gen_night_mostly_cloudy():
     )
 
 
+## @brief Generate night overcast: three dark drifting cloud layers on a 360-frame loop.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_night_overcast():
     op = 360
     front = cloud_layer(
@@ -1432,6 +1590,9 @@ def gen_night_overcast():
     return lottie("weather-night-overcast", 300, 300, op, [front, mid, back])
 
 
+## @brief Generate night drizzle: night cloud with five sparse drops, plus two stars and a moon.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_night_drizzle():
     op = 150
     stars = star_layers([(75, 45, 3), (230, 55, 2.5)], op)
@@ -1474,6 +1635,9 @@ def gen_night_drizzle():
     return lottie("weather-night-drizzle", 300, 300, op, [cloud] + drops + stars + moon)
 
 
+## @brief Generate night thunderstorm: lightning-illuminated dark cloud, four timed bolts and 12 night-blue drops.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_night_thunderstorm():
     op = 180
     bolt_times = [28, 70, 118, 152]
@@ -1567,6 +1731,9 @@ def gen_night_thunderstorm():
     )
 
 
+## @brief Generate night snow: breathing cloud with 12 drifting snowflakes and three stars.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_night_snow():
     op = 300
     stars = star_layers([(65, 40, 3), (240, 50, 2.5), (95, 35, 3)], op)
@@ -1615,6 +1782,9 @@ def gen_night_snow():
     return lottie("weather-night-snow", 300, 300, op, [cloud] + flakes + stars)
 
 
+## @brief Generate night ice: dark cloud with 10 fast ice pellets.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_night_ice():
     op = 90
     cloud = cloud_layer(
@@ -1660,6 +1830,9 @@ def gen_night_ice():
     return lottie("weather-night-ice", 300, 300, op, [cloud] + drops)
 
 
+## @brief Generate night fog: four dark translucent drifting bands with opacity breathing, plus two stars.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_night_fog():
     op = 480
     stars = star_layers([(90, 60, 2.5), (210, 45, 2)], op)
@@ -1709,6 +1882,9 @@ def gen_night_fog():
 # =============================================================================
 
 
+## @brief Seekable moon phase animation (frame 0 new, 120 full, 240 end) using cos-scaled shadow circles under alpha mattes for waxing and waning.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_astro_moon_cycle():
     """Seekable: frame 0=new moon, frame 120=full, frame 240=end.
 
@@ -1865,6 +2041,9 @@ def gen_astro_moon_cycle():
     )
 
 
+## @brief Generate sunrise: sun and glow rising above a horizon line with a warming sky band and six fading-in rays.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_astro_sunrise():
     op = 240
     cx = 150
@@ -1971,6 +2150,9 @@ def gen_astro_sunrise():
     )
 
 
+## @brief Generate sunset: sun descending below the horizon while shifting golden to deep orange, with fading glow, sky band and rays.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_astro_sunset():
     op = 240
     cx = 150
@@ -2082,6 +2264,9 @@ def gen_astro_sunset():
     )
 
 
+## @brief Vertical curtain bands swaying gently — aurora borealis effect.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_astro_aurora():
     """Vertical curtain bands swaying gently — aurora borealis effect."""
     op = 360
@@ -2144,6 +2329,9 @@ def gen_astro_aurora():
     return lottie("astro-aurora", 400, 200, op, layers)
 
 
+## @brief Single 30x30 star with 4-point cross shape and pulse.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_astro_star_twinkle():
     """Single star with 4-point cross shape + pulse. 30x30."""
     op = 180
@@ -2204,6 +2392,9 @@ def gen_astro_star_twinkle():
 # =============================================================================
 
 
+## @brief Heart bezier path: 4 vertices with smooth cubic handles, scaled by size.
+## @version 1
+## @return Closed heart path shape dict.
 def _heart_shape(size=20):
     """Proper heart bezier: 4 vertices with smooth cubic handles."""
     s = size
@@ -2232,6 +2423,9 @@ def _heart_shape(size=20):
     )
 
 
+## @brief Generate surprise hearts: seven hearts rising with sideways drift, rocking rotation and fade in/out.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_surprise_hearts():
     op = 240
     layers = []
@@ -2295,6 +2489,9 @@ def gen_surprise_hearts():
     return lottie("surprise-hearts", 500, 500, op, layers)
 
 
+## @brief Generate surprise confetti: 14 colored pieces bursting up from center then falling while spinning and fading.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_surprise_confetti():
     op = 180
     layers = []
@@ -2367,6 +2564,9 @@ def gen_surprise_confetti():
     return lottie("surprise-confetti", 600, 400, op, layers)
 
 
+## @brief Generate surprise fireworks: two staggered bursts of 10 sparks each, with gravity fall, shrink/fade and a central flash.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_surprise_fireworks():
     op = 240
     layers = []
@@ -2378,7 +2578,6 @@ def gen_surprise_fireworks():
         [0.50, 0.90, 0.55, 1],
         [0.95, 0.70, 0.40, 1],
     ]
-    cx, cy = 250, 250
 
     # Two bursts at different times for visual richness
     for burst_idx, (burst_t, bx, by) in enumerate([(0, 250, 200), (70, 180, 250)]):
@@ -2463,6 +2662,9 @@ def gen_surprise_fireworks():
     return lottie("surprise-fireworks", 500, 500, op, layers)
 
 
+## @brief 4-point star sparkles that pulse in and out at scattered positions.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_surprise_sparkles():
     """4-point star sparkles that pulse in and out at scattered positions."""
     op = 240
@@ -2535,6 +2737,9 @@ def gen_surprise_sparkles():
     return lottie("surprise-sparkles", 400, 400, op, layers)
 
 
+## @brief Generate birthday cake: frosted cake and candle with a flickering flame and soft glow.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_surprise_birthday_cake():
     op = 180
     cake = shape_layer(
@@ -2613,6 +2818,9 @@ def gen_surprise_birthday_cake():
     return lottie("surprise-birthday-cake", 300, 300, op, [flame, glow, candle, cake])
 
 
+## @brief Two flowers blooming — fewer layers, cleaner look.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_surprise_flowers():
     """2 flowers blooming — fewer layers, cleaner look."""
     op = 300
@@ -2683,6 +2891,9 @@ def gen_surprise_flowers():
     return lottie("surprise-flowers", 300, 300, op, layers)
 
 
+## @brief Stars burst outward and confetti rains down.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_surprise_celebration():
     """Stars burst outward + confetti rains down."""
     op = 240
@@ -2761,6 +2972,9 @@ def gen_surprise_celebration():
 # =============================================================================
 
 
+## @brief WiFi connecting icon: dot plus three concentric arcs.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_ui_wifi_connecting():
     """WiFi signal: dot + 3 concentric arcs using crescents (not full circles)."""
     op = 120
@@ -2781,13 +2995,16 @@ def gen_ui_wifi_connecting():
 
         # Pragmatic: small rounded rect at each radius, rotated to fan shape
         arc_o = animated(
-            [
-                kf(0, [20], EASE_IN_OUT),
-                kf(i * op // 3, [20], EASE_IN_OUT),
-                kf(i * op // 3 + op // 6, [95], EASE_IN_OUT),
-                kf((i + 1) * op // 3, [95], EASE_IN_OUT),
-                kf(min((i + 1) * op // 3 + op // 6, op), [20]),
-            ]
+            cyclic_kfs(
+                [
+                    (i * op // 3, 20),
+                    (i * op // 3 + op // 6, 95),
+                    ((i + 1) * op // 3, 95),
+                    ((i + 1) * op // 3 + op // 6, 20),
+                ],
+                op,
+                EASE_IN_OUT,
+            )
         )
 
         # Three small dots in an arc pattern
@@ -2825,6 +3042,9 @@ def gen_ui_wifi_connecting():
     return lottie("ui-wifi-connecting", 60, 60, op, layers)
 
 
+## @brief Location pin from simple shapes: circle head plus triangular bottom.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_ui_location_pin():
     """Location pin using simple shapes — circle head + triangular bottom."""
     op = 180
@@ -2890,6 +3110,9 @@ def gen_ui_location_pin():
     return lottie("ui-location-pin", 40, 60, op, [head, dot, tail, pulse])
 
 
+## @brief Warning icon: triangle and exclamation, each as separate layers.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_ui_alert_pulse():
     """Warning icon: triangle + exclamation, each as separate layers."""
     op = 120
@@ -2961,6 +3184,9 @@ def gen_ui_alert_pulse():
 # =============================================================================
 
 
+## @brief Seekable sun arc: frame 0 sunrise (left), 120 noon (top), 240 sunset (right).
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_ambient_sun_arc():
     """Seekable: frame 0=sunrise (left), 120=noon (top), 240=sunset (right)."""
     op = 240
@@ -3039,6 +3265,9 @@ def gen_ambient_sun_arc():
     return lottie("ambient-sun-arc", 400, 200, op, [sun, glow] + arc_dots + [horizon])
 
 
+## @brief Seekable UV gauge: rising bar inside a rounded container with shifting color.
+## @version 1
+## @return Lottie composition dict from lottie().
 def gen_ambient_uv_gauge():
     """Seekable UV gauge: rising bar inside rounded container, color shifts."""
     op = 132
@@ -3143,6 +3372,8 @@ GENERATORS = {
 }
 
 
+## @brief Generate and write the Lottie files named on the command line (default: all GENERATORS), reporting unknown paths.
+## @version 1
 def main():
     import sys
 
