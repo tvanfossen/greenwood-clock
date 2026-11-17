@@ -1,3 +1,8 @@
+/**
+ * @file settings.h
+ * @version 1
+ * @brief Persistent clock settings schema (clock_settings_t) and NVS load/save API.
+ */
 // components/settings/settings.h
 
 #ifndef SETTINGS_H

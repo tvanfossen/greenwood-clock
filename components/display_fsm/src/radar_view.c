@@ -1,7 +1,11 @@
-// components/display_fsm/src/radar_view.c
-//
-// Layer 1: RadarView — map background + radar overlay + home marker.
-// Caller must hold LVGL lock for all functions.
+/**
+ * @file radar_view.c
+ * @version 1
+ * @brief Layer 1: RadarView — map background + radar overlay + home marker.
+ *
+ * Caller must hold LVGL lock for all functions, except radar_view_preload_map()
+ * and radar_view_predecode(), which run off-lock.
+ */
 
 #include "display_widgets.h"
 #include "image_decode.h"
@@ -18,6 +22,11 @@ static const char *TAG = "radar_view";
 // Wrapper for lv_obj_set_style_opa — lv_anim_exec_xcb_t is (void*, int32_t)
 // but lv_obj_set_style_opa takes 3 args (obj, value, selector).
 // Casting directly leaves selector as garbage on RISC-V → crash.
+/**
+ * @brief Animation exec callback: set the home marker's opacity to @p v.
+ * @version 1
+ * @callback
+ */
 static void pulse_opa_cb(void *obj, int32_t v)
 {
     lv_obj_set_style_opa((lv_obj_t *)obj, (lv_opa_t)v, 0);
@@ -60,6 +69,12 @@ struct radar_view_t {
 
 // Convert lat/lon to pixel position within the radar view.
 // The radar image covers center +/- RADAR_BBOX_DEG in both axes.
+/**
+ * @brief Linearly map @p lat / @p lon to screen pixels for a 1024x600 view
+ *        spanning center +/- 2 degrees (north at the top).
+ * @version 1
+ * @req REQ-RADAR-001
+ */
 static void latlon_to_pixel(float lat, float lon, float center_lat, float center_lon,
                             int *px_x, int *px_y)
 {
@@ -71,6 +86,13 @@ static void latlon_to_pixel(float lat, float lon, float center_lat, float center
 }
 
 // Parse + validate the 8-byte map header. Sets mw/mh/file_stride on success.
+/**
+ * @brief Read the map binary's [u16 w][u16 h][u32 stride] header and validate it
+ *        (non-zero, at most 2048x1200, file large enough for w*h*4 pixels).
+ * @version 1
+ * @req REQ-RADAR-001
+ * @return true if the header was read and is valid.
+ */
 static bool read_map_header(FILE *f, long fsize, uint16_t *mw, uint16_t *mh,
                             uint32_t *file_stride)
 {
@@ -92,6 +114,13 @@ static bool read_map_header(FILE *f, long fsize, uint16_t *mw, uint16_t *mh,
 
 // Read pixel rows into the stride-aligned buffer, skipping any file padding
 // when the file stride exceeds the tight row width.
+/**
+ * @brief Read @p mh rows of @p mw x 4 bytes into @p mpix at @p mstride, seeking
+ *        past file padding when @p file_stride is wider.
+ * @version 1
+ * @req REQ-RADAR-001
+ * @return true if every row was read; false on a short read.
+ */
 static bool read_map_rows(FILE *f, uint8_t *mpix, uint16_t mw, uint16_t mh,
                           uint32_t mstride, uint32_t file_stride)
 {
@@ -115,6 +144,13 @@ static bool read_map_rows(FILE *f, uint8_t *mpix, uint16_t mw, uint16_t mh,
 // No vertical flip: the radar map + overlay composite via LVGL's software draw
 // path (upright). Only the full-screen background uses the flipping PPA path.
 // Verified with a colour-coded orientation test card.
+/**
+ * @brief Cache-sync the filled map buffer and publish it as an XRGB8888 image
+ *        descriptor in s_map_dsc / s_map_pixels (frees @p mpix if the descriptor
+ *        allocation fails).
+ * @version 1
+ * @req REQ-RADAR-001
+ */
 static void publish_map_dsc(uint8_t *mpix, uint16_t mw, uint16_t mh,
                             uint32_t mstride, uint32_t mbuf_sz)
 {
@@ -148,6 +184,12 @@ static void publish_map_dsc(uint8_t *mpix, uint16_t mw, uint16_t mh,
 // Load /sdcard/maps/local.bin into s_map_dsc (once). Raw BGRA, bypasses lodepng.
 // Format: [u16 width][u16 height][u32 stride][BGRA pixel data].
 // Does SD I/O + a multi-MB SPIRAM fill — callers must NOT hold the LVGL lock.
+/**
+ * @brief Load /sdcard/maps/local.bin into a 64-byte-aligned SPIRAM buffer and
+ *        publish it as the basemap, once; no-op if already cached, absent or invalid.
+ * @version 1
+ * @req REQ-RADAR-001
+ */
 static void load_map_dsc(void)
 {
     if (s_map_dsc) return;  // already cached
@@ -189,11 +231,23 @@ static void load_map_dsc(void)
     publish_map_dsc(mpix, mw, mh, mstride, mbuf_sz);
 }
 
+/**
+ * @brief Access the cached radar basemap descriptor.
+ * @version 1
+ * @req REQ-RADAR-001
+ * @return Upright basemap image descriptor, or NULL if no map is loaded.
+ */
 const lv_image_dsc_t *radar_view_map_dsc(void)
 {
     return s_map_dsc;   // upright (raw binary, not flipped); NULL if no map loaded
 }
 
+/**
+ * @brief Preload the basemap off the LVGL lock (idempotent), so radar view
+ *        creation never reads the SD card under the lock.
+ * @version 1
+ * @req REQ-RADAR-001
+ */
 void radar_view_preload_map(void)
 {
     // Off-lock startup preload so the first radar transition doesn't pay the
@@ -201,6 +255,14 @@ void radar_view_preload_map(void)
     load_map_dsc();
 }
 
+/**
+ * @brief Build the full-screen radar view: preloaded basemap (skipped if not yet
+ *        loaded), 40 %-opacity radar overlay, pulsing home marker at the centre
+ *        and a "Last updated" chip.
+ * @version 1
+ * @req REQ-RADAR-001
+ * @return The new view, or NULL if allocation failed.
+ */
 radar_view_t *radar_view_create(lv_obj_t *parent, float lat, float lon)
 {
     radar_view_t *rv = lv_malloc(sizeof(radar_view_t));
@@ -288,6 +350,12 @@ radar_view_t *radar_view_create(lv_obj_t *parent, float lat, float lon)
     return rv;
 }
 
+/**
+ * @brief Stop the view's animations, delete its LVGL objects and free it; the
+ *        module-level map and radar caches are kept. NULL-safe.
+ * @version 1
+ * @req REQ-RADAR-001
+ */
 void radar_view_destroy(radar_view_t *rv)
 {
     if (!rv) return;
@@ -301,11 +369,24 @@ void radar_view_destroy(radar_view_t *rv)
     ESP_LOGI(TAG, "RadarView destroyed");
 }
 
+/**
+ * @brief Access the view's root container.
+ * @version 1
+ * @req REQ-RADAR-001
+ * @return The container object, or NULL if @p rv is NULL.
+ */
 lv_obj_t *radar_view_container(const radar_view_t *rv)
 {
     return rv ? rv->container : NULL;
 }
 
+/**
+ * @brief Decode a radar PNG to ARGB8888 off the LVGL lock, flip it vertically
+ *        (north up) and stage it as the pending overlay, replacing any unconsumed
+ *        pending one.
+ * @version 1
+ * @req REQ-RADAR-001
+ */
 void radar_view_predecode(const uint8_t *png_data, size_t len)
 {
     if (!png_data || len == 0) return;
@@ -339,6 +420,13 @@ void radar_view_predecode(const uint8_t *png_data, size_t len)
              (unsigned long)dsc->data_size);
 }
 
+/**
+ * @brief Under the LVGL lock, promote the pending overlay to active (freeing the
+ *        old one), then show it with a "Last updated h:mm AM/PM (Nm ago)" label,
+ *        or discard it and show "Radar data expired" if older than 30 min.
+ * @version 1
+ * @req REQ-RADAR-001
+ */
 void radar_view_apply_radar(radar_view_t *rv)
 {
     if (!rv) return;

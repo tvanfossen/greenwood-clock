@@ -1,5 +1,8 @@
-// components/display_fsm/src/particle_effects.c
-//
+/**
+ * @file particle_effects.c
+ * @version 1
+ * @brief LVGL lv_anim particle systems (rain, snow, drizzle, ice, confetti, sparkle) with preset configs.
+ */
 // Layer 1: LVGL-native particle effects for weather conditions.
 // Uses lv_anim for smooth, hardware-accelerated (PPA) particle motion.
 // Caller must hold LVGL lock for all functions.
@@ -13,6 +16,11 @@ static const char *TAG = "particles";
 
 // Wrapper for lv_obj_set_style_opa — lv_anim_exec_xcb_t is (void*, int32_t)
 // but lv_obj_set_style_opa takes 3 args; casting directly leaves selector as garbage.
+/**
+ * @brief lv_anim exec callback: set the object's opacity to @p v.
+ * @version 1
+ * @callback
+ */
 static void sparkle_opa_cb(void *obj, int32_t v)
 {
     lv_obj_set_style_opa((lv_obj_t *)obj, (lv_opa_t)v, 0);
@@ -84,11 +92,23 @@ struct particle_system_t {
     bool      paused;
 };
 
+/**
+ * @brief Random integer in [0, @p max).
+ * @version 1
+ * @dg_internal
+ * @return Random value, or 0 if @p max is 0.
+ */
 static uint32_t rand_range(uint32_t max)
 {
     return max > 0 ? (esp_random() % max) : 0;
 }
 
+/**
+ * @brief Pick one of eight bright confetti colours at random.
+ * @version 1
+ * @dg_internal
+ * @return Random confetti colour.
+ */
 static lv_color_t random_confetti_color(void)
 {
     static const uint32_t colors[] = {
@@ -98,6 +118,12 @@ static lv_color_t random_confetti_color(void)
     return lv_color_hex(colors[esp_random() % 8]);
 }
 
+/**
+ * @brief Create up to 50 particles on @p parent from @p cfg: falling (optionally drifting) or, for flash configs, pulsing sparkles in place; confetti gets random colours.
+ * @version 1
+ * @dg_internal (unused: nothing in the firmware calls particle_effects; candidate for removal)
+ * @return New particle system, or NULL on NULL config or allocation failure.
+ */
 particle_system_t *particle_system_create(lv_obj_t *parent, const particle_config_t *cfg)
 {
     if (!cfg) return NULL;
@@ -190,6 +216,11 @@ particle_system_t *particle_system_create(lv_obj_t *parent, const particle_confi
     return ps;
 }
 
+/**
+ * @brief Stop and delete every particle and free the system (no-op if NULL).
+ * @version 1
+ * @dg_internal (unused: nothing in the firmware calls particle_effects; candidate for removal)
+ */
 void particle_system_destroy(particle_system_t *ps)
 {
     if (!ps) return;
@@ -203,6 +234,11 @@ void particle_system_destroy(particle_system_t *ps)
     ESP_LOGI(TAG, "ParticleSystem destroyed");
 }
 
+/**
+ * @brief Hide all particles (idempotent).
+ * @version 1
+ * @dg_internal (unused: nothing in the firmware calls particle_effects; candidate for removal)
+ */
 void particle_system_pause(particle_system_t *ps)
 {
     if (!ps || ps->paused) return;
@@ -214,6 +250,11 @@ void particle_system_pause(particle_system_t *ps)
     }
 }
 
+/**
+ * @brief Show all particles again after a pause (idempotent).
+ * @version 1
+ * @dg_internal (unused: nothing in the firmware calls particle_effects; candidate for removal)
+ */
 void particle_system_resume(particle_system_t *ps)
 {
     if (!ps || !ps->paused) return;

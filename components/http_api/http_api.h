@@ -1,3 +1,8 @@
+/**
+ * @file http_api.h
+ * @version 1
+ * @brief Public API of the local REST server on port 80.
+ */
 // components/http_api/http_api.h
 
 #ifndef HTTP_API_H

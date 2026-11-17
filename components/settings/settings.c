@@ -1,3 +1,8 @@
+/**
+ * @file settings.c
+ * @version 1
+ * @brief Persistent clock settings: versioned clock_settings_t blob in NVS with compile-time defaults.
+ */
 // components/settings/settings.c
 
 #include "settings.h"
@@ -47,6 +52,8 @@ static const clock_settings_t default_settings = {
  * @brief Copy the compile-time defaults into the output struct.
  *
  * @param out  Destination settings struct.
+ * @version 1
+ * @req REQ-SET-001
  */
 static void settings_use_defaults(clock_settings_t* out)
 {
@@ -59,6 +66,8 @@ static void settings_use_defaults(clock_settings_t* out)
  * @param handle    Open NVS handle.
  * @param size_out  Set to the stored blob size.
  * @return true if the blob is present and matches sizeof(clock_settings_t).
+ * @version 1
+ * @req REQ-SET-001
  */
 static bool settings_nvs_readable(nvs_handle_t handle, size_t* size_out)
 {
@@ -73,6 +82,8 @@ static bool settings_nvs_readable(nvs_handle_t handle, size_t* size_out)
  * @param handle  Open NVS handle.
  * @param out     Destination settings struct.
  * @return true if read succeeded and version matches SETTINGS_VERSION.
+ * @version 1
+ * @req REQ-SET-001
  */
 static bool settings_nvs_read(nvs_handle_t handle, clock_settings_t* out)
 {
@@ -88,6 +99,8 @@ static bool settings_nvs_read(nvs_handle_t handle, clock_settings_t* out)
  * repeated settings_load calls during state transitions).
  *
  * @param out  Loaded settings.
+ * @version 1
+ * @req REQ-SET-001
  */
 static void settings_log_load_result(const clock_settings_t* out)
 {
@@ -115,6 +128,8 @@ static void settings_log_load_result(const clock_settings_t* out)
  *
  * @param handle  Open NVS handle.
  * @param out     Destination settings struct.
+ * @version 1
+ * @req REQ-SET-001
  */
 static void settings_load_from_open_handle(nvs_handle_t handle, clock_settings_t* out)
 {
@@ -132,6 +147,8 @@ static void settings_load_from_open_handle(nvs_handle_t handle, clock_settings_t
  * @param handle  Open NVS handle (NVS_READWRITE).
  * @param in      Settings to persist.
  * @return ESP_OK on success; error code on failure.
+ * @version 1
+ * @req REQ-SET-001
  */
 static esp_err_t settings_write_and_commit(nvs_handle_t handle, const clock_settings_t* in)
 {
@@ -154,6 +171,8 @@ static esp_err_t settings_write_and_commit(nvs_handle_t handle, const clock_sett
  *
  * @param handle  Open NVS handle (NVS_READWRITE).
  * @return ESP_OK on success; error code on failure.
+ * @version 1
+ * @req REQ-SET-001
  */
 static esp_err_t settings_erase_and_commit(nvs_handle_t handle)
 {
@@ -171,6 +190,12 @@ static esp_err_t settings_erase_and_commit(nvs_handle_t handle)
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+/**
+ * @brief Initialise the NVS flash partition, erasing and retrying if it is truncated or from a newer version.
+ * @version 1
+ * @req REQ-SET-001
+ * @return ESP_OK on success, or the nvs_flash_init error.
+ */
 esp_err_t settings_init(void) {
     ESP_LOGI(TAG, "Initializing settings system");
 
@@ -201,6 +226,8 @@ esp_err_t settings_init(void) {
  *
  * @param out  Destination settings struct.
  * @return ESP_OK or ESP_ERR_INVALID_ARG.
+ * @version 1
+ * @req REQ-SET-001
  */
 esp_err_t settings_load(clock_settings_t* out) {
     if (!out) return ESP_ERR_INVALID_ARG;
@@ -222,6 +249,8 @@ esp_err_t settings_load(clock_settings_t* out) {
  *
  * @param in  Settings to save.
  * @return ESP_OK on success; error code on failure.
+ * @version 1
+ * @req REQ-SET-001
  */
 esp_err_t settings_save(const clock_settings_t* in) {
     if (!in) return ESP_ERR_INVALID_ARG;
@@ -242,6 +271,8 @@ esp_err_t settings_save(const clock_settings_t* in) {
  * @brief Erase persisted settings from NVS (restores defaults on next load).
  *
  * @return ESP_OK on success; error code on commit failure.
+ * @version 1
+ * @req REQ-SET-001
  */
 esp_err_t settings_reset(void) {
     ESP_LOGI(TAG, "Resetting settings to factory defaults");
@@ -257,6 +288,12 @@ esp_err_t settings_reset(void) {
     return err;
 }
 
+/**
+ * @brief Return the compile-time default settings.
+ * @version 1
+ * @req REQ-SET-001
+ * @return Pointer to the static default clock_settings_t (never NULL).
+ */
 const clock_settings_t* settings_get_defaults(void) {
     return &default_settings;
 }

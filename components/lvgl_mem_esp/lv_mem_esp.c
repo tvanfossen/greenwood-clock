@@ -1,6 +1,7 @@
 /**
  * @file lv_mem_esp.c
- * ESP-IDF PSRAM/SPIRAM memory allocator for LVGL
+ * @version 1
+ * @brief ESP-IDF PSRAM/SPIRAM memory allocator for LVGL
  *
  * Provides lv_malloc_core/lv_realloc_core/lv_free_core functions
  * that allocate from SPIRAM when available, falling back to internal RAM.
@@ -21,8 +22,11 @@ void lv_mem_deinit(void);
 void lv_mem_monitor_core(void * mon_p);
 
 /**
- * Allocate memory with SPIRAM preference and 64-byte alignment for PPA
+ * @brief Allocate memory with SPIRAM preference and 64-byte alignment for PPA
  * Falls back to internal RAM if SPIRAM allocation fails
+ * @version 1
+ * @req REQ-MEM-001
+ * @return 64-byte-aligned block of @p size rounded up to 64 bytes, or NULL on failure.
  */
 void * lv_malloc_core(size_t size)
 {
@@ -46,8 +50,11 @@ void * lv_malloc_core(size_t size)
 }
 
 /**
- * Reallocate memory with SPIRAM preference and 64-byte alignment for PPA
+ * @brief Reallocate memory with SPIRAM preference and 64-byte alignment for PPA
  * Note: heap_caps_realloc doesn't guarantee alignment, so we allocate new + copy
+ * @version 1
+ * @req REQ-MEM-001
+ * @return New aligned block holding the old contents, or NULL if @p new_size is 0 or allocation failed.
  */
 void * lv_realloc_core(void * p, size_t new_size)
 {
@@ -76,7 +83,9 @@ void * lv_realloc_core(void * p, size_t new_size)
 }
 
 /**
- * Free memory
+ * @brief Free memory
+ * @version 1
+ * @req REQ-MEM-001
  */
 void lv_free_core(void * p)
 {
@@ -86,7 +95,10 @@ void lv_free_core(void * p)
 }
 
 /**
- * Initialize memory - no-op for heap_caps allocator
+ * @brief Initialize memory - no-op for heap_caps allocator
+ * (only logs the allocator configuration).
+ * @version 1
+ * @req REQ-MEM-001
  */
 void lv_mem_init(void)
 {
@@ -95,7 +107,9 @@ void lv_mem_init(void)
 }
 
 /**
- * Deinitialize memory - no-op for heap_caps allocator
+ * @brief Deinitialize memory - no-op for heap_caps allocator
+ * @version 1
+ * @req REQ-MEM-001
  */
 void lv_mem_deinit(void)
 {
@@ -103,8 +117,11 @@ void lv_mem_deinit(void)
 }
 
 /**
- * Get memory monitor info
- * Populates mon_p with heap usage statistics
+ * @brief Get memory monitor info
+ * Currently a no-op: @p mon_p is left untouched (LVGL headers are not
+ * available here to fill lv_mem_monitor_t), so the LVGL monitor reports nothing.
+ * @version 1
+ * @req REQ-MEM-001
  */
 void lv_mem_monitor_core(void * mon_p)
 {

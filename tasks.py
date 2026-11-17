@@ -1,3 +1,6 @@
+## @file tasks.py
+## @brief Invoke tasks: device operations, asset preparation, Lottie verification, host tests and lint.
+## @version 1
 """Invoke tasks for greenwood-clock.
 
 Every repeatable command lives here rather than being hand-rolled at the
@@ -114,7 +117,7 @@ def _print_json(host, path, auth=False):
 
 
 ## @brief Device health: uptime, heap, SD card, debug-log state.
-## @utility
+## @req REQ-TOOL-001
 ## @version 1
 @task(help={"host": "Device host or IP"})
 def status(c, host=DEFAULT_HOST):
@@ -122,7 +125,7 @@ def status(c, host=DEFAULT_HOST):
 
 
 ## @brief Ring buffer of recent reset reasons and timestamps.
-## @utility
+## @req REQ-TOOL-001
 ## @version 1
 @task(help={"host": "Device host or IP"})
 def boot_history(c, host=DEFAULT_HOST):
@@ -130,7 +133,7 @@ def boot_history(c, host=DEFAULT_HOST):
 
 
 ## @brief SD card capacity and usage.
-## @utility
+## @req REQ-TOOL-001
 ## @version 1
 @task(help={"host": "Device host or IP"})
 def disk(c, host=DEFAULT_HOST):
@@ -138,7 +141,7 @@ def disk(c, host=DEFAULT_HOST):
 
 
 ## @brief Coredump partition summary (authenticated).
-## @utility
+## @req REQ-TOOL-001
 ## @version 1
 @task(help={"host": "Device host or IP"})
 def coredump_info(c, host=DEFAULT_HOST):
@@ -146,7 +149,7 @@ def coredump_info(c, host=DEFAULT_HOST):
 
 
 ## @brief Download the stored coredump and decode it against build/greenwood-clock.elf.
-## @utility
+## @req REQ-TOOL-001
 ## @version 1
 @task(
     help={"host": "Device host or IP", "elf": "App ELF matching the running firmware"}
@@ -166,7 +169,7 @@ def coredump(c, host=DEFAULT_HOST, elf=str(REPO / "build" / "greenwood-clock.elf
 
 
 ## @brief Current display FSM state.
-## @utility
+## @req REQ-TOOL-001
 ## @version 1
 @task(help={"host": "Device host or IP"})
 def display_state(c, host=DEFAULT_HOST):
@@ -174,7 +177,7 @@ def display_state(c, host=DEFAULT_HOST):
 
 
 ## @brief Force the display FSM into a named state (weather, radar, astronomy, clock, ...).
-## @utility
+## @req REQ-TOOL-001
 ## @version 1
 @task(help={"host": "Device host or IP", "state": "State name, e.g. weather"})
 def show(c, state, host=DEFAULT_HOST):
@@ -184,7 +187,7 @@ def show(c, state, host=DEFAULT_HOST):
 
 
 ## @brief Show the device's persisted settings.
-## @utility
+## @req REQ-TOOL-001
 ## @version 1
 @task(help={"host": "Device host or IP"})
 def settings(c, host=DEFAULT_HOST):
@@ -192,7 +195,7 @@ def settings(c, host=DEFAULT_HOST):
 
 
 ## @brief Set the background image (LVGL path, e.g. A:/backgrounds/campfire.png).
-## @utility
+## @req REQ-TOOL-001
 ## @version 1
 @task(help={"host": "Device host or IP", "path": "LVGL path, A: maps to /sdcard"})
 def set_bg(c, path, host=DEFAULT_HOST):
@@ -204,7 +207,7 @@ def set_bg(c, path, host=DEFAULT_HOST):
 
 
 ## @brief Select the clock-screen animation: hummingbird, snowfall or none.
-## @utility
+## @req REQ-TOOL-001
 ## @version 1
 @task(help={"host": "Device host or IP", "name": "hummingbird | snowfall | none"})
 def set_anim(c, name, host=DEFAULT_HOST):
@@ -214,7 +217,7 @@ def set_anim(c, name, host=DEFAULT_HOST):
 
 
 ## @brief Stream live device logs over UDP (Ctrl+C to stop).
-## @utility
+## @req REQ-TOOL-001
 ## @version 1
 @task(help={"host": "Device host or IP", "out": "Also tee to this file"})
 def udp_log(c, host=DEFAULT_HOST, out=None):
@@ -223,7 +226,7 @@ def udp_log(c, host=DEFAULT_HOST, out=None):
 
 
 ## @brief Cached NWS weather: current conditions, forecast, alerts.
-## @utility
+## @req REQ-TOOL-001
 ## @version 1
 @task(help={"host": "Device host or IP"})
 def weather(c, host=DEFAULT_HOST):
@@ -237,7 +240,7 @@ def weather(c, host=DEFAULT_HOST):
 
 
 ## @brief List an SD card directory.
-## @utility
+## @req REQ-TOOL-001
 ## @version 1
 @task(help={"host": "Device host or IP", "path": "SD directory, e.g. /backgrounds"})
 def ls(c, path="/", host=DEFAULT_HOST):
@@ -245,7 +248,7 @@ def ls(c, path="/", host=DEFAULT_HOST):
 
 
 ## @brief Download one SD card file into .claude/tmp/pull/.
-## @utility
+## @req REQ-TOOL-001
 ## @version 1
 @task(
     help={
@@ -262,7 +265,7 @@ def pull(c, path, host=DEFAULT_HOST):
 
 
 ## @brief Download ALL log slots into .claude/tmp/logs/<timestamp>/.
-## @utility
+## @req REQ-TOOL-001
 ## @version 1
 @task(help={"host": "Device host or IP"})
 def logs(c, host=DEFAULT_HOST):
@@ -281,7 +284,7 @@ def logs(c, host=DEFAULT_HOST):
 
 
 ## @brief Capture the live framebuffer to a PNG under .claude/tmp/.
-## @utility
+## @req REQ-TOOL-001
 ## @version 1
 @task(help={"host": "Device host or IP", "out": "Output PNG path"})
 def screenshot(c, host=DEFAULT_HOST, out=None):
@@ -290,7 +293,7 @@ def screenshot(c, host=DEFAULT_HOST, out=None):
 
 
 ## @brief Reboot the device.
-## @utility
+## @req REQ-TOOL-001
 ## @version 1
 @task(help={"host": "Device host or IP"})
 def reboot(c, host=DEFAULT_HOST):
@@ -307,7 +310,7 @@ def build(c):
 
 
 ## @brief Push build/greenwood-clock.bin to the device over HTTP OTA (token from secrets.h).
-## @utility
+## @req REQ-TOOL-001
 ## @version 1
 @task(help={"host": "Device host or IP"})
 def ota(c, host=DEFAULT_HOST):
@@ -320,7 +323,8 @@ def ota(c, host=DEFAULT_HOST):
 
 
 ## @brief Render static forecast icons from the weather Lottie set into sdcard/icons/.
-## @utility
+## @req REQ-TOOL-002
+## @req REQ-WX-006
 ## @version 1
 @task(
     iterable=["override"],
@@ -335,7 +339,7 @@ def forecast_icons(c, size=64, override=None):
 
 
 ## @brief Pull every Lottie the device uses, flag drift from sdcard/ staging, render-audit all frames.
-## @utility
+## @req REQ-TOOL-003
 ## @version 1
 @task(
     help={
@@ -391,7 +395,7 @@ def _fetch_verified(host, rel, expected, tries=4):
 
 
 ## @brief Visual vet: frame-to-frame jump + loop-seam detection and contact sheets per Lottie.
-## @utility
+## @req REQ-TOOL-003
 ## @version 1
 @task(help={"local": "Vet repo staging copies instead of the pulled device copies"})
 def lottie_vet(c, local=False):
@@ -408,7 +412,7 @@ def lottie_vet(c, local=False):
 
 
 ## @brief Structural test of generated Lottie files (monotonic keyframe times).
-## @utility
+## @req REQ-LOTTIE-002
 ## @version 1
 @task
 def test_lottie(c):
@@ -416,7 +420,7 @@ def test_lottie(c):
 
 
 ## @brief Download each device Lottie into @p root and report differences vs the staging copy.
-## @utility
+## @req REQ-TOOL-003
 ## @version 1
 def _pull_lottie(host, rel_paths, root, staging):
     sizes = {}
@@ -436,7 +440,8 @@ def _pull_lottie(host, rel_paths, root, staging):
 
 
 ## @brief Upload sdcard/icons/** (forecast icons) to the device SD card.
-## @utility
+## @req REQ-TOOL-002
+## @req REQ-WX-006
 ## @version 1
 @task(help={"host": "Device host or IP"})
 def push_icons(c, host=DEFAULT_HOST):
@@ -449,7 +454,7 @@ def push_icons(c, host=DEFAULT_HOST):
 
 
 ## @brief Build and run the host-side C unit tests (pure-logic modules, no ESP-IDF).
-## @utility
+## @req REQ-TOOL-004
 ## @version 2
 @task
 def test_host(c):

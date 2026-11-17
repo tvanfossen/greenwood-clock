@@ -1,5 +1,8 @@
-// components/display_fsm/src/display_scheduler.cpp
-//
+/**
+ * @file display_scheduler.cpp
+ * @version 1
+ * @brief Event-driven display scheduler: per-state durations and cooldowns from NVS, return-to-clock and periodic trigger timers.
+ */
 // Event-driven display scheduling with debounce and return-to-clock timers.
 
 #include "display_scheduler.h"
@@ -23,6 +26,12 @@ static const char *TAG = "scheduler";
 
 static DisplayScheduler s_instance;
 
+/**
+ * @brief Get the process-wide scheduler singleton.
+ * @version 1
+ * @req REQ-DISP-002
+ * @return Pointer to the singleton DisplayScheduler.
+ */
 DisplayScheduler *display_scheduler_get(void)
 {
     return &s_instance;
@@ -32,6 +41,11 @@ DisplayScheduler *display_scheduler_get(void)
 // Return timer callback — fires after display_duration_ms
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief FreeRTOS timer callback: send DISPLAY_EVT_DISPLAY_TIMEOUT so the FSM returns to the clock.
+ * @version 1
+ * @callback
+ */
 static void return_timer_cb(TimerHandle_t timer)
 {
     (void)timer;
@@ -40,6 +54,11 @@ static void return_timer_cb(TimerHandle_t timer)
     display_fsm_send_event(&evt);
 }
 
+/**
+ * @brief FreeRTOS timer callback: send DISPLAY_EVT_PHOTO_TRIGGER.
+ * @version 1
+ * @callback
+ */
 static void photo_trigger_cb(TimerHandle_t timer)
 {
     (void)timer;
@@ -48,6 +67,11 @@ static void photo_trigger_cb(TimerHandle_t timer)
     display_fsm_send_event(&evt);
 }
 
+/**
+ * @brief FreeRTOS timer callback: send DISPLAY_EVT_AMBIENT_TRIGGER.
+ * @version 1
+ * @callback
+ */
 static void ambient_trigger_cb(TimerHandle_t timer)
 {
     (void)timer;
@@ -61,6 +85,12 @@ static void ambient_trigger_cb(TimerHandle_t timer)
 // ---------------------------------------------------------------------------
 
 // True if /sdcard/photos contains at least one .png file.
+/**
+ * @brief Check whether /sdcard/photos holds at least one regular .png file.
+ * @version 1
+ * @req REQ-PHOTO-001
+ * @return true if a PNG was found, false otherwise or if the directory cannot be opened.
+ */
 static bool photos_dir_has_png(void)
 {
     DIR *d = opendir("/sdcard/photos");
@@ -79,6 +109,14 @@ static bool photos_dir_has_png(void)
     return found;
 }
 
+/**
+ * @brief Build per-state durations and cooldowns from NVS, gate radar on precipitation, create the return timer and start the photo (only if PNGs exist) and ambient periodic timers.
+ * @version 1
+ * @req REQ-DISP-002
+ * @req REQ-RADAR-002
+ * @req REQ-PHOTO-001
+ * @req REQ-AMB-001
+ */
 void DisplayScheduler::init(void)
 {
     // Load timing settings from NVS
@@ -155,6 +193,12 @@ void DisplayScheduler::init(void)
              (unsigned long)cfg.ambient_interval_s);
 }
 
+/**
+ * @brief Find the config entry for @p state.
+ * @version 1
+ * @dg_internal
+ * @return Matching StateConfig, or nullptr.
+ */
 DisplayScheduler::StateConfig *DisplayScheduler::find_config(display_state_id_t state)
 {
     for (int i = 0; i < m_config_count; i++) {
@@ -163,6 +207,12 @@ DisplayScheduler::StateConfig *DisplayScheduler::find_config(display_state_id_t 
     return nullptr;
 }
 
+/**
+ * @brief Show @p state if it is enabled, its condition holds and its cooldown has elapsed; starts its return timer.
+ * @version 1
+ * @req REQ-DISP-002
+ * @return true if the state may be shown, false if disabled, condition false or debounced.
+ */
 bool DisplayScheduler::try_show(display_state_id_t state)
 {
     StateConfig *cfg = find_config(state);
@@ -186,6 +236,11 @@ bool DisplayScheduler::try_show(display_state_id_t state)
     return true;
 }
 
+/**
+ * @brief Show @p state regardless of cooldown, starting the return timer for its duration (30 s if unconfigured).
+ * @version 1
+ * @req REQ-DISP-002
+ */
 void DisplayScheduler::force_show(display_state_id_t state)
 {
     StateConfig *cfg = find_config(state);
@@ -196,6 +251,11 @@ void DisplayScheduler::force_show(display_state_id_t state)
     ESP_LOGI(TAG, "Force-showing state %d for %lu ms", state, (unsigned long)duration);
 }
 
+/**
+ * @brief Stop the return timer and mark the clock as the active state.
+ * @version 1
+ * @req REQ-DISP-002
+ */
 void DisplayScheduler::return_to_clock(void)
 {
     xTimerStop(m_return_timer, 0);
@@ -203,6 +263,11 @@ void DisplayScheduler::return_to_clock(void)
     ESP_LOGI(TAG, "Returning to clock");
 }
 
+/**
+ * @brief Pause scheduling (settings open): stop the return timer.
+ * @version 1
+ * @req REQ-DISP-002
+ */
 void DisplayScheduler::pause(void)
 {
     if (!m_paused) {
@@ -212,6 +277,11 @@ void DisplayScheduler::pause(void)
     }
 }
 
+/**
+ * @brief Resume scheduling after a pause.
+ * @version 1
+ * @req REQ-DISP-002
+ */
 void DisplayScheduler::resume(void)
 {
     if (m_paused) {
@@ -220,29 +290,58 @@ void DisplayScheduler::resume(void)
     }
 }
 
+/**
+ * @brief Set the display duration for @p state.
+ * @version 1
+ * @req REQ-DISP-002
+ * @req REQ-API-003
+ */
 void DisplayScheduler::set_duration(display_state_id_t state, uint32_t ms)
 {
     StateConfig *cfg = find_config(state);
     if (cfg) cfg->display_duration_ms = ms;
 }
 
+/**
+ * @brief Set the cooldown for @p state.
+ * @version 1
+ * @req REQ-DISP-002
+ * @req REQ-API-003
+ */
 void DisplayScheduler::set_cooldown(display_state_id_t state, uint32_t ms)
 {
     StateConfig *cfg = find_config(state);
     if (cfg) cfg->cooldown_ms = ms;
 }
 
+/**
+ * @brief Enable or disable @p state.
+ * @version 1
+ * @req REQ-DISP-002
+ * @req REQ-API-003
+ */
 void DisplayScheduler::set_enabled(display_state_id_t state, bool enabled)
 {
     StateConfig *cfg = find_config(state);
     if (cfg) cfg->enabled = enabled;
 }
 
+/**
+ * @brief Get the state the scheduler considers active.
+ * @version 1
+ * @req REQ-DISP-002
+ * @return Active display_state_id_t.
+ */
 display_state_id_t DisplayScheduler::active(void) const
 {
     return m_active_state;
 }
 
+/**
+ * @brief Restart the one-shot return timer with period @p duration_ms.
+ * @version 1
+ * @req REQ-DISP-002
+ */
 void DisplayScheduler::start_return_timer(uint32_t duration_ms)
 {
     xTimerStop(m_return_timer, 0);

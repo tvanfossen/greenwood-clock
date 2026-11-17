@@ -1,5 +1,6 @@
 /**
  * @file leaf_physics.h
+ * @version 1
  * @brief Falling-card (leaf) dynamics in air: the non-dimensional quasi-steady model of
  *        Andersen, Pesavento & Wang (2005b), J. Fluid Mech. 541, 91-104,
  *        thin-card limit eqs. 5.1-5.3 with fluid terms 4.7-4.9.
@@ -37,21 +38,21 @@ typedef struct {
 /**
  * @brief The paper's coefficients (C_T 1.2, C_R pi, A 1.4, B 1.0, mu1 = mu2 = 0.2).
  * @version 2
- * @req REQ-LEAF-001
+ * @req REQ-ANIM-003
  */
 void leaf_coeffs_default(leaf_coeffs_t *c);
 
 /**
  * @brief Advance one card by non-dimensional time @p dt (RK4 on eqs. 5.1-5.3).
  * @version 2
- * @req REQ-LEAF-001
+ * @req REQ-ANIM-003
  */
 void leaf_step(const leaf_coeffs_t *c, float i_star, leaf_state_t *s, float dt);
 
 /**
  * @brief Laboratory-frame velocity of the card centre.
  * @version 1
- * @req REQ-LEAF-001
+ * @req REQ-ANIM-003
  */
 void leaf_lab_velocity(const leaf_state_t *s, float *vx_lab, float *vy_lab);
 

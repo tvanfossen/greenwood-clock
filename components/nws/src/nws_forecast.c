@@ -1,6 +1,8 @@
-// components/nws/src/nws_forecast.c
-//
-// Fetch 7-day forecast from NWS gridpoints endpoint.
+/**
+ * @file nws_forecast.c
+ * @version 1
+ * @brief Fetch the 7-day forecast from the NWS gridpoints endpoint.
+ */
 
 #include "nws_internal.h"
 
@@ -8,6 +10,12 @@ static const char *TAG = "nws_fc";
 
 #define NWS_FORECAST_URL_FMT  "https://api.weather.gov/gridpoints/%s/%d,%d/forecast"
 
+/**
+ * @brief Copy one forecast period (name, detailed/short forecast, wind,
+ *        temperature, unit defaulting to 'F', isDaytime) into @p out.
+ * @version 1
+ * @req REQ-WX-003
+ */
 static void parse_period(const cJSON *period_json, nws_forecast_period_t *out)
 {
     json_get_str(period_json, "name", out->name, sizeof(out->name));
@@ -33,6 +41,13 @@ static void parse_period(const cJSON *period_json, nws_forecast_period_t *out)
     out->is_daytime = cJSON_IsTrue(daytime);
 }
 
+/**
+ * @brief Parse a gridpoints forecast response into @p out, keeping at most 14 periods.
+ * @version 1
+ * @req REQ-WX-003
+ * @return ESP_OK on success, ESP_ERR_INVALID_RESPONSE if the JSON does not parse
+ *         or lacks properties / a periods array.
+ */
 static esp_err_t parse_forecast(const char *json_str, nws_forecast_t *out)
 {
     cJSON *root = cJSON_Parse(json_str);
@@ -73,6 +88,15 @@ static esp_err_t parse_forecast(const char *json_str, nws_forecast_t *out)
     return ESP_OK;
 }
 
+/**
+ * @brief Fetch and parse the forecast for @p loc's office and grid point.
+ *
+ * @p out is zeroed first, so on failure valid=false.
+ * @version 1
+ * @req REQ-WX-003
+ * @return ESP_OK on success, ESP_ERR_HTTP_CONNECT if the fetch failed, or
+ *         ESP_ERR_INVALID_RESPONSE on a malformed response.
+ */
 esp_err_t nws_fetch_forecast(const nws_location_t *loc, nws_forecast_t *out)
 {
     memset(out, 0, sizeof(*out));

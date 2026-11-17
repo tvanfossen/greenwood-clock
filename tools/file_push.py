@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+## @file file_push.py
+## @brief Host tool: upload a local file to the device SD card via POST /files/<path>.
+## @version 1
 """
 Upload a file to the SD card on the Greenwood Clock.
 
@@ -15,6 +18,9 @@ import sys
 import urllib.request
 
 
+## @brief CLI entry: read the local file and POST its bytes to /files/<remote>, printing the HTTP reply; exit 1 on error.
+## @version 1
+## @req REQ-TOOL-001
 def main() -> None:
     ap = argparse.ArgumentParser(description="Upload a file to the device SD card.")
     ap.add_argument("local", help="Local file path to upload")

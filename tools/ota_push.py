@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+## @file ota_push.py
+## @brief Host tool: stream a firmware image to POST /ota with a bearer token while polling GET /ota/status.
+## @version 1
 """
 tools/ota_push.py — Push OTA firmware to a Greenwood Clock device.
 
@@ -57,6 +60,10 @@ ERASE_LINE = "\033[2K\r" if _TTY else "\n"
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+## @brief Parse key=value pairs from a .env file, skipping blank lines, comments and lines without '='.
+## @version 1
+## @utility
+## @return Dict of keys to unquoted values; empty when the file does not exist.
 def _load_dotenv(path: str) -> dict:
     """Return key=value pairs from a .env file, ignoring comments and blanks."""
     result = {}
@@ -72,6 +79,10 @@ def _load_dotenv(path: str) -> dict:
     return result
 
 
+## @brief Resolve the OTA API token from --token, then OTA_API_TOKEN env, then the repo .env; exits if none is set.
+## @version 1
+## @req REQ-TOOL-001
+## @return The token string.
 def resolve_token(cli_token: str | None) -> str:
     """Return the OTA API token from CLI arg, env, or .env file."""
     if cli_token:
@@ -93,6 +104,10 @@ def resolve_token(cli_token: str | None) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+## @brief Resolve the device host name (e.g. mDNS) to an IPv4 address; exits if it cannot be resolved.
+## @version 1
+## @req REQ-TOOL-001
+## @return The resolved IP address string.
 def resolve_host(host: str) -> str:
     """Resolve host to an IP address; exit on failure."""
     try:
@@ -113,6 +128,10 @@ def resolve_host(host: str) -> str:
 BAR_WIDTH = 40
 
 
+## @brief Format a text progress bar with percent and MB done/total.
+## @version 1
+## @dg_internal
+## @return The rendered progress line.
 def _render_bar(done: int, total: int) -> str:
     pct = done / total if total else 0
     filled = int(BAR_WIDTH * pct)
@@ -122,6 +141,9 @@ def _render_bar(done: int, total: int) -> str:
     return f"  [{bar}] {pct:5.1%}  {done_mb:.2f}/{total_mb:.2f} MB"
 
 
+## @brief Overwrite the current terminal line with the upload progress bar.
+## @version 1
+## @dg_internal
 def print_progress(done: int, total: int) -> None:
     sys.stdout.write(ERASE_LINE + _render_bar(done, total))
     sys.stdout.flush()
@@ -137,6 +159,9 @@ TERMINAL_STATES = {"rebooting", "error"}
 class StatusPoller(threading.Thread):
     """Polls GET /ota/status and stores the last observed state."""
 
+    ## @brief Initialise the daemon poller thread with the device address and a stop event.
+    ## @version 1
+    ## @req REQ-TOOL-001
     def __init__(self, host: str, port: int, stop_event: threading.Event) -> None:
         super().__init__(daemon=True)
         self.host = host
@@ -146,6 +171,10 @@ class StatusPoller(threading.Thread):
         self.last_status: dict = {}
         self._prev_state: str = ""
 
+    ## @brief GET /ota/status once.
+    ## @version 1
+    ## @req REQ-TOOL-001
+    ## @return Parsed status JSON on HTTP 200, otherwise None (errors swallowed).
     def _fetch_status(self) -> dict | None:
         try:
             conn = http.client.HTTPConnection(
@@ -161,6 +190,9 @@ class StatusPoller(threading.Thread):
             pass
         return None
 
+    ## @brief Print the OTA state (coloured, with expected bytes or error text) only when it differs from the last one printed.
+    ## @version 1
+    ## @dg_internal
     def _print_state_change(self, state: str, status: dict) -> None:
         if state == self._prev_state:
             return
@@ -175,6 +207,9 @@ class StatusPoller(threading.Thread):
             msg += f"  — {status['error']}"
         print(msg)
 
+    ## @brief Thread body: poll status every POLL_INTERVAL until stopped or a terminal state (rebooting/error) is seen.
+    ## @version 1
+    ## @req REQ-TOOL-001
     def run(self) -> None:
         while not self.stop_event.is_set():
             status = self._fetch_status()
@@ -192,6 +227,10 @@ class StatusPoller(threading.Thread):
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+## @brief Stream the firmware file to POST /ota in UPLOAD_CHUNK pieces with Bearer auth, showing progress.
+## @version 1
+## @req REQ-TOOL-001
+## @return (http_status, body); (0, "") when no response arrives (device may already be rebooting).
 def stream_firmware(
     host: str, port: int, firmware_path: str, token: str, timeout: int
 ) -> tuple[int, str]:
@@ -232,6 +271,10 @@ def stream_firmware(
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+## @brief Parse the command line (firmware path, --host, --port, --token, --timeout).
+## @version 1
+## @dg_internal
+## @return The parsed argparse namespace.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Push OTA firmware to a Greenwood Clock device",
@@ -261,6 +304,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+## @brief Check the firmware file exists and is non-empty; exits with an error otherwise.
+## @version 1
+## @req REQ-TOOL-001
+## @return The firmware size in bytes.
 def validate_firmware(path: str) -> int:
     """Return file size or exit with error."""
     if not os.path.exists(path):
@@ -273,6 +320,10 @@ def validate_firmware(path: str) -> int:
     return size
 
 
+## @brief Decide OTA success from the upload reply, falling back to the poller's last state when the reply is ambiguous.
+## @version 1
+## @req REQ-TOOL-001
+## @return True when the device confirmed or reached "rebooting", False otherwise.
 def evaluate_result(http_status: int, body: str, poller: StatusPoller) -> bool:
     """Return True on success, False on failure."""
     # Explicit success: device sent {"status":"rebooting"} before restarting
@@ -299,6 +350,9 @@ def evaluate_result(http_status: int, body: str, poller: StatusPoller) -> bool:
     return False
 
 
+## @brief CLI entry: validate inputs, start the status poller, upload the firmware and exit 0 on success or 1 on failure.
+## @version 1
+## @req REQ-TOOL-001
 def main() -> None:
     args = parse_args()
     token = resolve_token(args.token)

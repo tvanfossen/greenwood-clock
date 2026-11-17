@@ -1,6 +1,7 @@
 /**
  * @file tvg_harness.c
  * @brief Render every displayed frame of a Lottie file with whichever ThorVG it is linked to.
+ * @version 1
  *
  * Built twice by `inv tvg-compare` (against ThorVG 0.15.3 = device, and 1.x = latest) so
  * the two engines can be compared on identical inputs. Writes, per file:
@@ -50,7 +51,7 @@ static double now_us(void)
 /**
  * @brief Render one file; write frames to @p out_path (NULL = timing only).
  * @version 1
- * @dg_internal
+ * @req REQ-TOOL-003
  * @return 0 on success, nonzero on a ThorVG failure (reported).
  */
 static int render_file(const char *path, const char *out_path, uint32_t size)
@@ -96,6 +97,7 @@ static int render_file(const char *path, const char *out_path, uint32_t size)
 /**
  * @brief Usage: tvg_harness SIZE OUT_DIR|- FILE...  (OUT_DIR "-" = timing only).
  * @version 1
+ * @req REQ-TOOL-003
  * @return Number of files that failed.
  */
 int main(int argc, char **argv)

@@ -1,3 +1,8 @@
+/**
+ * @file http_client_utils.h
+ * @version 1
+ * @brief Shared HTTP(S) client helpers: response buffers, status evaluation and a full GET.
+ */
 // components/http_client_utils/http_client_utils.h
 //
 // Reusable HTTP client utilities: buffer management, status evaluation,

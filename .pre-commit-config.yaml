@@ -17,8 +17,8 @@ repos:
     rev: v1.3.0
     hooks:
       - id: clew-guard
-        files: \.(h|hpp|c|cpp|cc|py)$
-        exclude: ^(build/|managed_components/|components/lvgl/|components/cjson/|components/display_fsm/src/stb_image\.h$|\.venv/|\.claude/)
+        files: \.(h|hpp|c|cpp|cc|py|js)$
+        exclude: ^(build/|managed_components/|components/lvgl/|components/cjson/|components/fonts/|components/images/|components/display_fsm/src/stb_image\.h$|components/display_fsm/include/tinyfsm\.hpp$|tools/lottie_gen/glyph_animator/|\.venv/)|(^|/)\.claude/
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.4.4

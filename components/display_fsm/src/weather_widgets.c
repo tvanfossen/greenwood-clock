@@ -1,7 +1,10 @@
-// components/display_fsm/src/weather_widgets.c
-//
-// Layer 1: WeatherCard + ForecastStrip widgets.
-// Caller must hold LVGL lock for all functions.
+/**
+ * @file weather_widgets.c
+ * @version 1
+ * @brief Layer 1: WeatherCard + ForecastStrip widgets.
+ *
+ * Caller must hold LVGL lock for all functions.
+ */
 
 #include "display_widgets.h"
 #include "display_fsm.h"
@@ -109,7 +112,8 @@ static bool asset_candidate(const condition_asset_t *a, const char *tod, const c
  * @brief Resolve the asset for a condition: requested time of day, then day/ (haze and
  *        windy are day-only), then day/mostly_cloudy.
  * @version 1
- * @req REQ-WX-001
+ * @req REQ-WX-005
+ * @req REQ-WX-006
  * @return true with @p posix_out / @p lvgl_out filled; false (logged) when none exists.
  */
 static bool resolve_condition_asset(const condition_asset_t *a, const char *desc, bool is_daytime,
@@ -178,6 +182,7 @@ static float kmh_to_mph(float k) { return k * 0.621371f; }
  *        humidity labels) on a dark rounded panel at the top-left of @p parent.
  * @version 1
  * @return New card, or NULL on allocation failure (logged).
+ * @req REQ-WX-002
  */
 weather_card_t *weather_card_create(lv_obj_t *parent)
 {
@@ -252,6 +257,7 @@ weather_card_t *weather_card_create(lv_obj_t *parent)
  * @brief Free the Lottie SPIRAM buffer, delete the card's LVGL tree and animations, and
  *        free the card. NULL-safe.
  * @version 1
+ * @req REQ-WX-002
  */
 void weather_card_destroy(weather_card_t *w)
 {
@@ -273,6 +279,7 @@ void weather_card_destroy(weather_card_t *w)
  * @brief Get the card's root LVGL container.
  * @version 1
  * @return Container object, or NULL when @p w is NULL.
+ * @req REQ-WX-002
  */
 lv_obj_t *weather_card_container(const weather_card_t *w)
 {
@@ -283,6 +290,7 @@ lv_obj_t *weather_card_container(const weather_card_t *w)
  * @brief Apply @p primary to the temperature and @p secondary to the description,
  *        feels-like, wind and humidity labels. NULL-safe.
  * @version 1
+ * @req REQ-WX-002
  */
 void weather_card_set_color(weather_card_t *w, lv_color_t primary, lv_color_t secondary)
 {
@@ -298,6 +306,8 @@ void weather_card_set_color(weather_card_t *w, lv_color_t primary, lv_color_t se
  * @brief Derive panel-legible colours from @p base: primary for temperature and
  *        description, dimmed secondary for unit, feels-like, wind and humidity. NULL-safe.
  * @version 1
+ * @req REQ-WX-002
+ * @req REQ-BG-002
  */
 void weather_card_set_contrast(weather_card_t *w, lv_color_t base)
 {
@@ -316,6 +326,7 @@ void weather_card_set_contrast(weather_card_t *w, lv_color_t base)
  * @brief Refresh the card labels from current conditions (F / mph; dash for missing
  *        temperatures) and re-align them. Ignores NULL or invalid input.
  * @version 1
+ * @req REQ-WX-002
  */
 void weather_card_update(weather_card_t *w, const nws_conditions_t *cond)
 {
@@ -367,6 +378,8 @@ void weather_card_update(weather_card_t *w, const nws_conditions_t *cond)
  *        the background widget and queue it on the shared Lottie loader task.
  *        No-op when LV_USE_LOTTIE is off; failures are logged and cleaned up.
  * @version 1
+ * @req REQ-WX-005
+ * @req REQ-LOTTIE-001
  */
 void weather_card_load_condition_lottie(weather_card_t *w, const char *condition_desc,
                                          bool is_daytime)
@@ -495,7 +508,7 @@ static void strip_create_column(forecast_strip_t *s, int i)
 /**
  * @brief Create the 7-day forecast strip along the bottom of @p parent.
  * @version 2
- * @req REQ-WX-001
+ * @req REQ-WX-006
  * @return New strip, or NULL on allocation failure (logged).
  */
 forecast_strip_t *forecast_strip_create(lv_obj_t *parent)
@@ -528,6 +541,7 @@ forecast_strip_t *forecast_strip_create(lv_obj_t *parent)
 /**
  * @brief Delete the strip's LVGL tree and animations and free the strip. NULL-safe.
  * @version 1
+ * @req REQ-WX-003
  */
 void forecast_strip_destroy(forecast_strip_t *s)
 {
@@ -544,6 +558,7 @@ void forecast_strip_destroy(forecast_strip_t *s)
  * @brief Get the strip's root LVGL container.
  * @version 1
  * @return Container object, or NULL when @p s is NULL.
+ * @req REQ-WX-003
  */
 lv_obj_t *forecast_strip_container(const forecast_strip_t *s)
 {
@@ -554,6 +569,7 @@ lv_obj_t *forecast_strip_container(const forecast_strip_t *s)
  * @brief Apply @p primary to every day's name and hi/lo labels and @p secondary to the
  *        condition text label. NULL-safe.
  * @version 1
+ * @req REQ-WX-003
  */
 void forecast_strip_set_color(forecast_strip_t *s, lv_color_t primary, lv_color_t secondary)
 {
@@ -569,6 +585,8 @@ void forecast_strip_set_color(forecast_strip_t *s, lv_color_t primary, lv_color_
  * @brief Derive a panel-legible primary from @p base and apply it uniformly to every
  *        day-column label (no dimmed tier).
  * @version 1
+ * @req REQ-WX-003
+ * @req REQ-BG-002
  */
 void forecast_strip_set_contrast(forecast_strip_t *s, lv_color_t base)
 {
@@ -583,7 +601,7 @@ void forecast_strip_set_contrast(forecast_strip_t *s, lv_color_t base)
 /**
  * @brief Show the static condition icon for a day, or the text if no icon asset exists.
  * @version 1
- * @req REQ-WX-001
+ * @req REQ-WX-006
  */
 static void strip_set_condition(forecast_strip_t *s, int day, const char *desc, bool is_daytime)
 {
@@ -645,7 +663,7 @@ static void strip_fill_day(forecast_strip_t *s, int day, const nws_forecast_t *f
  * @brief Populate the strip: NWS gives day/night pairs; one column per day, with a
  *        leading night period shown as "Tonight".
  * @version 2
- * @req REQ-WX-001
+ * @req REQ-WX-006
  */
 void forecast_strip_update(forecast_strip_t *s, const nws_forecast_t *fc)
 {

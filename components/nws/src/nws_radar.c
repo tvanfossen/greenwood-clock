@@ -1,6 +1,8 @@
-// components/nws/src/nws_radar.c
-//
-// Fetch radar imagery from NOAA ImageServer and Kp index from SWPC.
+/**
+ * @file nws_radar.c
+ * @version 1
+ * @brief Fetch radar imagery from the NOAA ImageServer and the Kp index from SWPC.
+ */
 
 #include "nws_internal.h"
 #include "esp_heap_caps.h"
@@ -19,6 +21,13 @@ static const char *TAG = "nws_radar";
 
 // Validate a fetched buffer as a PNG and copy it into a fresh SPIRAM buffer.
 // Returns ESP_OK (out set), ESP_ERR_NO_MEM, or ESP_FAIL (not a PNG — give up).
+/**
+ * @brief Check the PNG signature of a fetched radar buffer and copy it into SPIRAM.
+ * @version 1
+ * @req REQ-RADAR-001
+ * @return ESP_OK with @p out / @p out_len set, ESP_ERR_NO_MEM if the SPIRAM copy
+ *         failed, or ESP_FAIL if the buffer is not a PNG.
+ */
 static esp_err_t accept_radar_png(const char *buf, size_t len,
                                   uint8_t **out, size_t *out_len)
 {
@@ -40,6 +49,17 @@ static esp_err_t accept_radar_png(const char *buf, size_t len,
     return ESP_OK;
 }
 
+/**
+ * @brief Fetch a 1024x600 transparent base-reflectivity PNG covering a 4-degree
+ *        box centred on @p lat / @p lon.
+ *
+ * Up to NWS_MAX_RETRIES attempts (15 s timeout each); a non-PNG response or an
+ * abort/rate-limit result stops retrying.
+ * @version 1
+ * @req REQ-RADAR-001
+ * @return ESP_OK with a SPIRAM buffer in @p png_buf (caller frees), ESP_ERR_NO_MEM,
+ *         or ESP_ERR_HTTP_CONNECT when no valid PNG was obtained.
+ */
 esp_err_t nws_fetch_radar(float lat, float lon, uint8_t **png_buf, size_t *png_len)
 {
     *png_buf = NULL;
@@ -90,6 +110,16 @@ esp_err_t nws_fetch_radar(float lat, float lon, uint8_t **png_buf, size_t *png_l
     return ESP_ERR_HTTP_CONNECT;
 }
 
+/**
+ * @brief Fetch the SWPC planetary K-index table and take the Kp of the last
+ *        (most recent) row.
+ *
+ * @p kp_out is set to 0.0 first and stays 0.0 on failure.
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @return ESP_OK on success, ESP_ERR_HTTP_CONNECT if the fetch failed, or
+ *         ESP_ERR_INVALID_RESPONSE if the array is missing, too short or malformed.
+ */
 esp_err_t nws_fetch_kp_index(float *kp_out)
 {
     *kp_out = 0.0f;

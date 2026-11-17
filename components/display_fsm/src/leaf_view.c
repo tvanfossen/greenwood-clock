@@ -1,5 +1,6 @@
 /**
  * @file leaf_view.c
+ * @version 1
  * @brief Falling-leaves effect: each leaf is a rotated kite (two triangles) in an autumn colour.
  */
 #include "leaf_view.h"
@@ -126,7 +127,7 @@ static const particle_view_ops_t LEAF_OPS = {
 /**
  * @brief Allocate the field in SPIRAM, seed it, attach a particle view.
  * @version 1
- * @req REQ-LEAF-003
+ * @req REQ-ANIM-003
  * @return New view, or NULL on allocation failure.
  */
 leaf_view_t *leaf_view_create(lv_obj_t *parent, int leaf_count)
@@ -150,7 +151,7 @@ leaf_view_t *leaf_view_create(lv_obj_t *parent, int leaf_count)
 /**
  * @brief Run or freeze the leaves.
  * @version 1
- * @req REQ-LEAF-003
+ * @req REQ-ANIM-003
  */
 void leaf_view_set_running(leaf_view_t *v, bool running)
 {
@@ -160,7 +161,7 @@ void leaf_view_set_running(leaf_view_t *v, bool running)
 /**
  * @brief Destroy the view and free the field.
  * @version 1
- * @req REQ-LEAF-003
+ * @req REQ-ANIM-003
  */
 void leaf_view_destroy(leaf_view_t *v)
 {

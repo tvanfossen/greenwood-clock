@@ -1,7 +1,10 @@
-// components/nws/include/nws.h
-//
-// NWS Weather Service Integration — public API and data structures.
-// Free, unlimited, US-only. No API key required (User-Agent only).
+/**
+ * @file nws.h
+ * @version 1
+ * @brief NWS Weather Service integration: public API and data structures.
+ *
+ * Free, unlimited, US-only. No API key required (User-Agent only).
+ */
 
 #ifndef NWS_H
 #define NWS_H

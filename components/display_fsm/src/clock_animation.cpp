@@ -1,5 +1,6 @@
 /**
  * @file clock_animation.cpp
+ * @version 1
  * @brief ClockAnimation base (lifecycle, locking, logging) + hummingbird / snowfall.
  */
 #include "clock_animation.h"
@@ -32,7 +33,7 @@ public:
     /**
      * @brief Create on first use, then show. Idempotent.
      * @version 1
-     * @req REQ-ANIM-002
+     * @req REQ-ANIM-001
      */
     void show(lv_obj_t *scr)
     {
@@ -48,7 +49,7 @@ public:
     /**
      * @brief Hide and pause if currently visible. Idempotent.
      * @version 1
-     * @req REQ-ANIM-002
+     * @req REQ-ANIM-001
      */
     void hide()
     {
@@ -358,7 +359,7 @@ static ClockAnimation *instance_for(clock_anim_t anim)
 /**
  * @brief Bind to the screen and show the stored choice.
  * @version 1
- * @req REQ-ANIM-002
+ * @req REQ-ANIM-001
  */
 extern "C" void clock_animation_init(lv_obj_t *scr)
 {
@@ -370,7 +371,7 @@ extern "C" void clock_animation_init(lv_obj_t *scr)
 /**
  * @brief Switch the active animation, hiding the previous one.
  * @version 2
- * @req REQ-ANIM-002
+ * @req REQ-ANIM-001
  */
 extern "C" void clock_animation_select(clock_anim_t anim)
 {
@@ -392,7 +393,7 @@ extern "C" void clock_animation_select(clock_anim_t anim)
 /**
  * @brief Show the active animation (no-op for None or before init).
  * @version 2
- * @req REQ-ANIM-002
+ * @req REQ-ANIM-001
  */
 extern "C" void clock_animation_show(void)
 {
@@ -405,7 +406,7 @@ extern "C" void clock_animation_show(void)
 /**
  * @brief Hide the active animation (no-op for None or before init).
  * @version 2
- * @req REQ-ANIM-002
+ * @req REQ-ANIM-001
  */
 extern "C" void clock_animation_hide(void)
 {

@@ -1,7 +1,10 @@
-// components/display_fsm/src/astro_calc.c
-//
-// Layer 1: Astronomical computation — moon phase, sunrise/sunset, aurora.
-// Pure math — no LVGL, no network. Based on Jean Meeus "Astronomical Algorithms".
+/**
+ * @file astro_calc.c
+ * @version 1
+ * @brief Layer 1: Astronomical computation — moon phase, sunrise/sunset, aurora.
+ *
+ * Pure math — no LVGL, no network. Based on Jean Meeus "Astronomical Algorithms".
+ */
 
 #include "display_widgets.h"
 #include <math.h>
@@ -18,6 +21,12 @@
 // Julian Date helpers
 // ============================================================================
 
+/**
+ * @brief Julian Date at 0h UT of a Gregorian calendar date (Meeus Ch. 7).
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @return The Julian Date.
+ */
 static double julian_date(int year, int month, int day)
 {
     if (month <= 2) {
@@ -33,6 +42,13 @@ static double julian_date(int year, int month, int day)
 // Moon phase (Meeus Ch. 49 simplified)
 // ============================================================================
 
+/**
+ * @brief Compute moon phase for a date: phase fraction from the 2000-01-06 new
+ *        moon and the mean synodic month, giving illumination %, 8-step phase
+ *        index/name and whole days to the next full and new moon.
+ * @version 1
+ * @req REQ-ASTRO-001
+ */
 void astro_calc_moon_phase(int year, int month, int day, moon_phase_t *out)
 {
     if (!out) return;
@@ -80,6 +96,16 @@ void astro_calc_moon_phase(int year, int month, int day, moon_phase_t *out)
 // Sunrise/sunset (simplified solar position)
 // ============================================================================
 
+/**
+ * @brief Compute sunrise/sunset (UTC, minutes normalised to 0-1439), daylight
+ *        length and solar-noon elevation from a simplified solar-position model
+ *        (zenith 90.833 deg).
+ *
+ * Polar night sets sunrise/sunset hours to -1; polar day reports 00:00-23:59 and
+ * 1440 daylight minutes. Times are UTC; the caller applies the timezone offset.
+ * @version 1
+ * @req REQ-ASTRO-001
+ */
 void astro_calc_sun_times(int year, int month, int day, float lat, float lon,
                           sun_times_t *out)
 {
@@ -159,6 +185,15 @@ void astro_calc_sun_times(int year, int month, int day, float lat, float lon,
 // Aurora probability
 // ============================================================================
 
+/**
+ * @brief Rough aurora visibility probability from Kp and geographic latitude.
+ *
+ * Geomagnetic latitude ~ latitude + 10 deg (North America); oval boundary
+ * ~ 65 - 2*Kp deg; linear ramp over 10 deg inside the boundary.
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @return Probability in [0.0, 0.95]; 0.0 when south of the oval boundary.
+ */
 float astro_calc_aurora_probability(float kp_index, float latitude)
 {
     // At 43°N (Newaygo, MI):

@@ -1,5 +1,6 @@
 /**
  * @file snowfall_view.h
+ * @version 1
  * @brief LVGL renderer for the physics-based snowfall (snow_physics.h).
  *
  * One full-screen, click-through object draws every flake in its DRAW_MAIN
@@ -21,7 +22,7 @@ typedef struct snowfall_view_t snowfall_view_t;
 /**
  * @brief Create a snowfall layer covering @p parent; starts hidden and paused.
  * @version 1
- * @req REQ-SNOW-002
+ * @req REQ-ANIM-002
  * @return New view, or NULL on allocation failure (logged).
  */
 snowfall_view_t *snowfall_view_create(lv_obj_t *parent, int flake_count);
@@ -29,14 +30,14 @@ snowfall_view_t *snowfall_view_create(lv_obj_t *parent, int flake_count);
 /**
  * @brief Show and animate (true) or hide and freeze (false) the snowfall.
  * @version 1
- * @req REQ-SNOW-002
+ * @req REQ-ANIM-002
  */
 void snowfall_view_set_running(snowfall_view_t *v, bool running);
 
 /**
  * @brief Delete the LVGL object and timer and free the view.
  * @version 1
- * @req REQ-SNOW-002
+ * @req REQ-ANIM-002
  */
 void snowfall_view_destroy(snowfall_view_t *v);
 

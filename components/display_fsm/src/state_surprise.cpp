@@ -1,5 +1,8 @@
-// components/display_fsm/src/state_surprise.cpp
-//
+/**
+ * @file state_surprise.cpp
+ * @version 1
+ * @brief SurpriseMessage state: renders a JSON layout pushed via the HTTP API, with a "Surprise!" fallback.
+ */
 // SurpriseMessage state — renders JSON layout DSL pushed via HTTP API.
 // Uses s_surprise_json and s_surprise_duration_s stashed by base class
 // before transit (since entry() can't access event parameters).
@@ -15,6 +18,12 @@ static const char *TAG = "state_surprise";
 // Static member definitions
 json_layout_t *SurpriseMessage::s_layout = nullptr;
 
+/**
+ * @brief Enter: minimize the clock, build the stashed JSON layout (or a "Surprise!" label if absent or invalid), free the JSON, force-show the state and record its duration.
+ * @version 1
+ * @req REQ-SURP-001
+ * @req REQ-DISP-005
+ */
 void SurpriseMessage::entry()
 {
     set_state_info(DISPLAY_STATE_SURPRISE, "surprise");
@@ -53,6 +62,11 @@ void SurpriseMessage::entry()
              (unsigned long)s_surprise_duration_s);
 }
 
+/**
+ * @brief Leave: destroy the layout and restore the default 30 s surprise duration.
+ * @version 1
+ * @req REQ-SURP-001
+ */
 void SurpriseMessage::exit()
 {
     if (s_layout) { json_layout_destroy(s_layout); s_layout = NULL; }
@@ -61,12 +75,23 @@ void SurpriseMessage::exit()
     ESP_LOGI(TAG, "SurpriseMessage: exit");
 }
 
+/**
+ * @brief Display timeout: return to ClockFull.
+ * @version 1
+ * @req REQ-SURP-001
+ * @req REQ-DISP-002
+ */
 void SurpriseMessage::react(EvDisplayTimeout const &)
 {
     transit<ClockFull>();
 }
 
 // Override to prevent re-entry while already showing a surprise
+/**
+ * @brief Replace the current surprise with a new JSON layout and restart its return timer with the new duration (default 30 s).
+ * @version 1
+ * @req REQ-SURP-001
+ */
 void SurpriseMessage::react(EvSurpriseMessage const &e)
 {
     // Replace current surprise with new one
@@ -88,6 +113,11 @@ void SurpriseMessage::react(EvSurpriseMessage const &e)
              (unsigned long)s_surprise_duration_s);
 }
 
+/**
+ * @brief Ignore a forced switch to the surprise state itself; delegate other forced states to the base handler.
+ * @version 1
+ * @req REQ-SURP-001
+ */
 void SurpriseMessage::react(EvForceState const &e)
 {
     if (e.state != DISPLAY_STATE_SURPRISE) {

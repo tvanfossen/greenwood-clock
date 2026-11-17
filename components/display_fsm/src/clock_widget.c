@@ -1,5 +1,8 @@
-// components/display_fsm/src/clock_widget.c
-//
+/**
+ * @file clock_widget.c
+ * @version 1
+ * @brief ClockWidget: time/AM-PM/date labels with full, minimized and topbar modes and a snapshot morph between them.
+ */
 // Layer 1: ClockWidget — reusable time/date display with full/minimized modes.
 // Extracted from components/ui/ui.c clock label management.
 //
@@ -61,6 +64,11 @@ struct clock_widget_t {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief Format @p ti as 12-hour "HH:MM", "AM"/"PM" and a "Weekday, Month, DD" date string.
+ * @version 1
+ * @req REQ-CLOCK-001
+ */
 static void format_time(const struct tm *ti, char *buf_time, size_t time_sz,
                         char *buf_ampm, size_t ampm_sz,
                         char *buf_date, size_t date_sz)
@@ -74,6 +82,11 @@ static void format_time(const struct tm *ti, char *buf_time, size_t time_sz,
 
 // Apply fonts and inner label alignment for full mode.
 // Does NOT touch container position/size — that's handled by animation or snap_to().
+/**
+ * @brief Full-mode layout: 256pt time, 48pt AM/PM baseline-aligned to it, 48pt date at the bottom; does not move the container.
+ * @version 1
+ * @req REQ-CLOCK-001
+ */
 static void apply_full_layout(clock_widget_t *w)
 {
     // Time: 256pt, centered in container
@@ -97,6 +110,11 @@ static void apply_full_layout(clock_widget_t *w)
 
 // Apply fonts and inner label alignment for minimized mode.
 // Does NOT touch container position/size — that's handled by animation or snap_to().
+/**
+ * @brief Minimized-mode layout: 128pt time shifted left so time + 48pt AM/PM are centred, 24pt date below; does not move the container.
+ * @version 1
+ * @req REQ-CLOCK-002
+ */
 static void apply_minimized_layout(clock_widget_t *w)
 {
     // Time: 128pt. Shift left so the time + AM/PM *group* is centred in the
@@ -122,6 +140,11 @@ static void apply_minimized_layout(clock_widget_t *w)
 
 // Apply fonts and inner label alignment for topbar mode (thin strip, settings use).
 // Does NOT touch container position/size — that's handled by animation or snap_to().
+/**
+ * @brief Topbar-mode layout: 48pt time left, 24pt AM/PM beside it, 24pt date right-aligned; does not move the container.
+ * @version 1
+ * @req REQ-CLOCK-002
+ */
 static void apply_topbar_layout(clock_widget_t *w)
 {
     // Time: 48pt, left-aligned
@@ -143,6 +166,12 @@ static void mode_geometry(clock_mode_t mode, int32_t *x, int32_t *y, int32_t *w,
 static void apply_effective_color(clock_widget_t *w);
 static void kill_fade(void);
 
+/**
+ * @brief Write the screen area occupied by the full-mode clock into @p out (no-op if NULL).
+ * @version 1
+ * @req REQ-CLOCK-001
+ * @req REQ-BG-002
+ */
 void clock_widget_full_area(lv_area_t *out)
 {
     if (!out) return;
@@ -153,6 +182,11 @@ void clock_widget_full_area(lv_area_t *out)
 }
 
 // Snap container to a mode's target position/size immediately (no animation).
+/**
+ * @brief Move and resize the clock container to @p mode's geometry immediately, without animation.
+ * @version 1
+ * @dg_internal
+ */
 static void snap_to(clock_widget_t *w, clock_mode_t mode)
 {
     int32_t x, y, mw, mh;
@@ -165,6 +199,12 @@ static void snap_to(clock_widget_t *w, clock_mode_t mode)
 // Public API
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief Allocate a clock widget on @p parent: transparent container with white time, AM/PM and date labels in full mode.
+ * @version 1
+ * @req REQ-CLOCK-001
+ * @return New widget, or NULL if allocation fails.
+ */
 clock_widget_t *clock_widget_create(lv_obj_t *parent)
 {
     clock_widget_t *w = lv_malloc(sizeof(clock_widget_t));
@@ -214,6 +254,11 @@ clock_widget_t *clock_widget_create(lv_obj_t *parent)
     return w;
 }
 
+/**
+ * @brief Cancel any in-flight crossfade, delete the widget's LVGL objects and free it (no-op if NULL).
+ * @version 1
+ * @req REQ-CLOCK-001
+ */
 void clock_widget_destroy(clock_widget_t *w)
 {
     if (!w) return;
@@ -226,6 +271,11 @@ void clock_widget_destroy(clock_widget_t *w)
     ESP_LOGI(TAG, "ClockWidget destroyed");
 }
 
+/**
+ * @brief Set the time, AM/PM and date labels from @p ti and re-align AM/PM for the current mode.
+ * @version 1
+ * @req REQ-CLOCK-001
+ */
 void clock_widget_update(clock_widget_t *w, const struct tm *ti)
 {
     if (!w || !ti) return;
@@ -266,11 +316,22 @@ static int32_t s_mx0, s_my0, s_msc0;   // source pos + scale (256 = 1.0x)
 static int32_t s_mx1, s_my1, s_msc1;   // target pos + scale
 static lv_color_t s_mc0, s_mc1;        // source/target text colour (recolours snapshot)
 
+/**
+ * @brief Linearly interpolate between two bytes at @p prog in 0..256.
+ * @version 1
+ * @dg_internal
+ * @return Interpolated value.
+ */
 static uint8_t lerp_u8(uint8_t a, uint8_t b, int32_t prog)
 {
     return (uint8_t)((int32_t)a + ((int32_t)b - (int32_t)a) * prog / 256);
 }
 
+/**
+ * @brief lv_anim exec callback: place, scale and recolour the morph snapshot at progress @p prog (0 source .. 256 target).
+ * @version 1
+ * @callback
+ */
 static void morph_exec_cb(void *var, int32_t prog)   // prog: 0 (source) .. 256 (target)
 {
     lv_obj_t *img = (lv_obj_t *)var;
@@ -294,6 +355,11 @@ static void morph_exec_cb(void *var, int32_t prog)   // prog: 0 (source) .. 256 
 // the dominant time text doesn't jump in size or position when the morph ends.
 // (Date/AM-PM reflow between layouts and only roughly match — the end crossfade
 // hides that peripheral difference.)
+/**
+ * @brief Compute where to place and how far to scale the full-clock snapshot so its time text lands on the real clock of @p mode.
+ * @version 1
+ * @req REQ-DISP-004
+ */
 static void morph_appearance(clock_mode_t mode, int32_t *x, int32_t *y, int32_t *scale)
 {
     const int32_t pad = 8;
@@ -315,6 +381,11 @@ static void morph_appearance(clock_mode_t mode, int32_t *x, int32_t *y, int32_t 
     }
 }
 
+/**
+ * @brief Apply the inner label layout for @p mode (minimized for unknown modes).
+ * @version 1
+ * @dg_internal
+ */
 static void apply_layout_for_mode(clock_widget_t *w, clock_mode_t mode)
 {
     switch (mode) {
@@ -333,12 +404,22 @@ static void apply_layout_for_mode(clock_widget_t *w, clock_mode_t mode)
 static lv_obj_t      *s_fade_img;
 static lv_draw_buf_t *s_fade_snap;
 
+/**
+ * @brief lv_anim exec callback: set the object's opacity to @p v.
+ * @version 1
+ * @callback
+ */
 static void fade_opa_cb(void *var, int32_t v)
 {
     lv_obj_set_style_opa((lv_obj_t *)var, (lv_opa_t)v, 0);
 }
 
 // Tear down any in-flight crossfade immediately (its anim, image, and buffer).
+/**
+ * @brief Immediately tear down any in-flight crossfade: its animation, image and snapshot buffer.
+ * @version 1
+ * @dg_internal
+ */
 static void kill_fade(void)
 {
     if (s_fade_img) {
@@ -349,6 +430,11 @@ static void kill_fade(void)
     if (s_fade_snap) { lv_draw_buf_destroy(s_fade_snap); s_fade_snap = NULL; }
 }
 
+/**
+ * @brief lv_anim completion callback: dispose of the finished crossfade.
+ * @version 1
+ * @callback
+ */
 static void fade_done_cb(lv_anim_t *a)
 {
     LV_UNUSED(a);
@@ -359,6 +445,11 @@ static void fade_done_cb(lv_anim_t *a)
 // snapshot image — by dissolving it out (crossfade=true, natural completion) or
 // instantly (crossfade=false, an interrupting morph settling this one). Idempotent.
 // Strictly serial: an interrupted morph can never orphan its snapshot on the layer.
+/**
+ * @brief Restore the real clock at the morph's target layout and colour, then dissolve the snapshot out (@p crossfade) or delete it instantly; idempotent.
+ * @version 1
+ * @req REQ-DISP-004
+ */
 static void finalize_morph(bool crossfade)
 {
     clock_widget_t *w = s_morph_w;
@@ -412,6 +503,11 @@ static void finalize_morph(bool crossfade)
     s_morph_w    = NULL;
 }
 
+/**
+ * @brief lv_anim completion callback for the morph: finalize with a crossfade.
+ * @version 1
+ * @callback
+ */
 static void morph_done_cb(lv_anim_t *a)
 {
     LV_UNUSED(a);
@@ -419,6 +515,11 @@ static void morph_done_cb(lv_anim_t *a)
 }
 
 // Get position/size for a mode (avoids repeating constants in animation logic).
+/**
+ * @brief Return position and size of the clock container for @p mode.
+ * @version 1
+ * @dg_internal
+ */
 static void mode_geometry(clock_mode_t mode, int32_t *x, int32_t *y, int32_t *w, int32_t *h)
 {
     switch (mode) {
@@ -433,6 +534,11 @@ static void mode_geometry(clock_mode_t mode, int32_t *x, int32_t *y, int32_t *w,
 // on the FULL clock screen (sized to its background image); a fixed, legible
 // white once minimized over the dark state screens, where the user's chosen
 // colour — which may be dark — is not guaranteed to contrast.
+/**
+ * @brief Apply the mode's effective text colour (full colour in FULL mode, minimized colour otherwise) to all three labels.
+ * @version 1
+ * @req REQ-BG-002
+ */
 static void apply_effective_color(clock_widget_t *w)
 {
     lv_color_t c = (w->mode == CLOCK_MODE_FULL) ? w->color : w->min_color;
@@ -441,6 +547,12 @@ static void apply_effective_color(clock_widget_t *w)
     lv_obj_set_style_text_color(w->lbl_date, c, 0);
 }
 
+/**
+ * @brief Switch clock mode; animates a 500 ms snapshot morph (time scaled and recoloured, AM/PM and date crossfaded), or snaps instantly if the snapshot cannot be taken.
+ * @version 1
+ * @req REQ-CLOCK-002
+ * @req REQ-DISP-004
+ */
 void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
 {
     if (!w) return;
@@ -543,6 +655,11 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
     ESP_LOGI(TAG, "ClockWidget mode → %s (snapshot morph)", mode_names[mode]);
 }
 
+/**
+ * @brief Set the full-mode text colour and apply it if the clock is in full mode.
+ * @version 1
+ * @req REQ-BG-002
+ */
 void clock_widget_set_color(clock_widget_t *w, lv_color_t color)
 {
     if (!w) return;
@@ -550,6 +667,11 @@ void clock_widget_set_color(clock_widget_t *w, lv_color_t color)
     apply_effective_color(w);   // honours current mode (only FULL uses it)
 }
 
+/**
+ * @brief Set the current minimized text colour and apply it if the clock is minimized.
+ * @version 1
+ * @req REQ-BG-002
+ */
 void clock_widget_set_minimized_color(clock_widget_t *w, lv_color_t color)
 {
     if (!w) return;
@@ -557,21 +679,43 @@ void clock_widget_set_minimized_color(clock_widget_t *w, lv_color_t color)
     apply_effective_color(w);   // applies immediately if currently minimized
 }
 
+/**
+ * @brief Set the default minimized colour, applied on the next minimize.
+ * @version 1
+ * @req REQ-BG-002
+ */
 void clock_widget_set_minimized_base_color(clock_widget_t *w, lv_color_t color)
 {
     if (w) w->min_base = color;   // default applied on the next minimize
 }
 
+/**
+ * @brief Store the user's configured text colour, the base hue for the derived legible colours.
+ * @version 1
+ * @req REQ-BG-002
+ */
 void clock_widget_set_user_color(clock_widget_t *w, lv_color_t color)
 {
     if (w) w->user_color = color;   // OKLCH base hue; effective colours derived from it
 }
 
+/**
+ * @brief Get the user's configured text colour.
+ * @version 1
+ * @req REQ-BG-002
+ * @return Stored user colour, or white if @p w is NULL.
+ */
 lv_color_t clock_widget_user_color(const clock_widget_t *w)
 {
     return w ? w->user_color : lv_color_white();
 }
 
+/**
+ * @brief Write the screen area occupied by the minimized clock into @p out (no-op if NULL).
+ * @version 1
+ * @req REQ-CLOCK-002
+ * @req REQ-BG-002
+ */
 void clock_widget_min_area(lv_area_t *out)
 {
     if (!out) return;
@@ -581,11 +725,22 @@ void clock_widget_min_area(lv_area_t *out)
     out->y2 = MIN_Y + MIN_H - 1;
 }
 
+/**
+ * @brief Get the clock's current mode.
+ * @version 1
+ * @req REQ-CLOCK-002
+ * @return Current mode, or CLOCK_MODE_FULL if @p w is NULL.
+ */
 clock_mode_t clock_widget_get_mode(const clock_widget_t *w)
 {
     return w ? w->mode : CLOCK_MODE_FULL;
 }
 
+/**
+ * @brief Offset the clock container by (@p dx, @p dy), each clamped to +/-4 px, for burn-in mitigation.
+ * @version 1
+ * @req REQ-CLOCK-003
+ */
 void clock_widget_set_jitter(clock_widget_t *w, int8_t dx, int8_t dy)
 {
     if (!w || !w->container) return;

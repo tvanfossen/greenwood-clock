@@ -1,3 +1,8 @@
+/**
+ * @file http_client_utils.c
+ * @version 1
+ * @brief Shared HTTP(S) GET helper with bounded response buffers, status-to-retry mapping and error logging.
+ */
 // components/http_client_utils/http_client_utils.c
 //
 // Reusable HTTP client utilities extracted from weather.c.
@@ -23,6 +28,8 @@ static const char *TAG = "http_utils";
  *
  * @param status  HTTP response status code.
  * @return Retry disposition.
+ * @version 1
+ * @req REQ-API-004
  */
 static http_attempt_result_t evaluate_http_status(int status)
 {
@@ -46,6 +53,8 @@ static http_attempt_result_t evaluate_http_status(int status)
  *
  * @param hint_len  Content-Length value; -1 if absent.
  * @return Initial buffer capacity in bytes.
+ * @version 1
+ * @req REQ-API-004
  */
 static size_t http_initial_cap(int hint_len)
 {
@@ -62,6 +71,8 @@ static size_t http_initial_cap(int hint_len)
  * @param buf  Current heap buffer.
  * @param cap  Current capacity; updated on success.
  * @return New pointer on success, NULL on realloc failure.
+ * @version 1
+ * @req REQ-API-004
  */
 static char *http_buf_grow(char *buf, size_t *cap)
 {
@@ -87,6 +98,8 @@ static char *http_buf_grow(char *buf, size_t *cap)
  * @param total  Running byte count (incremented by chunk).
  * @param chunk  Number of bytes just read.
  * @return true if the buffer is still usable; false if grow failed.
+ * @version 1
+ * @req REQ-API-004
  */
 static bool http_buf_append(char **buf, size_t *cap, size_t *total, size_t chunk)
 {
@@ -110,6 +123,8 @@ static bool http_buf_append(char **buf, size_t *cap, size_t *total, size_t chunk
  * @param hint_len  Content-Length hint; -1 if unknown.
  * @param out_len   Set to bytes read on return.
  * @return Heap buffer, or NULL on allocation failure.
+ * @version 1
+ * @req REQ-API-004
  */
 static char *http_read_all(esp_http_client_handle_t client, int hint_len, size_t *out_len)
 {
@@ -141,6 +156,8 @@ static char *http_read_all(esp_http_client_handle_t client, int hint_len, size_t
  * @param out_clen  Set to Content-Length from response headers.
  * @param result    Set to retry disposition.
  * @return ESP_OK on successful open; ESP_FAIL otherwise.
+ * @version 1
+ * @req REQ-API-004
  */
 static esp_err_t http_open_and_evaluate(esp_http_client_handle_t client,
                                          int *out_clen,
@@ -169,6 +186,8 @@ static esp_err_t http_open_and_evaluate(esp_http_client_handle_t client,
  * @param result   Set to attempt outcome.
  * @param out_len  Set to body bytes on HTTP_ATTEMPT_OK.
  * @return Heap buffer on HTTP_ATTEMPT_OK, NULL otherwise.
+ * @version 1
+ * @req REQ-API-004
  */
 static char *http_open_read_close(esp_http_client_handle_t client,
                                    http_attempt_result_t *result,
@@ -192,6 +211,12 @@ static char *http_open_read_close(esp_http_client_handle_t client,
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+/**
+ * @brief Run one full HTTP(S) GET: init the client from @p cfg, open, evaluate status, read the body and clean up.
+ * @version 1
+ * @req REQ-API-004
+ * @return Null-terminated heap buffer (caller frees) on HTTP_ATTEMPT_OK, NULL otherwise; @p result holds the retry disposition.
+ */
 char *http_request_execute(const esp_http_client_config_t *cfg,
                             http_attempt_result_t *result,
                             size_t *out_len)

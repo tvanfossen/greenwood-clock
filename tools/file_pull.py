@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+## @file file_pull.py
+## @brief Host tool: download one file from the device SD card via GET /files/<path>.
+## @version 1
 """
 Download an arbitrary file from the SD card on the Greenwood Clock.
 
@@ -19,6 +22,9 @@ import urllib.request
 import os
 
 
+## @brief CLI entry: GET /files/<remote> and write it to the local destination (default: remote basename); exit 1 on error.
+## @version 1
+## @req REQ-TOOL-001
 def main() -> None:
     ap = argparse.ArgumentParser(description="Download a file from the device SD card.")
     ap.add_argument(

@@ -1,5 +1,8 @@
-// components/display_fsm/src/state_clock.cpp
-//
+/**
+ * @file state_clock.cpp
+ * @version 1
+ * @brief ClockFull home state: full-screen clock; data and trigger events open other states through the scheduler.
+ */
 // ClockFull state — home state. Full-screen clock display.
 // All other states return here after their display duration.
 
@@ -9,6 +12,12 @@
 
 static const char *TAG = "state_clock";
 
+/**
+ * @brief Enter the home state: record state info, restore the full clock and animation, and stop the scheduler's return timer.
+ * @version 1
+ * @req REQ-CLOCK-001
+ * @req REQ-DISP-002
+ */
 void ClockFull::entry()
 {
     set_state_info(DISPLAY_STATE_CLOCK, "clock");
@@ -17,6 +26,11 @@ void ClockFull::entry()
     ESP_LOGI(TAG, "ClockFull: entry");
 }
 
+/**
+ * @brief Leave the home state (logs only).
+ * @version 1
+ * @req REQ-CLOCK-001
+ */
 void ClockFull::exit()
 {
     ESP_LOGI(TAG, "ClockFull: exit");
@@ -25,6 +39,12 @@ void ClockFull::exit()
 // Clock is home — no timeout handler (we're already home)
 
 // Data events can trigger overlay states (via scheduler debounce)
+/**
+ * @brief Open WeatherOverlay if the scheduler allows weather (enabled, condition, cooldown).
+ * @version 1
+ * @req REQ-DISP-002
+ * @req REQ-WX-002
+ */
 void ClockFull::react(EvWeatherUpdate const &)
 {
     if (display_scheduler_get()->try_show(DISPLAY_STATE_WEATHER)) {
@@ -32,6 +52,12 @@ void ClockFull::react(EvWeatherUpdate const &)
     }
 }
 
+/**
+ * @brief Open RadarOverlay if the scheduler allows radar (enabled, condition, cooldown).
+ * @version 1
+ * @req REQ-DISP-002
+ * @req REQ-RADAR-002
+ */
 void ClockFull::react(EvRadarReady const &)
 {
     if (display_scheduler_get()->try_show(DISPLAY_STATE_RADAR)) {
@@ -39,6 +65,12 @@ void ClockFull::react(EvRadarReady const &)
     }
 }
 
+/**
+ * @brief Open Astronomy if the scheduler allows astronomy (enabled, condition, cooldown).
+ * @version 1
+ * @req REQ-DISP-002
+ * @req REQ-ASTRO-001
+ */
 void ClockFull::react(EvAstroTrigger const &)
 {
     if (display_scheduler_get()->try_show(DISPLAY_STATE_ASTRONOMY)) {
@@ -46,6 +78,12 @@ void ClockFull::react(EvAstroTrigger const &)
     }
 }
 
+/**
+ * @brief Open PhotoSlideshow if the scheduler allows photos (enabled, condition, cooldown).
+ * @version 1
+ * @req REQ-DISP-002
+ * @req REQ-PHOTO-001
+ */
 void ClockFull::react(EvPhotoTrigger const &)
 {
     if (display_scheduler_get()->try_show(DISPLAY_STATE_PHOTOS)) {
@@ -53,6 +91,12 @@ void ClockFull::react(EvPhotoTrigger const &)
     }
 }
 
+/**
+ * @brief Open AmbientDashboard if the scheduler allows ambient (enabled, condition, cooldown).
+ * @version 1
+ * @req REQ-DISP-002
+ * @req REQ-AMB-001
+ */
 void ClockFull::react(EvAmbientTrigger const &)
 {
     if (display_scheduler_get()->try_show(DISPLAY_STATE_AMBIENT)) {
@@ -60,6 +104,12 @@ void ClockFull::react(EvAmbientTrigger const &)
     }
 }
 
+/**
+ * @brief Force a state from the clock (bypassing cooldown via force_show) or open Settings; other ids are ignored.
+ * @version 1
+ * @req REQ-DISP-002
+ * @req REQ-API-003
+ */
 void ClockFull::react(EvForceState const &e)
 {
     switch (e.state) {

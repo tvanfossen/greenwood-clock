@@ -1,3 +1,8 @@
+/**
+ * @file ota.c
+ * @version 1
+ * @brief OTA update client: HTTP push into the inactive slot, status/version reporting, and image confirm/rollback.
+ */
 // components/ota/ota.c
 
 #include "ota.h"
@@ -91,6 +96,7 @@ static void ota_log_partition_state(void) {
  * @brief Identify the running partition and log its firmware version and OTA state.
  * @version 1
  * @return ESP_OK on success; ESP_FAIL if the running partition cannot be found.
+ * @req REQ-OTA-003
  */
 esp_err_t ota_init(void) {
     s_running_partition = esp_ota_get_running_partition();
@@ -114,6 +120,7 @@ esp_err_t ota_init(void) {
  * @brief Get the running firmware's version string from the app descriptor.
  * @version 1
  * @return Version string (static storage; empty if ota_init() has not run).
+ * @req REQ-OTA-003
  */
 const char* ota_get_current_version(void) {
     return s_running_app_info.version;
@@ -123,6 +130,7 @@ const char* ota_get_current_version(void) {
  * @brief Get the running partition's label.
  * @version 1
  * @return Partition label, or "unknown" before ota_init().
+ * @req REQ-OTA-003
  */
 const char* ota_get_running_partition(void) {
     return s_running_partition ? s_running_partition->label : "unknown";
@@ -132,6 +140,7 @@ const char* ota_get_running_partition(void) {
  * @brief Get the last OTA error message.
  * @version 1
  * @return Static error buffer (do not free); empty if no error has occurred.
+ * @req REQ-OTA-003
  */
 const char* ota_get_last_error(void) {
     return s_last_error;
@@ -141,6 +150,7 @@ const char* ota_get_last_error(void) {
  * @brief Get a snapshot of the push-OTA status.
  * @version 1
  * @return Copy of the current ota_status_t.
+ * @req REQ-OTA-001
  */
 ota_status_t ota_get_status(void) {
     return s_status;
@@ -302,6 +312,7 @@ static esp_err_t ota_push_verify_and_set_boot(void) {
  * @version 1
  * @param image_size Expected firmware image size in bytes (OTA_SIZE_UNKNOWN to skip).
  * @return ESP_OK on success; ESP_ERR_INVALID_STATE if not IDLE; esp_ota error otherwise.
+ * @req REQ-OTA-001
  */
 esp_err_t ota_push_begin(size_t image_size) {
     if (s_status.state != OTA_STATE_IDLE) {
@@ -322,6 +333,7 @@ esp_err_t ota_push_begin(size_t image_size) {
  * @param data Pointer to firmware bytes.
  * @param len  Number of bytes to write.
  * @return ESP_OK on success; ESP_ERR_INVALID_STATE if not RECEIVING; esp_ota_write error otherwise.
+ * @req REQ-OTA-001
  */
 esp_err_t ota_push_write(const void* data, size_t len) {
     if (s_status.state != OTA_STATE_RECEIVING) {
@@ -343,6 +355,7 @@ esp_err_t ota_push_write(const void* data, size_t len) {
  * @version 1
  * @return ESP_OK on success (state VALIDATING); ESP_ERR_INVALID_STATE if not RECEIVING;
  *         esp_ota error otherwise (state ERROR).
+ * @req REQ-OTA-001
  */
 esp_err_t ota_push_finish(void) {
     if (s_status.state != OTA_STATE_RECEIVING) {
@@ -360,6 +373,7 @@ esp_err_t ota_push_finish(void) {
 /**
  * @brief Reboot into the validated image; ignored unless state is VALIDATING.
  * @version 1
+ * @req REQ-OTA-001
  */
 void ota_push_commit(void) {
     if (s_status.state != OTA_STATE_VALIDATING) {
@@ -373,6 +387,7 @@ void ota_push_commit(void) {
 /**
  * @brief Abort an in-progress push session and reset to IDLE; no-op if IDLE, VALIDATING or REBOOTING.
  * @version 1
+ * @req REQ-OTA-001
  */
 void ota_push_abort(void) {
     if (s_status.state == OTA_STATE_IDLE) return;
@@ -415,7 +430,7 @@ static esp_err_t ota_confirm_pending(void) {
 /**
  * @brief True when the running image is NEW or PENDING_VERIFY (rollback still armed).
  * @version 1
- * @req REQ-OTA-001
+ * @req REQ-OTA-002
  * @return true for an unconfirmed image.
  */
 bool ota_is_unconfirmed(void) {
@@ -435,6 +450,7 @@ bool ota_is_unconfirmed(void) {
  * @version 1
  * @return ESP_OK if confirmed or already VALID; state-query/confirm error, or ESP_FAIL
  *         for any other OTA state.
+ * @req REQ-OTA-002
  */
 esp_err_t ota_mark_app_valid(void) {
     esp_ota_img_states_t ota_state;
@@ -497,6 +513,7 @@ static esp_err_t ota_set_boot_and_reboot(const esp_partition_t* partition) {
  * @version 1
  * @return ESP_FAIL if no previous partition exists, else the set-boot error; does not
  *         return on success.
+ * @req REQ-OTA-002
  */
 esp_err_t ota_rollback(void) {
     ESP_LOGW(TAG, "Manual rollback requested");

@@ -1,3 +1,8 @@
+/**
+ * @file debug_log.h
+ * @version 1
+ * @brief Public API of the rotating SD-card debug log that mirrors ESP log output.
+ */
 // components/debug_log/debug_log.h
 
 #ifndef DEBUG_LOG_H

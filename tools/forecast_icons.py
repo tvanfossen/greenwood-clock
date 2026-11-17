@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+## @file forecast_icons.py
+## @brief Host tool: render static forecast-strip PNG icons from the weather Lottie set (max-coverage frame) into sdcard/icons/weather/.
+## @version 1
 """Render static forecast-strip icons from the weather Lottie set.
 
 For each tools/lottie_gen/output/weather/{day,night}/<condition>.json this picks
@@ -31,7 +34,8 @@ TIE_TOLERANCE = 0.02
 
 
 ## @brief Pick the most representative frame index of a Lottie animation.
-## @utility
+## @req REQ-TOOL-002
+## @req REQ-WX-006
 ## @version 1
 ## @return (frame index, coverage) of the chosen frame.
 def pick_frame(renderer):
@@ -46,7 +50,8 @@ def pick_frame(renderer):
 
 
 ## @brief Render one icon and save it as a size x size RGBA PNG.
-## @utility
+## @req REQ-TOOL-002
+## @req REQ-WX-006
 ## @version 1
 ## @return Chosen frame index.
 def render_icon(src, dst, size, frame=None):
@@ -60,7 +65,7 @@ def render_icon(src, dst, size, frame=None):
 
 
 ## @brief Parse "tod/name=frame" overrides into a dict.
-## @utility
+## @dg_internal
 ## @version 1
 ## @return {"day/rain": 12, ...}
 def parse_overrides(items):
@@ -72,7 +77,8 @@ def parse_overrides(items):
 
 
 ## @brief Generate every icon plus a contact sheet for review.
-## @utility
+## @req REQ-TOOL-002
+## @req REQ-WX-006
 ## @version 1
 ## @return Process exit code.
 def main():
@@ -97,7 +103,8 @@ def main():
 
 
 ## @brief Tile the icons on a dark panel (matches the forecast strip) for eyeballing.
-## @utility
+## @req REQ-TOOL-002
+## @req REQ-WX-006
 ## @version 1
 def write_sheet(paths, size, out):
     cols = 6

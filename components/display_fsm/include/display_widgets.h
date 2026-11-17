@@ -1,7 +1,10 @@
-// components/display_fsm/include/display_widgets.h
-//
-// Layer 1: Reusable UI widget components (C API).
-// Widgets never call lvgl_port_lock — caller (FSM task) holds the lock.
+/**
+ * @file display_widgets.h
+ * @version 1
+ * @brief Layer 1: Reusable UI widget components (C API).
+ *
+ * Widgets never call lvgl_port_lock — caller (FSM task) holds the lock.
+ */
 
 #ifndef DISPLAY_WIDGETS_H
 #define DISPLAY_WIDGETS_H

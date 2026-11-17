@@ -1,5 +1,8 @@
-// components/display_fsm/include/display_fsm_base.h
-//
+/**
+ * @file display_fsm_base.h
+ * @version 1
+ * @brief DisplayFsm base class and TinyFSM event wrappers; all concrete display states inherit from it.
+ */
 // DisplayFsm base class declaration.
 // All concrete states inherit from this.
 
@@ -53,6 +56,12 @@ protected:
     static lv_obj_t            *s_dot_container;
 
     // Helpers for concrete states
+    /**
+     * @brief Switch the clock widget to minimized mode and hide the clock animation.
+     * @version 1
+     * @req REQ-CLOCK-002
+     * @req REQ-ANIM-001
+     */
     void minimize_clock() {
         // set_mode resets the minimized colour to the bg-image-sampled default
         // (correct for weather/astro/ambient, which show the clock bg behind the
@@ -60,10 +69,22 @@ protected:
         if (s_clock) clock_widget_set_mode(s_clock, CLOCK_MODE_MINIMIZED);
         display_fsm_hide_clock_lottie();
     }
+    /**
+     * @brief Restore the clock widget to full mode and show the clock animation.
+     * @version 1
+     * @req REQ-CLOCK-001
+     * @req REQ-ANIM-001
+     */
     void restore_clock() {
         if (s_clock) clock_widget_set_mode(s_clock, CLOCK_MODE_FULL);
         display_fsm_show_clock_lottie();
     }
+    /**
+     * @brief Switch the clock widget to topbar mode and hide the clock animation.
+     * @version 1
+     * @req REQ-CLOCK-002
+     * @req REQ-ANIM-001
+     */
     void topbar_clock() {
         if (s_clock) clock_widget_set_mode(s_clock, CLOCK_MODE_TOPBAR);
         display_fsm_hide_clock_lottie();
@@ -105,19 +126,74 @@ public:
     virtual void react(EvForceState const &);
     virtual void react(EvScheduleConfig const &);
 
+    /**
+     * @brief Default state entry hook (no-op).
+     * @version 1
+     * @req REQ-DISP-001
+     */
     virtual void entry() { }
+    /**
+     * @brief Default state exit hook (no-op).
+     * @version 1
+     * @req REQ-DISP-001
+     */
     virtual void exit()  { }
 
     // -----------------------------------------------------------------------
     // Public accessors (called from C API)
     // -----------------------------------------------------------------------
+    /**
+     * @brief Get the current state name.
+     * @version 1
+     * @req REQ-DISP-001
+     * @return Current state name.
+     */
     static const char          *get_state_name() { return s_state_name; }
+    /**
+     * @brief Get the current state id.
+     * @version 1
+     * @req REQ-DISP-001
+     * @return Current display_state_id_t.
+     */
     static display_state_id_t   get_state_id()   { return s_state_id; }
+    /**
+     * @brief Get the persistent clock widget.
+     * @version 1
+     * @req REQ-DISP-001
+     * @return Clock widget, or nullptr before setup.
+     */
     static clock_widget_t      *get_clock()      { return s_clock; }
+    /**
+     * @brief Get the shared screen object.
+     * @version 1
+     * @req REQ-DISP-001
+     * @return Screen object, or nullptr before setup.
+     */
     static lv_obj_t            *get_screen()     { return s_screen; }
+    /**
+     * @brief Set the persistent clock widget shared by all states.
+     * @version 1
+     * @req REQ-DISP-001
+     */
     static void                 set_clock(clock_widget_t *c) { s_clock = c; }
+    /**
+     * @brief Set the persistent alert banner shared by all states.
+     * @version 1
+     * @req REQ-DISP-001
+     * @req REQ-ALERT-001
+     */
     static void                 set_alert_banner(alert_banner_t *b) { s_alert_banner = b; }
+    /**
+     * @brief Set the shared screen object.
+     * @version 1
+     * @req REQ-DISP-001
+     */
     static void                 set_screen(lv_obj_t *s) { s_screen = s; }
+    /**
+     * @brief Set the top layer that hosts persistent UI.
+     * @version 1
+     * @req REQ-DISP-001
+     */
     static void                 set_top_layer(lv_obj_t *t) { s_top_layer = t; }
 
     /** Create the carousel dot indicator on the screen. Call once at init. */

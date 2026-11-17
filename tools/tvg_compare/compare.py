@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+## @file compare.py
+## @brief Host tool: compare ThorVG 0.15.3 vs 1.x frame dumps and timing from tvg_harness runs.
+## @version 1
 """Compare ThorVG 0.15.3 (device) vs 1.x renders of the same Lottie files.
 
 Inputs come from tvg_harness runs (see `inv tvg-compare`): per-version frame
@@ -18,7 +21,7 @@ POP_LEVEL = 48
 
 
 ## @brief Parse a harness timing TSV into {file: (frames, failures, mean_us, max_us)}.
-## @utility
+## @req REQ-TOOL-003
 ## @version 1
 ## @return Mapping keyed by input path.
 def read_tsv(path):
@@ -36,7 +39,7 @@ def read_tsv(path):
 
 
 ## @brief What a viewer sees: the frame composited over a fixed background.
-## @utility
+## @req REQ-TOOL-003
 ## @version 1
 ## @return Opaque RGB image.
 def visible(img):
@@ -47,7 +50,7 @@ def visible(img):
 
 
 ## @brief Worst per-frame visible-difference fraction between two frame dumps.
-## @utility
+## @req REQ-TOOL-003
 ## @version 2
 ## @return (worst fraction, frame index of worst, frames compared).
 def worst_diff(a_path, b_path, size):
@@ -66,7 +69,7 @@ def worst_diff(a_path, b_path, size):
 
 
 ## @brief Print the comparison table and totals.
-## @utility
+## @req REQ-TOOL-003
 ## @version 2
 ## @return Process exit code (1 if frame counts differ or any render failed).
 def main():

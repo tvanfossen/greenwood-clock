@@ -1,6 +1,8 @@
-// components/nws/src/nws_alerts.c
-//
-// Fetch active weather alerts from NWS alerts endpoint.
+/**
+ * @file nws_alerts.c
+ * @version 1
+ * @brief Fetch active weather alerts from the NWS alerts endpoint.
+ */
 
 #include "nws_internal.h"
 
@@ -8,6 +10,14 @@ static const char *TAG = "nws_alert";
 
 #define NWS_ALERTS_URL_FMT  "https://api.weather.gov/alerts/active?point=%.4f,%.4f"
 
+/**
+ * @brief Copy one alert feature's properties (event, severity, urgency, certainty,
+ *        headline, description, instruction, areaDesc) into @p out.
+ *
+ * onset/expires are not parsed from ISO 8601 yet and are always set to 0.
+ * @version 1
+ * @req REQ-ALERT-001
+ */
 static void parse_alert(const cJSON *feature, nws_alert_t *out)
 {
     const cJSON *props = cJSON_GetObjectItemCaseSensitive(feature, "properties");
@@ -30,6 +40,14 @@ static void parse_alert(const cJSON *feature, nws_alert_t *out)
     out->expires = 0;
 }
 
+/**
+ * @brief Parse an /alerts/active response into @p out, keeping at most 8 alerts.
+ *
+ * A response without a features array is treated as zero active alerts.
+ * @version 1
+ * @req REQ-ALERT-001
+ * @return ESP_OK on success, ESP_ERR_INVALID_RESPONSE if the JSON does not parse.
+ */
 static esp_err_t parse_alerts(const char *json_str, nws_alerts_t *out)
 {
     cJSON *root = cJSON_Parse(json_str);
@@ -68,6 +86,15 @@ static esp_err_t parse_alerts(const char *json_str, nws_alerts_t *out)
     return ESP_OK;
 }
 
+/**
+ * @brief Fetch and parse active NWS alerts for the point @p lat / @p lon.
+ *
+ * @p out is zeroed first, so on failure it holds no alerts and valid=false.
+ * @version 1
+ * @req REQ-ALERT-001
+ * @return ESP_OK on success, ESP_ERR_HTTP_CONNECT if the fetch failed, or
+ *         ESP_ERR_INVALID_RESPONSE if the JSON does not parse.
+ */
 esp_err_t nws_fetch_alerts(float lat, float lon, nws_alerts_t *out)
 {
     memset(out, 0, sizeof(*out));

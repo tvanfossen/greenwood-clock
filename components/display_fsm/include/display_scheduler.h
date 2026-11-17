@@ -1,5 +1,8 @@
-// components/display_fsm/include/display_scheduler.h
-//
+/**
+ * @file display_scheduler.h
+ * @version 1
+ * @brief Event-driven display scheduler: per-state debounce/cooldown and return-to-clock timers.
+ */
 // Event-driven display scheduling with debounce and return-to-clock timers.
 
 #ifndef DISPLAY_SCHEDULER_H

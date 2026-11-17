@@ -1,3 +1,8 @@
+/**
+ * @file network.h
+ * @version 1
+ * @brief Public API of the Wi-Fi station, scan and mDNS network layer.
+ */
 // components/network/network.h
 #include "esp_err.h"
 #include "esp_wifi.h"

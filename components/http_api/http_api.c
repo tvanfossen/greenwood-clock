@@ -1,3 +1,8 @@
+/**
+ * @file http_api.c
+ * @version 1
+ * @brief Local REST API on port 80: status, settings, display control, weather, logs, coredump, files and OTA push endpoints.
+ */
 // components/http_api/http_api.c
 
 #include "http_api.h"
@@ -41,6 +46,7 @@ static SemaphoreHandle_t s_launch_sem = NULL;
  *
  * @param sem  Launch semaphore owned by app_main().
  * @version 1
+ * @req REQ-BOOT-002
  */
 void http_api_set_launch_sem(SemaphoreHandle_t sem)
 {
@@ -63,6 +69,7 @@ void http_api_set_launch_sem(SemaphoreHandle_t sem)
  * @param req  Incoming request.
  * @return ESP_OK if preconditions pass; ESP_FAIL otherwise.
  * @version 1
+ * @req REQ-SD-002
  */
 static esp_err_t upload_check_preconditions(httpd_req_t* req)
 {
@@ -82,6 +89,7 @@ static esp_err_t upload_check_preconditions(httpd_req_t* req)
  *
  * @param filepath  Full destination path (e.g. /sdcard/foo/bar.bin).
  * @version 1
+ * @req REQ-SD-002
  */
 static void upload_ensure_dir(const char* filepath)
 {
@@ -108,6 +116,7 @@ static void upload_ensure_dir(const char* filepath)
  * @param remaining Bytes still expected from the client.
  * @return Bytes written (>0), 0 on timeout (retry), -1 on error.
  * @version 1
+ * @req REQ-SD-002
  */
 static int upload_recv_chunk(httpd_req_t* req, FILE* f, const char* filepath,
                               char* buf, size_t buf_size, size_t remaining)
@@ -133,6 +142,7 @@ static int upload_recv_chunk(httpd_req_t* req, FILE* f, const char* filepath,
  * @param total_out  Set to bytes written on success.
  * @return ESP_OK or ESP_FAIL.
  * @version 1
+ * @req REQ-SD-002
  */
 static esp_err_t upload_receive_loop(httpd_req_t* req, FILE* f,
                                       const char* filepath, size_t* total_out)
@@ -202,6 +212,7 @@ static esp_err_t upload_open_and_receive(httpd_req_t* req, const char* filepath,
  * @param filepath  Path where the file was written.
  * @param total     Number of bytes written.
  * @version 1
+ * @req REQ-SD-002
  */
 static void upload_send_success(httpd_req_t* req, const char* filepath, size_t total)
 {
@@ -228,6 +239,7 @@ static void upload_send_success(httpd_req_t* req, const char* filepath, size_t t
  * @param st_out   Populated with stat result on success.
  * @return ESP_OK, or an error code with HTTP response already sent.
  * @version 1
+ * @req REQ-SD-002
  */
 static esp_err_t download_resolve_path(httpd_req_t* req, const char* filepath,
                                         struct stat* st_out)
@@ -253,6 +265,7 @@ static esp_err_t download_resolve_path(httpd_req_t* req, const char* filepath,
  * @param entry     Directory entry.
  * @param first_out Tracks whether a comma separator is needed; updated in place.
  * @version 1
+ * @req REQ-SD-002
  */
 static void download_send_dir_entry(httpd_req_t* req, const char* dirpath,
                                      const struct dirent* entry, bool* first_out)
@@ -278,6 +291,7 @@ static void download_send_dir_entry(httpd_req_t* req, const char* dirpath,
  * @param dir      Open directory handle.
  * @param filepath Parent directory path.
  * @version 1
+ * @req REQ-SD-002
  */
 static void download_scan_dir(httpd_req_t* req, DIR* dir, const char* filepath)
 {
@@ -298,6 +312,7 @@ static void download_scan_dir(httpd_req_t* req, DIR* dir, const char* filepath)
  * @param filepath  Directory path.
  * @return ESP_OK or ESP_FAIL.
  * @version 1
+ * @req REQ-SD-002
  */
 static esp_err_t download_list_directory(httpd_req_t* req, const char* filepath)
 {
@@ -321,6 +336,7 @@ static esp_err_t download_list_directory(httpd_req_t* req, const char* filepath)
  * @param req       Incoming request.
  * @param filepath  Path used to derive the filename.
  * @version 1
+ * @req REQ-SD-002
  */
 static void download_set_file_headers(httpd_req_t* req, const char* filepath)
 {
@@ -342,6 +358,7 @@ static void download_set_file_headers(httpd_req_t* req, const char* filepath)
  * @param f    Open file handle positioned at start.
  * @return ESP_OK or ESP_FAIL if a chunk send fails.
  * @version 1
+ * @req REQ-SD-002
  */
 static esp_err_t download_pump_file(httpd_req_t* req, FILE* f)
 {
@@ -361,6 +378,7 @@ static esp_err_t download_pump_file(httpd_req_t* req, FILE* f)
  * @param filepath  Path to the file to send.
  * @return ESP_OK or ESP_FAIL.
  * @version 1
+ * @req REQ-SD-002
  */
 static esp_err_t download_stream_file(httpd_req_t* req, const char* filepath)
 {
@@ -385,6 +403,7 @@ static esp_err_t download_stream_file(httpd_req_t* req, const char* filepath)
  *
  * @param req  Incoming request.
  * @version 1
+ * @req REQ-LOG-001
  */
 static void logs_set_response_headers(httpd_req_t* req)
 {
@@ -399,6 +418,7 @@ static void logs_set_response_headers(httpd_req_t* req)
  * @param log_path  Path to the log file.
  * @return ESP_OK or ESP_FAIL.
  * @version 1
+ * @req REQ-LOG-001
  */
 static esp_err_t logs_open_and_send(httpd_req_t* req, const char* log_path)
 {
@@ -423,6 +443,7 @@ static esp_err_t logs_open_and_send(httpd_req_t* req, const char* log_path)
  *
  * @param req  Incoming request.
  * @version 1
+ * @req REQ-OTA-001
  */
 static void ota_send_unauthorized(httpd_req_t* req)
 {
@@ -439,6 +460,7 @@ static void ota_send_unauthorized(httpd_req_t* req)
  * @param req  Incoming request.
  * @return ESP_OK on success; ESP_FAIL on auth failure.
  * @version 1
+ * @req REQ-OTA-001
  */
 static esp_err_t ota_push_check_auth(httpd_req_t* req)
 {
@@ -466,6 +488,7 @@ static esp_err_t ota_push_check_auth(httpd_req_t* req)
  * @param req  Incoming request.
  * @return ESP_OK on success; ESP_FAIL if content_len is 0.
  * @version 1
+ * @req REQ-OTA-001
  */
 static esp_err_t ota_push_check_size(httpd_req_t* req)
 {
@@ -483,6 +506,7 @@ static esp_err_t ota_push_check_size(httpd_req_t* req)
  * @param total_size Expected firmware size (from Content-Length).
  * @return ESP_OK on success; ESP_FAIL on receive or write error.
  * @version 1
+ * @req REQ-OTA-001
  */
 static esp_err_t ota_push_receive_loop(httpd_req_t* req, size_t total_size)
 {
@@ -505,6 +529,7 @@ static esp_err_t ota_push_receive_loop(httpd_req_t* req, size_t total_size)
  * @param req  Incoming request.
  * @return ESP_OK on success.
  * @version 1
+ * @req REQ-OTA-001
  */
 static esp_err_t ota_push_start(httpd_req_t* req)
 {
@@ -522,6 +547,7 @@ static esp_err_t ota_push_start(httpd_req_t* req)
  * @param req  Incoming request.
  * @return ESP_OK on success.
  * @version 1
+ * @req REQ-OTA-001
  */
 static esp_err_t ota_push_download(httpd_req_t* req)
 {
@@ -544,6 +570,7 @@ static esp_err_t ota_push_download(httpd_req_t* req)
  * @param req  Incoming request.
  * @return Error code on failure; does not return on success (device reboots).
  * @version 1
+ * @req REQ-OTA-001
  */
 static esp_err_t ota_push_complete(httpd_req_t* req)
 {
@@ -564,6 +591,7 @@ static esp_err_t ota_push_complete(httpd_req_t* req)
  * @param req  Incoming request (auth and size already verified).
  * @return Error code on failure; does not return on success (device reboots).
  * @version 1
+ * @req REQ-OTA-001
  */
 static esp_err_t ota_push_execute(httpd_req_t* req)
 {
@@ -613,6 +641,7 @@ static esp_err_t settings_post_handler(httpd_req_t *req);
  *
  * @param config  Configuration struct to populate.
  * @version 1
+ * @req REQ-API-001
  */
 static void http_api_configure_server(httpd_config_t* config)
 {
@@ -647,6 +676,8 @@ static const esp_partition_t *coredump_partition(void)
  * @version 1
  * @callback
  * @return ESP_OK on success; ESP_FAIL on auth failure.
+ * @req REQ-API-001
+ * @req REQ-LOG-003
  */
 static esp_err_t coredump_info_handler(httpd_req_t *req)
 {
@@ -672,6 +703,8 @@ static esp_err_t coredump_info_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return ESP_OK on success; ESP_FAIL on auth failure, no dump, OOM, or read/send error.
+ * @req REQ-API-001
+ * @req REQ-LOG-003
  */
 static esp_err_t coredump_get_handler(httpd_req_t *req)
 {
@@ -716,6 +749,7 @@ static esp_err_t coredump_get_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return ESP_OK on success; ESP_FAIL if no display, capture fails, or a send fails.
+ * @req REQ-API-003
  */
 static esp_err_t screenshot_get_handler(httpd_req_t *req)
 {
@@ -773,6 +807,8 @@ static esp_err_t screenshot_get_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return ESP_OK on success; ESP_FAIL on auth failure or erase error.
+ * @req REQ-API-001
+ * @req REQ-LOG-003
  */
 static esp_err_t coredump_erase_handler(httpd_req_t *req)
 {
@@ -792,6 +828,7 @@ static esp_err_t coredump_erase_handler(httpd_req_t *req)
  *
  * @param srv  Running httpd server handle.
  * @version 1
+ * @req REQ-API-001
  */
 static void http_api_register_file_handlers(httpd_handle_t srv)
 {
@@ -880,6 +917,7 @@ static void http_api_register_file_handlers(httpd_handle_t srv)
  *
  * @param srv  Running httpd server handle.
  * @version 1
+ * @req REQ-API-001
  */
 static void http_api_register_ota_handlers(httpd_handle_t srv)
 {
@@ -902,6 +940,7 @@ static void http_api_register_ota_handlers(httpd_handle_t srv)
  *
  * @param srv  Running httpd server handle.
  * @version 1
+ * @req REQ-API-001
  */
 static void http_api_register_debug_handlers(httpd_handle_t srv)
 {
@@ -936,6 +975,7 @@ static void http_api_register_debug_handlers(httpd_handle_t srv)
  *
  * @param srv  Running httpd server handle.
  * @version 1
+ * @req REQ-API-001
  */
 static void http_api_register_display_handlers(httpd_handle_t srv)
 {
@@ -1025,6 +1065,7 @@ static void http_api_register_display_handlers(httpd_handle_t srv)
  *
  * @param srv  Running httpd server handle.
  * @version 1
+ * @req REQ-API-001
  */
 static void http_api_register_handlers(httpd_handle_t srv)
 {
@@ -1046,6 +1087,8 @@ static void http_api_register_handlers(httpd_handle_t srv)
  * @version 1
  * @callback
  * @return ESP_OK on success; ESP_FAIL after sending an HTTP error.
+ * @req REQ-API-001
+ * @req REQ-SD-002
  */
 static esp_err_t upload_file_handler(httpd_req_t *req)
 {
@@ -1069,6 +1112,8 @@ static esp_err_t upload_file_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return ESP_OK on success; an error code after sending an HTTP error.
+ * @req REQ-API-001
+ * @req REQ-SD-002
  */
 static esp_err_t download_file_handler(httpd_req_t *req)
 {
@@ -1104,6 +1149,8 @@ extern size_t main_boot_history_get(struct boot_hist_entry_t *out, size_t cap);
  * @version 1
  * @callback
  * @return ESP_OK on success; ESP_FAIL if esp_vfs_fat_info() fails.
+ * @req REQ-API-001
+ * @req REQ-SD-002
  */
 static esp_err_t disk_usage_handler(httpd_req_t *req)
 {
@@ -1167,6 +1214,8 @@ static esp_err_t disk_usage_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return ESP_OK on success; ESP_FAIL on auth failure, missing card, or format error.
+ * @req REQ-API-001
+ * @req REQ-SD-002
  */
 static esp_err_t sdcard_format_handler(httpd_req_t *req)
 {
@@ -1227,6 +1276,8 @@ static esp_err_t sdcard_format_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return ESP_OK.
+ * @req REQ-API-001
+ * @req REQ-LOG-004
  */
 static esp_err_t boot_history_handler(httpd_req_t *req)
 {
@@ -1257,6 +1308,8 @@ static esp_err_t boot_history_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return ESP_OK.
+ * @req REQ-API-001
+ * @req REQ-BOOT-004
  */
 static esp_err_t status_handler(httpd_req_t *req)
 {
@@ -1315,6 +1368,8 @@ static esp_err_t status_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return Result of debug_log_test_write().
+ * @req REQ-API-001
+ * @req REQ-LOG-001
  */
 static esp_err_t logs_test_handler(httpd_req_t *req)
 {
@@ -1344,6 +1399,8 @@ static esp_err_t logs_test_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return ESP_OK on success; ESP_FAIL if logging inactive or transfer fails.
+ * @req REQ-API-001
+ * @req REQ-LOG-001
  */
 static esp_err_t logs_download_handler(httpd_req_t *req)
 {
@@ -1365,6 +1422,7 @@ static esp_err_t logs_download_handler(httpd_req_t *req)
  * @param st_out    Populated with stat result on success.
  * @return ESP_OK, or ESP_FAIL with HTTP response already sent.
  * @version 1
+ * @req REQ-SD-002
  */
 static esp_err_t delete_resolve_and_stat(httpd_req_t* req, const char* filepath,
                                           struct stat* st_out)
@@ -1388,6 +1446,7 @@ static esp_err_t delete_resolve_and_stat(httpd_req_t* req, const char* filepath,
  * @param st        Stat result used to distinguish file from directory.
  * @return ESP_OK or ESP_FAIL.
  * @version 1
+ * @req REQ-SD-002
  */
 static esp_err_t delete_perform(httpd_req_t* req, const char* filepath,
                                  const struct stat* st)
@@ -1414,6 +1473,8 @@ static esp_err_t delete_perform(httpd_req_t* req, const char* filepath,
  * @version 1
  * @callback
  * @return ESP_OK on success; ESP_FAIL after sending an HTTP error.
+ * @req REQ-API-001
+ * @req REQ-SD-002
  */
 static esp_err_t delete_file_handler(httpd_req_t *req)
 {
@@ -1441,6 +1502,7 @@ static esp_err_t delete_file_handler(httpd_req_t *req)
  * @param out_len  Size of @p out.
  * @return ESP_OK on success, ESP_FAIL if key not found or value malformed.
  * @version 1
+ * @req REQ-LOG-002
  */
 static esp_err_t parse_json_string_field(const char* body, const char* key,
                                           char* out, size_t out_len)
@@ -1464,6 +1526,7 @@ static esp_err_t parse_json_string_field(const char* body, const char* key,
  * @param port_out Receives the parsed port (1–65535).
  * @return ESP_OK on success, ESP_FAIL if field is missing or out of range.
  * @version 1
+ * @req REQ-LOG-002
  */
 static esp_err_t parse_json_port_field(const char* body, uint16_t* port_out)
 {
@@ -1486,6 +1549,7 @@ static esp_err_t parse_json_port_field(const char* body, uint16_t* port_out)
  * @param port_out  Receives the parsed port number.
  * @return ESP_OK on success, ESP_FAIL if body is missing or malformed.
  * @version 1
+ * @req REQ-LOG-002
  */
 static esp_err_t debug_parse_udp_log_body(httpd_req_t* req,
                                            char* host_out, size_t host_len,
@@ -1507,6 +1571,8 @@ static esp_err_t debug_parse_udp_log_body(httpd_req_t* req,
  * @version 1
  * @callback
  * @return ESP_OK on success; ESP_FAIL on bad body; udp_log_init() error otherwise.
+ * @req REQ-API-001
+ * @req REQ-LOG-002
  */
 static esp_err_t debug_udp_log_start_handler(httpd_req_t *req)
 {
@@ -1536,6 +1602,8 @@ static esp_err_t debug_udp_log_start_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return ESP_OK.
+ * @req REQ-API-001
+ * @req REQ-LOG-002
  */
 static esp_err_t debug_udp_log_stop_handler(httpd_req_t *req)
 {
@@ -1548,6 +1616,7 @@ static esp_err_t debug_udp_log_stop_handler(httpd_req_t *req)
 /**
  * @brief Reboot task — delays briefly so the HTTP response can flush.
  * @version 1
+ * @req REQ-API-001
  */
 static void reboot_task(void* arg)
 {
@@ -1566,6 +1635,7 @@ static void reboot_task(void* arg)
  * @version 1
  * @callback
  * @return ESP_OK.
+ * @req REQ-API-001
  */
 static esp_err_t debug_reboot_handler(httpd_req_t *req)
 {
@@ -1589,6 +1659,8 @@ static esp_err_t debug_reboot_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return ESP_OK.
+ * @req REQ-API-001
+ * @req REQ-BOOT-002
  */
 static esp_err_t debug_launch_handler(httpd_req_t *req)
 {
@@ -1614,6 +1686,8 @@ static esp_err_t debug_launch_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return Error code on failure; does not return on success (device reboots).
+ * @req REQ-API-001
+ * @req REQ-OTA-001
  */
 static esp_err_t ota_push_handler(httpd_req_t *req)
 {
@@ -1635,6 +1709,8 @@ static esp_err_t ota_push_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return ESP_OK.
+ * @req REQ-API-001
+ * @req REQ-OTA-001
  */
 static esp_err_t ota_status_handler(httpd_req_t *req)
 {
@@ -1689,6 +1765,8 @@ static const char *www_mime_type(const char *path)
  * @version 1
  * @callback
  * @return ESP_OK on success; ESP_FAIL if SD unmounted, file missing, or a send fails.
+ * @req REQ-API-001
+ * @req REQ-UI-002
  */
 static esp_err_t www_file_handler(httpd_req_t *req)
 {
@@ -1736,6 +1814,8 @@ static esp_err_t www_file_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return ESP_OK.
+ * @req REQ-API-003
+ * @req REQ-DISP-001
  */
 static esp_err_t display_state_get_handler(httpd_req_t *req)
 {
@@ -1753,6 +1833,7 @@ static esp_err_t display_state_get_handler(httpd_req_t *req)
  * @brief Map state name string to display_state_id_t.
  * @return DISPLAY_STATE_MAX if not found.
  * @version 1
+ * @req REQ-API-003
  */
 static display_state_id_t state_name_to_id(const char *name)
 {
@@ -1778,6 +1859,8 @@ static display_state_id_t state_name_to_id(const char *name)
  * @version 1
  * @callback
  * @return ESP_OK on success; ESP_FAIL on missing/invalid body or unknown state.
+ * @req REQ-API-003
+ * @req REQ-DISP-001
  */
 static esp_err_t display_state_post_handler(httpd_req_t *req)
 {
@@ -1830,6 +1913,8 @@ static esp_err_t display_state_post_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return ESP_OK on success; ESP_FAIL on bad size, OOM, or receive error.
+ * @req REQ-API-003
+ * @req REQ-SURP-001
  */
 static esp_err_t display_surprise_handler(httpd_req_t *req)
 {
@@ -1894,6 +1979,8 @@ static esp_err_t display_surprise_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return ESP_OK.
+ * @req REQ-API-003
+ * @req REQ-DISP-002
  */
 static esp_err_t schedule_get_handler(httpd_req_t *req)
 {
@@ -1997,6 +2084,8 @@ static void notify_schedule_config(const clock_settings_t *cfg)
  * @version 1
  * @callback
  * @return ESP_OK on success; ESP_FAIL after sending a 4xx/5xx.
+ * @req REQ-API-003
+ * @req REQ-DISP-002
  */
 static esp_err_t schedule_post_handler(httpd_req_t *req)
 {
@@ -2040,6 +2129,7 @@ static esp_err_t schedule_post_handler(httpd_req_t *req)
 /**
  * @brief List contents of a single SD card directory, appending to chunked response.
  * @version 1
+ * @req REQ-SD-002
  */
 static void assets_list_dir(httpd_req_t *req, const char *sd_path,
                             const char *category, bool *first_entry)
@@ -2077,6 +2167,8 @@ static void assets_list_dir(httpd_req_t *req, const char *sd_path,
  * @version 1
  * @callback
  * @return ESP_OK on success; ESP_FAIL if the SD card is not mounted.
+ * @req REQ-API-001
+ * @req REQ-SD-002
  */
 static esp_err_t assets_list_handler(httpd_req_t *req)
 {
@@ -2108,6 +2200,8 @@ static esp_err_t assets_list_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return ESP_OK on success; ESP_FAIL on missing path or upload error.
+ * @req REQ-API-001
+ * @req REQ-SD-002
  */
 static esp_err_t assets_upload_handler(httpd_req_t *req)
 {
@@ -2150,6 +2244,7 @@ static esp_err_t assets_upload_handler(httpd_req_t *req)
  * @version 2
  * @req REQ-ANIM-001
  * @return ESP_OK.
+ * @req REQ-API-002
  */
 static esp_err_t settings_get_handler(httpd_req_t *req)
 {
@@ -2244,6 +2339,7 @@ static esp_err_t settings_persist_and_apply(const clock_settings_t *cfg, const s
  * @version 2
  * @req REQ-ANIM-001
  * @return ESP_OK on success; ESP_FAIL after sending a 4xx/5xx.
+ * @req REQ-API-002
  */
 static esp_err_t settings_post_handler(httpd_req_t *req)
 {
@@ -2290,6 +2386,8 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return ESP_OK.
+ * @req REQ-API-001
+ * @req REQ-WX-002
  */
 static esp_err_t weather_current_handler(httpd_req_t *req)
 {
@@ -2327,6 +2425,8 @@ static esp_err_t weather_current_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return ESP_OK.
+ * @req REQ-API-001
+ * @req REQ-WX-003
  */
 static esp_err_t weather_forecast_handler(httpd_req_t *req)
 {
@@ -2366,6 +2466,8 @@ static esp_err_t weather_forecast_handler(httpd_req_t *req)
  * @version 1
  * @callback
  * @return ESP_OK.
+ * @req REQ-API-001
+ * @req REQ-ALERT-001
  */
 static esp_err_t weather_alerts_handler(httpd_req_t *req)
 {
@@ -2408,6 +2510,7 @@ static esp_err_t weather_alerts_handler(httpd_req_t *req)
  * @brief Start the HTTP API server on port 80 and register all URI handlers.
  * @version 1
  * @return ESP_OK on success or if already running; httpd_start() error otherwise.
+ * @req REQ-API-001
  */
 esp_err_t http_api_start(void)
 {
@@ -2432,6 +2535,7 @@ esp_err_t http_api_start(void)
  * @brief Stop the HTTP API server if running.
  * @version 1
  * @return ESP_OK if not running; httpd_stop() result otherwise.
+ * @req REQ-API-001
  */
 esp_err_t http_api_stop(void)
 {
@@ -2449,6 +2553,7 @@ esp_err_t http_api_stop(void)
  * @brief Report whether the HTTP API server is running.
  * @version 1
  * @return true if the server handle is active.
+ * @req REQ-API-001
  */
 bool http_api_is_running(void)
 {

@@ -1,3 +1,8 @@
+/**
+ * @file udp_log.h
+ * @version 1
+ * @brief Public API of live UDP log streaming to a registered host.
+ */
 // components/udp_log/udp_log.h
 
 #ifndef UDP_LOG_H

@@ -1,8 +1,15 @@
-// components/nws/src/nws_condition_map.c
-//
-// Maps NWS short_forecast strings to Lottie animation file paths.
-// NWS uses text descriptions ("Mostly Cloudy", "Light Rain"), not numeric codes.
-// Substring matching against known patterns.
+/**
+ * @file nws_condition_map.c
+ * @version 1
+ * @brief Maps NWS short_forecast strings to Lottie animation file paths.
+ *
+ * NWS uses text descriptions ("Mostly Cloudy", "Light Rain"), not numeric codes.
+ * Substring matching against known patterns.
+ *
+ * DEAD CODE: compiled (components/nws/CMakeLists.txt) and declared in nws.h, but
+ * nothing calls nws_condition_to_lottie_path(). The live condition table is the
+ * one in components/display_fsm/src/weather_widgets.c, which duplicates this one.
+ */
 
 #include "nws.h"
 #include <string.h>
@@ -48,6 +55,15 @@ static const struct {
 
 #define MAP_COUNT (sizeof(condition_map) / sizeof(condition_map[0]))
 
+/**
+ * @brief Write "A:/lottie/weather/<day|night>/<file>.json" for the first table
+ *        pattern found (case-insensitive substring) in @p short_forecast.
+ *
+ * Falls back to mostly_cloudy when nothing matches or @p short_forecast is NULL;
+ * no-op if @p path_out is NULL or @p max_len is 0. Unreferenced (see file note).
+ * @version 1
+ * @dg_internal
+ */
 void nws_condition_to_lottie_path(const char *short_forecast, bool is_daytime,
                                    char *path_out, size_t max_len)
 {

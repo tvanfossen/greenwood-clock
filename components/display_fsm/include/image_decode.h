@@ -1,5 +1,8 @@
-// components/display_fsm/include/image_decode.h
-//
+/**
+ * @file image_decode.h
+ * @version 1
+ * @brief Shared PNG decoder into persistent SPIRAM LVGL descriptors (ARGB8888/RGB565), avoiding LVGL cache re-decodes.
+ */
 // Shared PNG → persistent SPIRAM ARGB8888 decoder.
 //
 // LVGL's on-demand image decoder caches decoded bitmaps and, under memory

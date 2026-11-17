@@ -1,5 +1,6 @@
 /**
  * @file test_leaf_field.c
+ * @version 1
  * @brief Host tests for the falling-leaf field (projection, respawn, gentleness, determinism).
  */
 #include "leaf_field.h"
@@ -27,7 +28,7 @@ static leaf_field_t s_a, s_b;
 /**
  * @brief Defaults: U from eq. 4.1 for a 0.2 mm leaf in air, flutter-dominated I* range.
  * @version 1
- * @req REQ-LEAF-002
+ * @req REQ-ANIM-003
  */
 static void test_defaults(void)
 {
@@ -43,7 +44,7 @@ static void test_defaults(void)
 /**
  * @brief Init places every leaf on screen, deterministic per seed, clamps the count.
  * @version 1
- * @req REQ-LEAF-002
+ * @req REQ-ANIM-003
  */
 static void test_init(void)
 {
@@ -65,7 +66,7 @@ static void test_init(void)
 /**
  * @brief Two minutes of 30 Hz frames: leaves stay within the respawn envelope, count constant.
  * @version 1
- * @req REQ-LEAF-002
+ * @req REQ-ANIM-003
  */
 static void test_long_run_bounded(void)
 {
@@ -86,7 +87,7 @@ static void test_long_run_bounded(void)
 /**
  * @brief Gentle: a mid-depth leaf takes several seconds to cross the screen height.
  * @version 1
- * @req REQ-LEAF-002
+ * @req REQ-ANIM-003
  */
 static void test_gentle(void)
 {
@@ -110,6 +111,8 @@ static void test_gentle(void)
 
 /**
  * @brief Run all leaf-field tests.
+ * @req REQ-ANIM-003
+ * @req REQ-TOOL-004
  * @version 1
  * @return 0 when every check passed.
  */

@@ -1,5 +1,8 @@
-// components/display_fsm/src/state_photos.cpp
-//
+/**
+ * @file state_photos.cpp
+ * @version 1
+ * @brief PhotoSlideshow state: cycles PNGs from A:/photos every 7 s with off-lock decode, prefetch and a legible minimized clock.
+ */
 // PhotoSlideshow state — cycles through images from A:/photos/ directory.
 
 #include "display_states.h"
@@ -30,6 +33,11 @@ static int s_next_photo_index = 0;
 // FreeRTOS timer callback (timer-service task context) — just posts an event to
 // the FSM queue. The decode (off-lock) and swap (under lock) happen on the FSM
 // task in process_event, so the LVGL render task is never stalled by a decode.
+/**
+ * @brief FreeRTOS timer callback: post DISPLAY_EVT_PHOTO_ADVANCE to the FSM queue.
+ * @version 1
+ * @callback
+ */
 static void photo_advance_timer_cb(TimerHandle_t)
 {
     display_event_t evt = {};
@@ -39,6 +47,11 @@ static void photo_advance_timer_cb(TimerHandle_t)
 
 // OFF-lock: advance the index (after the first photo) and decode it. Runs on the
 // FSM task before the LVGL lock is taken — the slow PNG decode never blocks render.
+/**
+ * @brief Off the LVGL lock: advance to the next photo (except for the first) and decode it.
+ * @version 1
+ * @req REQ-PHOTO-001
+ */
 void PhotoSlideshow::decode_next()
 {
     if (!s_rotator) return;
@@ -48,12 +61,22 @@ void PhotoSlideshow::decode_next()
 }
 
 // UNDER lock: swap to the decoded descriptor (fast).
+/**
+ * @brief Under the LVGL lock: swap the decoded photo in.
+ * @version 1
+ * @req REQ-PHOTO-001
+ */
 void PhotoSlideshow::present()
 {
     if (s_rotator) image_rotator_present(s_rotator);
 }
 
 // OFF-lock: decode the NEXT image ahead of time so the next advance is instant.
+/**
+ * @brief Off the LVGL lock: decode the next photo ahead of time.
+ * @version 1
+ * @req REQ-PHOTO-001
+ */
 void PhotoSlideshow::prefetch()
 {
     if (s_rotator) image_rotator_prefetch_next(s_rotator);
@@ -63,6 +86,12 @@ void PhotoSlideshow::prefetch()
 // a legible (OKLCH) clock colour — the photo is the one bright/variable bg where
 // a fixed white washes out. The photo buffer is vertically flipped (stb decode),
 // like the clock background, so screen-Y maps to buffer-Y as h-1-y.
+/**
+ * @brief Under the LVGL lock: sample the shown photo behind the minimized clock (flipped buffer rows) and set a legible OKLCH clock colour.
+ * @version 1
+ * @req REQ-PHOTO-001
+ * @req REQ-BG-002
+ */
 void PhotoSlideshow::apply_clock_contrast()
 {
     clock_widget_t *clk = get_clock();
@@ -80,6 +109,11 @@ void PhotoSlideshow::apply_clock_contrast()
     clock_widget_set_minimized_color(clk, legible);
 }
 
+/**
+ * @brief Enter: minimize the clock and create the rotator; with no photos show a "No photos" panel, otherwise start the 7 s advance timer and post the first advance.
+ * @version 1
+ * @req REQ-PHOTO-001
+ */
 void PhotoSlideshow::entry()
 {
     set_state_info(DISPLAY_STATE_PHOTOS, "photos");
@@ -127,6 +161,11 @@ void PhotoSlideshow::entry()
     }
 }
 
+/**
+ * @brief Leave: delete the advance timer and empty-panel, remember the next photo index for the next visit, and destroy the rotator.
+ * @version 1
+ * @req REQ-PHOTO-001
+ */
 void PhotoSlideshow::exit()
 {
     if (s_advance_timer) {
@@ -147,6 +186,12 @@ void PhotoSlideshow::exit()
     ESP_LOGI(TAG, "PhotoSlideshow: exit (next start=%d)", s_next_photo_index);
 }
 
+/**
+ * @brief Display timeout: return to ClockFull.
+ * @version 1
+ * @req REQ-PHOTO-001
+ * @req REQ-DISP-002
+ */
 void PhotoSlideshow::react(EvDisplayTimeout const &)
 {
     transit<ClockFull>();

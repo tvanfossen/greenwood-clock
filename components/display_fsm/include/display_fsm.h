@@ -1,5 +1,8 @@
-// components/display_fsm/include/display_fsm.h
-//
+/**
+ * @file display_fsm.h
+ * @version 1
+ * @brief Public C API for the display finite state machine, callable from any C or C++ component.
+ */
 // Public C API for the display finite state machine.
 // Callable from any C or C++ component.
 

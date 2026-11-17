@@ -1,5 +1,8 @@
-// components/display_fsm/src/json_layout.c
-//
+/**
+ * @file json_layout.c
+ * @version 1
+ * @brief JsonLayout: builds a full-screen LVGL container with background, label and image children from a JSON layout string.
+ */
 // Layer 1: JsonLayout — creates LVGL widgets from JSON DSL.
 // Supports: label, lottie, image widget types.
 // Caller must hold LVGL lock for all functions.
@@ -36,6 +39,12 @@ struct json_layout_t {
     int       child_count;
 };
 
+/**
+ * @brief Parse a "#RRGGBB" string into an LVGL colour.
+ * @version 1
+ * @dg_internal
+ * @return Parsed colour, or white if the string is missing or malformed.
+ */
 static lv_color_t parse_color(const char *hex_str)
 {
     if (!hex_str || hex_str[0] != '#' || strlen(hex_str) < 7) {
@@ -45,6 +54,12 @@ static lv_color_t parse_color(const char *hex_str)
     return lv_color_hex(val);
 }
 
+/**
+ * @brief Map a font name (nunito_48/128/256, montserrat_14/20/24/32) to its LVGL font.
+ * @version 1
+ * @dg_internal
+ * @return Matching font, or montserrat 24 for unknown or missing names.
+ */
 static const lv_font_t *parse_font(const char *name)
 {
     if (!name) return &lv_font_montserrat_24;
@@ -58,6 +73,12 @@ static const lv_font_t *parse_font(const char *name)
     return &lv_font_montserrat_24;
 }
 
+/**
+ * @brief Create a label child from JSON text, font (default nunito 48), colour (default white) and x/y (or y-only top-centred, else centred).
+ * @version 1
+ * @req REQ-DISP-005
+ * @return New label, or NULL if "text" is missing.
+ */
 static lv_obj_t *create_label_child(lv_obj_t *parent, const cJSON *child)
 {
     const cJSON *text  = cJSON_GetObjectItem(child, "text");
@@ -94,6 +115,12 @@ static lv_obj_t *create_label_child(lv_obj_t *parent, const cJSON *child)
     return lbl;
 }
 
+/**
+ * @brief Create an image child from JSON src, optional w/h and x/y (else centred).
+ * @version 1
+ * @req REQ-DISP-005
+ * @return New image, or NULL if "src" is missing.
+ */
 static lv_obj_t *create_image_child(lv_obj_t *parent, const cJSON *child)
 {
     const cJSON *src = cJSON_GetObjectItem(child, "src");
@@ -120,6 +147,11 @@ static lv_obj_t *create_image_child(lv_obj_t *parent, const cJSON *child)
 }
 
 // Container geometry + background colour from the root object.
+/**
+ * @brief Create the 1024x600 layout container and set its background colour from "bg_color" (default #1a1a2e).
+ * @version 1
+ * @req REQ-DISP-005
+ */
 static void setup_container(json_layout_t *jl, lv_obj_t *parent, const cJSON *root)
 {
     jl->container = lv_obj_create(parent);
@@ -138,6 +170,11 @@ static void setup_container(json_layout_t *jl, lv_obj_t *parent, const cJSON *ro
 }
 
 // Append an object to the child list if there's room.
+/**
+ * @brief Append @p obj to the layout's child list if non-NULL and there is room (16 max).
+ * @version 1
+ * @dg_internal
+ */
 static void layout_add_child(json_layout_t *jl, lv_obj_t *obj)
 {
     if (obj && jl->child_count < MAX_CHILDREN) {
@@ -146,6 +183,12 @@ static void layout_add_child(json_layout_t *jl, lv_obj_t *obj)
 }
 
 // Create a child object from its "type" field; NULL for unknown/handled types.
+/**
+ * @brief Create a child by its "type": label or image; lottie is logged as not implemented.
+ * @version 1
+ * @req REQ-DISP-005
+ * @return New child object, or NULL for missing, unknown or unimplemented types.
+ */
 static lv_obj_t *create_typed_child(lv_obj_t *parent, const cJSON *child)
 {
     const cJSON *type = cJSON_GetObjectItem(child, "type");
@@ -162,6 +205,11 @@ static lv_obj_t *create_typed_child(lv_obj_t *parent, const cJSON *child)
 }
 
 // Add the optional bg_image plus every entry in the "children" array.
+/**
+ * @brief Add the optional "bg_image" and every entry of the "children" array, up to 16 objects.
+ * @version 1
+ * @req REQ-DISP-005
+ */
 static void add_children(json_layout_t *jl, const cJSON *root)
 {
     const cJSON *bg_image = cJSON_GetObjectItem(root, "bg_image");
@@ -182,6 +230,13 @@ static void add_children(json_layout_t *jl, const cJSON *root)
     }
 }
 
+/**
+ * @brief Parse @p json_str and build the layout on @p parent; caller holds the LVGL lock.
+ * @version 1
+ * @req REQ-DISP-005
+ * @req REQ-SURP-001
+ * @return New layout, or NULL on NULL input, parse failure or allocation failure.
+ */
 json_layout_t *json_layout_create(lv_obj_t *parent, const char *json_str)
 {
     if (!json_str) return NULL;
@@ -208,6 +263,11 @@ json_layout_t *json_layout_create(lv_obj_t *parent, const char *json_str)
     return jl;
 }
 
+/**
+ * @brief Delete the layout container (and all children) and free the layout (no-op if NULL).
+ * @version 1
+ * @req REQ-DISP-005
+ */
 void json_layout_destroy(json_layout_t *jl)
 {
     if (!jl) return;

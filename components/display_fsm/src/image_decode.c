@@ -1,5 +1,8 @@
-// components/display_fsm/src/image_decode.c
-//
+/**
+ * @file image_decode.c
+ * @version 1
+ * @brief Shared PNG decoder (stb_image) into persistent SPIRAM ARGB8888/RGB565 LVGL descriptors, plus a raw RGB565 cache format.
+ */
 // Shared PNG → persistent SPIRAM ARGB8888 decoder. See image_decode.h.
 //
 // This translation unit owns the single STB_IMAGE_IMPLEMENTATION for the whole
@@ -28,6 +31,12 @@ static const char *TAG = "image_decode";
 
 // Decode a PNG buffer to RGBA via stb_image (lodepng produces corrupt output on
 // RISC-V/ESP32-P4). Validates dimensions. Returns raw pixels or NULL.
+/**
+ * @brief Decode a PNG buffer to RGBA with stb_image and reject dimensions outside 1..2048 x 1..1200.
+ * @version 1
+ * @req REQ-BG-001
+ * @return stb-allocated RGBA pixels (free with stbi_image_free), or NULL on decode failure or bad size.
+ */
 static unsigned char *decode_rgba(const uint8_t *png, size_t len, int *w, int *h)
 {
     int channels = 0;
@@ -46,6 +55,11 @@ static unsigned char *decode_rgba(const uint8_t *png, size_t len, int *w, int *h
 
 // RGBA → BGRA swizzle into a stride-aligned buffer (LVGL ARGB8888 is BGRA in
 // little-endian memory).
+/**
+ * @brief Swizzle RGBA pixels into a stride-aligned BGRA (LVGL ARGB8888) buffer.
+ * @version 1
+ * @dg_internal
+ */
 static void swizzle_rgba_to_bgra(uint8_t *dst, uint32_t dstride,
                                  const unsigned char *raw, int w, int h)
 {
@@ -63,6 +77,12 @@ static void swizzle_rgba_to_bgra(uint8_t *dst, uint32_t dstride,
 }
 
 // Allocate + fill an image descriptor pointing at a ready pixel buffer.
+/**
+ * @brief Allocate a SPIRAM image descriptor pointing at a ready pixel buffer.
+ * @version 1
+ * @dg_internal
+ * @return New descriptor, or NULL if allocation fails.
+ */
 static lv_image_dsc_t *make_dsc(uint8_t *pixels, int w, int h,
                                 uint32_t stride, uint32_t size, lv_color_format_t cf)
 {
@@ -84,6 +104,12 @@ static lv_image_dsc_t *make_dsc(uint8_t *pixels, int w, int h,
 }
 
 // Build a persistent SPIRAM ARGB8888 descriptor from decoded RGBA pixels.
+/**
+ * @brief Build a persistent 64-byte-aligned, cache-synced SPIRAM ARGB8888 descriptor from RGBA pixels.
+ * @version 1
+ * @dg_internal
+ * @return New descriptor, or NULL on allocation failure.
+ */
 static lv_image_dsc_t *build_dsc_from_raw(const unsigned char *raw, int w, int h)
 {
     uint32_t stride = lv_draw_buf_width_to_stride((uint32_t)w, LV_COLOR_FORMAT_ARGB8888);
@@ -105,6 +131,11 @@ static lv_image_dsc_t *build_dsc_from_raw(const unsigned char *raw, int w, int h
 }
 
 // RGBA -> RGB565 pack into a stride-aligned buffer (drops alpha; opaque images).
+/**
+ * @brief Pack RGBA pixels into a stride-aligned RGB565 buffer, dropping alpha.
+ * @version 1
+ * @dg_internal
+ */
 static void pack_rgba_to_rgb565(uint8_t *dst, uint32_t dstride,
                                 const unsigned char *raw, int w, int h)
 {
@@ -122,6 +153,12 @@ static void pack_rgba_to_rgb565(uint8_t *dst, uint32_t dstride,
 // Build a persistent SPIRAM RGB565 descriptor (opaque images only). RGB565
 // matches the framebuffer, so redraws during animation are straight copies with
 // no per-pixel conversion — far cheaper than ARGB8888 for a full-screen image.
+/**
+ * @brief Build a persistent 64-byte-aligned, cache-synced SPIRAM RGB565 descriptor from RGBA pixels (opaque images).
+ * @version 1
+ * @dg_internal
+ * @return New descriptor, or NULL on allocation failure.
+ */
 static lv_image_dsc_t *build_dsc_rgb565(const unsigned char *raw, int w, int h)
 {
     uint32_t stride = lv_draw_buf_width_to_stride((uint32_t)w, LV_COLOR_FORMAT_RGB565);
@@ -142,6 +179,13 @@ static lv_image_dsc_t *build_dsc_rgb565(const unsigned char *raw, int w, int h)
     return dsc;
 }
 
+/**
+ * @brief Decode an in-memory PNG into a persistent SPIRAM ARGB8888 descriptor.
+ * @version 1
+ * @req REQ-RADAR-001
+ * @req REQ-BG-001
+ * @return New descriptor (free with image_decode_free), or NULL on bad input or failure.
+ */
 lv_image_dsc_t *image_decode_png_buf(const uint8_t *png, size_t len)
 {
     if (!png || len == 0) return NULL;
@@ -160,6 +204,12 @@ lv_image_dsc_t *image_decode_png_buf(const uint8_t *png, size_t len)
 }
 
 // ftell-based file size; leaves the stream rewound to the start.
+/**
+ * @brief Get a file's size via ftell and rewind it to the start.
+ * @version 1
+ * @dg_internal
+ * @return File size in bytes, or a negative value on error.
+ */
 static long file_size(FILE *f)
 {
     fseek(f, 0, SEEK_END);
@@ -169,6 +219,12 @@ static long file_size(FILE *f)
 }
 
 // Read a whole file into a fresh SPIRAM buffer. Returns buffer + length, or NULL.
+/**
+ * @brief Read a whole file into a fresh SPIRAM buffer.
+ * @version 1
+ * @dg_internal
+ * @return Buffer (caller frees with heap_caps_free) with *len_out set, or NULL on open/alloc/read failure.
+ */
 static uint8_t *read_file_spiram(const char *path, size_t *len_out)
 {
     FILE *f = fopen(path, "rb");
@@ -189,6 +245,12 @@ static uint8_t *read_file_spiram(const char *path, size_t *len_out)
     return buf;
 }
 
+/**
+ * @brief Read a PNG file and decode it into a persistent SPIRAM ARGB8888 descriptor.
+ * @version 1
+ * @req REQ-BG-001
+ * @return New descriptor, or NULL on failure.
+ */
 lv_image_dsc_t *image_decode_png_file(const char *path)
 {
     if (!path) return NULL;
@@ -202,6 +264,13 @@ lv_image_dsc_t *image_decode_png_file(const char *path)
     return dsc;
 }
 
+/**
+ * @brief Read a PNG file and decode it into a persistent SPIRAM RGB565 descriptor (opaque, framebuffer format).
+ * @version 1
+ * @req REQ-BG-001
+ * @req REQ-PHOTO-001
+ * @return New descriptor, or NULL on failure.
+ */
 lv_image_dsc_t *image_decode_png_file_rgb565(const char *path)
 {
     if (!path) return NULL;
@@ -224,6 +293,13 @@ lv_image_dsc_t *image_decode_png_file_rgb565(const char *path)
     return dsc;
 }
 
+/**
+ * @brief Flip a descriptor's pixel rows in place (top to bottom) and cache-sync the buffer.
+ * @version 1
+ * @req REQ-BG-001
+ * @req REQ-PHOTO-001
+ * @req REQ-RADAR-001
+ */
 void image_decode_flip_vertical(lv_image_dsc_t *dsc)
 {
     if (!dsc || !dsc->data) return;
@@ -254,6 +330,12 @@ void image_decode_flip_vertical(lv_image_dsc_t *dsc)
 // Lets a one-time ~2s PNG decode be replaced by a fast fread on later loads.
 #define R565_MAGIC_HDR 8
 
+/**
+ * @brief Load a raw RGB565 cache file ([u16 w][u16 h][u32 stride][pixels]) into a persistent SPIRAM descriptor.
+ * @version 1
+ * @req REQ-PHOTO-001
+ * @return New descriptor, or NULL if missing, malformed, oversized or short.
+ */
 lv_image_dsc_t *image_decode_load_raw_rgb565(const char *path)
 {
     if (!path) return NULL;
@@ -289,6 +371,12 @@ lv_image_dsc_t *image_decode_load_raw_rgb565(const char *path)
     return dsc;
 }
 
+/**
+ * @brief Write an RGB565 descriptor to a raw cache file via a temp file and rename.
+ * @version 1
+ * @req REQ-PHOTO-001
+ * @return true on success, false on bad input or write/rename failure.
+ */
 bool image_decode_save_raw_rgb565(const char *path, const lv_image_dsc_t *dsc)
 {
     if (!path || !dsc || !dsc->data || dsc->header.cf != LV_COLOR_FORMAT_RGB565) return false;
@@ -316,6 +404,13 @@ bool image_decode_save_raw_rgb565(const char *path, const lv_image_dsc_t *dsc)
     return true;
 }
 
+/**
+ * @brief Free a descriptor and its pixel buffer (no-op if NULL).
+ * @version 1
+ * @req REQ-BG-001
+ * @req REQ-PHOTO-001
+ * @req REQ-RADAR-001
+ */
 void image_decode_free(lv_image_dsc_t *dsc)
 {
     if (!dsc) return;

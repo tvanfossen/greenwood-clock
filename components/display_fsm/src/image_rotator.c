@@ -1,5 +1,8 @@
-// components/display_fsm/src/image_rotator.c
-//
+/**
+ * @file image_rotator.c
+ * @version 1
+ * @brief ImageRotator: cycles PNGs from a directory with off-lock RGB565 decode, .r565 file cache, RAM cache and next-image prefetch.
+ */
 // Layer 1: ImageRotator — cycles through PNG images from a directory.
 //
 // The 1024x600 PNG decode is too slow to run on the LVGL render path (LVGL
@@ -26,6 +29,11 @@ static const char *TAG = "image_rotator";
 
 // lv_obj_set_style_opa takes 3 args; the anim exec cb is (void*, int32_t).
 // Casting directly leaves the selector arg as garbage on RISC-V → crash.
+/**
+ * @brief lv_anim exec callback: set the object's opacity to @p v.
+ * @version 1
+ * @callback
+ */
 static void opa_anim_cb(void *obj, int32_t v)
 {
     lv_obj_set_style_opa((lv_obj_t *)obj, (lv_opa_t)v, 0);
@@ -51,6 +59,12 @@ struct image_rotator_t {
     bool            faded_in;      // first present() fades the container in
 };
 
+/**
+ * @brief Check whether a file name ends in .png (case-insensitive, at least one stem character).
+ * @version 1
+ * @dg_internal
+ * @return true for a PNG name, false otherwise.
+ */
 static bool is_png(const char *name)
 {
     size_t len = strlen(name);
@@ -59,6 +73,11 @@ static bool is_png(const char *name)
 }
 
 // Convert LVGL path (A:/photos/img.png) to POSIX path (/sdcard/photos/img.png)
+/**
+ * @brief Convert an LVGL "A:/..." path to its /sdcard POSIX path; other paths are copied unchanged.
+ * @version 1
+ * @dg_internal
+ */
 static void lvgl_to_posix(const char *lvgl_path, char *out, size_t out_sz)
 {
     if (strncmp(lvgl_path, "A:/", 3) == 0) {
@@ -69,6 +88,12 @@ static void lvgl_to_posix(const char *lvgl_path, char *out, size_t out_sz)
 }
 
 // Verify file exists and is non-empty before telling LVGL to load it
+/**
+ * @brief Check that the file behind an LVGL path exists and is non-empty.
+ * @version 1
+ * @dg_internal
+ * @return true if the file exists with size > 0, false otherwise.
+ */
 static bool file_exists(const char *lvgl_path)
 {
     char posix[MAX_PATH_LEN];
@@ -78,6 +103,12 @@ static bool file_exists(const char *lvgl_path)
 }
 
 // Full-screen black container that holds the rotating image.
+/**
+ * @brief Create the full-screen (1024x600) opaque black container that holds the rotating image.
+ * @version 1
+ * @dg_internal
+ * @return The new container.
+ */
 static lv_obj_t *make_container(lv_obj_t *parent)
 {
     lv_obj_t *c = lv_obj_create(parent);
@@ -93,6 +124,11 @@ static lv_obj_t *make_container(lv_obj_t *parent)
 
 // Scan dir_path for readable PNG files into r->paths (up to MAX_IMAGES).
 // GIFs need lv_gif_create — not supported here.
+/**
+ * @brief Scan a directory for readable PNG files into the rotator's path list (up to 50).
+ * @version 1
+ * @req REQ-PHOTO-001
+ */
 static void scan_png_dir(image_rotator_t *r, const char *dir_path)
 {
     char fs_path[MAX_PATH_LEN];
@@ -120,6 +156,12 @@ static void scan_png_dir(image_rotator_t *r, const char *dir_path)
     closedir(d);
 }
 
+/**
+ * @brief Create a rotator on @p parent over the PNGs in @p dir_path, starting at @p start_index (wrapped) or at the RAM-cached photo; does not decode.
+ * @version 1
+ * @req REQ-PHOTO-001
+ * @return New rotator (possibly with zero images), or NULL if allocation fails.
+ */
 image_rotator_t *image_rotator_create(lv_obj_t *parent, const char *dir_path,
                                       int start_index)
 {
@@ -157,6 +199,11 @@ image_rotator_t *image_rotator_create(lv_obj_t *parent, const char *dir_path,
     return r;
 }
 
+/**
+ * @brief Delete the rotator's objects, keep its shown photo as the RAM cache for the next visit, discard the prefetched one and free it.
+ * @version 1
+ * @req REQ-PHOTO-001
+ */
 void image_rotator_destroy(image_rotator_t *r)
 {
     if (!r) return;
@@ -180,6 +227,11 @@ void image_rotator_destroy(image_rotator_t *r)
     ESP_LOGI(TAG, "ImageRotator destroyed (persisted [%d])", s_persist_index);
 }
 
+/**
+ * @brief Advance the current index to the next image (wrapping).
+ * @version 1
+ * @req REQ-PHOTO-001
+ */
 void image_rotator_step(image_rotator_t *r)
 {
     if (!r || r->count == 0) return;
@@ -188,6 +240,11 @@ void image_rotator_step(image_rotator_t *r)
 
 // Decode image `idx` into pending_dsc (off-lock). No-op if pending already holds
 // it (prefetch hit) — that makes the next present() an instant swap.
+/**
+ * @brief Load image @p idx into the pending slot off the LVGL lock: prefetch hit, RAM-cache hit, .r565 cache file, or PNG decode + flip + cache write.
+ * @version 1
+ * @req REQ-PHOTO-001
+ */
 static void decode_into_pending(image_rotator_t *r, int idx)
 {
     if (!r || r->count == 0) return;
@@ -239,18 +296,33 @@ static void decode_into_pending(image_rotator_t *r, int idx)
              (esp_timer_get_time() - t0) / 1000);
 }
 
+/**
+ * @brief Decode the current image into the pending slot (off the LVGL lock).
+ * @version 1
+ * @req REQ-PHOTO-001
+ */
 void image_rotator_decode_current(image_rotator_t *r)
 {
     if (r) decode_into_pending(r, r->current_index);
 }
 
 // Prefetch the NEXT image (off-lock) so the upcoming advance is an instant swap.
+/**
+ * @brief Prefetch the next image into the pending slot (off the LVGL lock) so the next advance is an instant swap.
+ * @version 1
+ * @req REQ-PHOTO-001
+ */
 void image_rotator_prefetch_next(image_rotator_t *r)
 {
     if (!r || r->count == 0) return;
     decode_into_pending(r, (r->current_index + 1) % r->count);
 }
 
+/**
+ * @brief Swap the pending descriptor in if it holds the current image (under the LVGL lock); fades the image in over 600 ms on first present.
+ * @version 1
+ * @req REQ-PHOTO-001
+ */
 void image_rotator_present(image_rotator_t *r)
 {
     // Only present if pending holds the image we currently want to show.
@@ -283,16 +355,34 @@ void image_rotator_present(image_rotator_t *r)
     ESP_LOGI(TAG, "Present [%d] %s", r->current_index, r->paths[r->current_index]);
 }
 
+/**
+ * @brief Get the descriptor currently shown.
+ * @version 1
+ * @req REQ-PHOTO-001
+ * @return Shown descriptor, or NULL.
+ */
 const lv_image_dsc_t *image_rotator_shown_dsc(const image_rotator_t *r)
 {
     return r ? r->shown_dsc : NULL;
 }
 
+/**
+ * @brief Get the number of images found.
+ * @version 1
+ * @req REQ-PHOTO-001
+ * @return Image count, or 0 if @p r is NULL.
+ */
 int image_rotator_count(const image_rotator_t *r)
 {
     return r ? r->count : 0;
 }
 
+/**
+ * @brief Get the current image index.
+ * @version 1
+ * @req REQ-PHOTO-001
+ * @return Current index, or 0 if @p r is NULL.
+ */
 int image_rotator_index(const image_rotator_t *r)
 {
     return r ? r->current_index : 0;

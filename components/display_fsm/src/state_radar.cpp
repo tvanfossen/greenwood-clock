@@ -1,6 +1,8 @@
-// components/display_fsm/src/state_radar.cpp
-//
-// RadarOverlay state — minimized clock + map background + radar PNG overlay.
+/**
+ * @file state_radar.cpp
+ * @version 1
+ * @brief RadarOverlay state — minimized clock + map background + radar PNG overlay.
+ */
 
 #include "display_states.h"
 #include "display_scheduler.h"
@@ -15,6 +17,14 @@ static const char *TAG = "state_radar";
 // Static member definitions
 radar_view_t *RadarOverlay::s_rv = nullptr;
 
+/**
+ * @brief Enter the radar state: tint the minimized clock for legibility over the
+ *        basemap, minimize it, create the radar view at the configured location,
+ *        apply the staged overlay and fade it in.
+ * @version 1
+ * @req REQ-RADAR-001
+ * @req REQ-DISP-001
+ */
 void RadarOverlay::entry()
 {
     set_state_info(DISPLAY_STATE_RADAR, "radar");
@@ -47,17 +57,33 @@ void RadarOverlay::entry()
     ESP_LOGI(TAG, "RadarOverlay: entry");
 }
 
+/**
+ * @brief Leave the radar state: destroy the radar view.
+ * @version 1
+ * @req REQ-RADAR-001
+ * @req REQ-DISP-001
+ */
 void RadarOverlay::exit()
 {
     if (s_rv) { radar_view_destroy(s_rv); s_rv = NULL; }
     ESP_LOGI(TAG, "RadarOverlay: exit");
 }
 
+/**
+ * @brief Display timeout: return to the full clock.
+ * @version 1
+ * @req REQ-DISP-002
+ */
 void RadarOverlay::react(EvDisplayTimeout const &)
 {
     transit<ClockFull>();
 }
 
+/**
+ * @brief New radar staged: swap the pre-decoded overlay into the open view.
+ * @version 1
+ * @req REQ-RADAR-001
+ */
 void RadarOverlay::react(EvRadarReady const &)
 {
     if (!s_rv) return;
@@ -66,6 +92,13 @@ void RadarOverlay::react(EvRadarReady const &)
     ESP_LOGI(TAG, "RadarOverlay: radar applied");
 }
 
+/**
+ * @brief Forced state change: no-op if radar is requested, otherwise defer to
+ *        the base FSM handler.
+ * @version 1
+ * @req REQ-API-003
+ * @req REQ-DISP-001
+ */
 void RadarOverlay::react(EvForceState const &e)
 {
     if (e.state == DISPLAY_STATE_RADAR) {

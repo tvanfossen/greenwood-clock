@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+## @file lottie_audit.py
+## @brief Host tool: render every frame of each Lottie with ThorVG and report load errors and blank frames.
+## @version 1
 """Render EVERY frame of every Lottie file with ThorVG and report problems.
 
 A file passes when it loads, every frame renders without error, and no frame
@@ -23,7 +26,7 @@ BLANK_PX = 0.5
 
 
 ## @brief Collapse sorted frame numbers into "a-b" ranges.
-## @utility
+## @dg_internal
 ## @version 1
 ## @return Comma-separated ranges string.
 def ranges(frames):
@@ -42,7 +45,7 @@ def ranges(frames):
 
 
 ## @brief Render every frame of one file.
-## @utility
+## @req REQ-TOOL-003
 ## @version 1
 ## @return dict with ok flag, frame count, coverage stats, blank frames, error text.
 def audit_file(path):
@@ -71,7 +74,7 @@ def audit_file(path):
 
 
 ## @brief Expand CLI args into a sorted list of .json files.
-## @utility
+## @dg_internal
 ## @version 1
 ## @return List of Paths.
 def collect(args):
@@ -82,7 +85,7 @@ def collect(args):
 
 
 ## @brief Print one result row.
-## @utility
+## @dg_internal
 ## @version 1
 def report(res, root):
     name = str(res["path"].relative_to(root)) if root else str(res["path"])
@@ -98,7 +101,7 @@ def report(res, root):
 
 
 ## @brief Audit all inputs; exit 1 if any file fails.
-## @utility
+## @req REQ-TOOL-003
 ## @version 1
 ## @return Process exit code.
 def main():

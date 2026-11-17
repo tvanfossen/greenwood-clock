@@ -1,3 +1,8 @@
+/**
+ * @file time_sync.h
+ * @version 1
+ * @brief Public API for POSIX TZ timezone setup and local-time lookup.
+ */
 // components/time_sync/time_sync.h
 #include <time.h>
 

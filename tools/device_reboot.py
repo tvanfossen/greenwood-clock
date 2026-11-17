@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+## @file device_reboot.py
+## @brief Host tool: trigger a remote device reboot via POST /debug/reboot.
+## @version 1
 """
 Trigger a remote reboot of the Greenwood Clock over HTTP.
 
@@ -14,6 +17,9 @@ import sys
 import urllib.request
 
 
+## @brief CLI entry: POST /debug/reboot to the host and print the HTTP reply; exit 1 on an HTTP or network error.
+## @version 1
+## @req REQ-TOOL-001
 def main() -> None:
     ap = argparse.ArgumentParser(description="Trigger a remote reboot of the device.")
     ap.add_argument(

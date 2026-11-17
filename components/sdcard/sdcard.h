@@ -1,3 +1,8 @@
+/**
+ * @file sdcard.h
+ * @version 1
+ * @brief Public API of the SD card mount with graceful fallback.
+ */
 // components/sdcard/sdcard.h
 
 #ifndef SDCARD_H
