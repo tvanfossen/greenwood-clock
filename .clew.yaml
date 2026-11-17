@@ -1,0 +1,36 @@
+# .clew.yaml — this repository's declarations for clew (tvanfossen/clew).
+#
+# `guard:` configures the `clew-guard` pre-commit gate (doxygen-guard, absorbed
+# into clew v1.3.0). Everything outside `guard:` is clew's index declarations,
+# which the gate never reads.
+guard:
+  output_dir: .claude/tmp/clew-guard/
+
+  validate:
+    # Vendored / generated code only — mirrors the knots exclude list.
+    exclude:
+      - "^build/"
+      - "^managed_components/"
+      - "^components/lvgl/"
+      - "^components/cjson/"
+      - "^components/display_fsm/src/stb_image\\.h$"
+      - "^components/fonts/"
+      - "^components/images/"
+      - "^tools/lottie_gen/glyph_animator/"
+      - "^\\.venv/"
+      - "^\\.claude/"
+
+    # `@p` is doxygen's inline parameter-reference command, used throughout
+    # the existing C sources; clew-guard's vocabulary omits it.
+    extra_tags: ["p"]
+
+    presence:
+      require_doxygen: true
+      require_return: true
+
+    version:
+      require_present: true
+      require_increment_on_change: true
+
+  # No `impact.requirements` catalog: @req coverage stays OFF until
+  # docs/requirements.yaml exists (presence + version only, by decision 2026-11-14).

@@ -8,6 +8,15 @@ repos:
         # Vendored / external code only — we hold our own source to the standard.
         exclude: ^(managed_components/|components/lvgl/|components/cjson/|components/display_fsm/src/stb_image\.h$)
 
+  # Doxygen presence + @version gate. Config is the `guard:` section of .clew.yaml.
+  # Checks staged files only, so legacy undocumented code is documented as it is touched.
+  - repo: https://github.com/tvanfossen/clew
+    rev: v1.3.0
+    hooks:
+      - id: clew-guard
+        files: \.(h|hpp|c|cpp|cc|py)$
+        exclude: ^(build/|managed_components/|components/lvgl/|components/cjson/|components/display_fsm/src/stb_image\.h$|\.venv/|\.claude/)
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.4.4
     hooks:

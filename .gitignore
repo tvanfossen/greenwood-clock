@@ -12,3 +12,9 @@ components/secrets/secrets.h
 /tools/lottie_gen/glyph_animator/
 /tools/lottie_gen/*.png
 tools/__pycache__/
+
+# Python dev venv (invoke, pre-commit)
+/.venv/
+
+# Generated doxygen warning log
+/docs/api/
