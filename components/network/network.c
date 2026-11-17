@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <sys/time.h>
+#include <stdatomic.h>
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_netif.h"
@@ -139,14 +140,19 @@ static void network_start_sntp(void) {
     esp_sntp_init();
 }
 
+/** Latched true on the first IP_EVENT_STA_GOT_IP of this boot; never cleared. */
+static atomic_bool s_ever_got_ip = false;
+
 /**
- * @brief Handle IP_EVENT_STA_GOT_IP — update state and start SNTP.
- * @version 1
+ * @brief Handle IP_EVENT_STA_GOT_IP — update state, latch "has had an IP", and start SNTP.
+ * v2: latch s_ever_got_ip for OTA confirmation (a later disconnect must not hide it).
+ * @version 2
  * @dg_internal
  */
 static void network_handle_got_ip(void) {
     ESP_LOGI(TAG, "Got IP, starting SNTP");
     s_wifi_connected = true;
+    atomic_store(&s_ever_got_ip, true);
     xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     network_start_sntp();
 }
@@ -179,8 +185,13 @@ static void schedule_reconnect(void) {
     s_reconnect_backoff_ms = (next > RECONNECT_BACKOFF_MAX_MS) ? RECONNECT_BACKOFF_MAX_MS : next;
 }
 
-/** Set once STA credentials are applied; gates the STA_START auto-connect. */
-static bool s_have_credentials = false;
+/** Set once STA credentials are applied; gates the initial auto-connect. */
+static atomic_bool s_have_credentials = false;
+/** Set on WIFI_EVENT_STA_START, cleared on WIFI_EVENT_STA_STOP. */
+static atomic_bool s_sta_started = false;
+/** One initial connect per STA start: claimed by whichever of STA_START / network_init()
+ *  sees both credentials and a started STA first. Reset on STA_STOP. */
+static atomic_bool s_initial_connect_claimed = false;
 
 /**
  * @brief Start a connection attempt and log any immediate failure.
@@ -193,12 +204,34 @@ static void network_connect_now(const char* why) {
 }
 
 /**
+ * @brief Issue the initial connect exactly once per STA start, once credentials are set.
+ *
+ * Called from both WIFI_EVENT_STA_START (event task) and network_init() (boot task).
+ * esp_hosted delivers STA_START asynchronously, so either may run first; the
+ * compare-and-swap guarantees exactly one connect, which avoids the overlapping-connect
+ * RPC error (ESP_ERR_WIFI_CONN, 0x21a).
+ * @version 1
+ * @req REQ-NET-001
+ */
+static void network_try_initial_connect(const char* why) {
+    if (!atomic_load(&s_have_credentials) || !atomic_load(&s_sta_started)) return;
+    bool expected = false;
+    if (atomic_compare_exchange_strong(&s_initial_connect_claimed, &expected, true)) {
+        ESP_LOGI(TAG, "initial connect (%s)", why);
+        network_connect_now(why);
+    }
+}
+
+/**
  * @brief Handle one WIFI_EVENT: scan done, STA start, STA disconnected.
  *
  * - WIFI_EVENT_SCAN_DONE → set SCAN_DONE_BIT
- * - WIFI_EVENT_STA_START → connect, but only once credentials are set
+ * - WIFI_EVENT_STA_START → mark started; initial connect if credentials are set
+ * - WIFI_EVENT_STA_STOP → mark stopped (next start gets its own initial connect)
  * - WIFI_EVENT_STA_DISCONNECTED → reconnect with exponential backoff (unless scanning)
- * @version 1
+ * v2: initial connect goes through network_try_initial_connect() so a late STA_START
+ *     and network_init() cannot both connect (review: double connect still possible).
+ * @version 2
  * @dg_internal
  */
 static void on_wifi_driver_event(int32_t ev_id, void* ev_data)
@@ -210,11 +243,14 @@ static void on_wifi_driver_event(int32_t ev_id, void* ev_data)
                      (unsigned)d->status, (unsigned)d->number, (unsigned)d->scan_id);
         xEventGroupSetBits(s_wifi_event_group, SCAN_DONE_BIT);
     } else if (ev_id == WIFI_EVENT_STA_START) {
-        // Only with credentials: infrastructure init starts the STA before
-        // network_init() sets them, and that credential-less connect overlapped the
-        // real one, failing it with ESP_ERR_WIFI_CONN (RPC 0x21a) and ~3 s of retry.
-        if (s_have_credentials) network_connect_now("STA start");
-        else ESP_LOGI(TAG, "STA started without credentials — not connecting");
+        // Infrastructure init starts the STA, possibly before network_init() sets
+        // credentials; whichever side completes the pair issues the one connect.
+        atomic_store(&s_sta_started, true);
+        if (!atomic_load(&s_have_credentials)) ESP_LOGI(TAG, "STA started without credentials — not connecting");
+        network_try_initial_connect("STA start");
+    } else if (ev_id == WIFI_EVENT_STA_STOP) {
+        atomic_store(&s_sta_started, false);
+        atomic_store(&s_initial_connect_claimed, false);
     } else if (ev_id == WIFI_EVENT_STA_DISCONNECTED) {
         ESP_LOGI(TAG, "Wi-Fi disconnected%s", s_scanning ? " (scan in progress)" : "");
         // Suppress auto-reconnect during a scan — network_scan() aborts the
@@ -344,7 +380,8 @@ esp_err_t network_init_infrastructure(void) {
  * @brief Write SSID/password into a wifi_config_t and apply it to the STA interface.
  * @param ssid      Network SSID.
  * @param password  Network password; may be NULL for open networks.
- * @version 2
+ * v3: s_have_credentials is atomic (read from the event task).
+ * @version 3
  * @dg_internal
  */
 static void network_set_credentials(const char* ssid, const char* password) {
@@ -352,7 +389,7 @@ static void network_set_credentials(const char* ssid, const char* password) {
     strlcpy((char*)wcfg.sta.ssid,     ssid,     sizeof(wcfg.sta.ssid));
     strlcpy((char*)wcfg.sta.password, password, sizeof(wcfg.sta.password));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wcfg));
-    s_have_credentials = ssid[0] != '\0';
+    atomic_store(&s_have_credentials, ssid[0] != '\0');
 }
 
 // =============================================================================
@@ -360,10 +397,12 @@ static void network_set_credentials(const char* ssid, const char* password) {
 // =============================================================================
 
 /**
- * @brief Ensure infrastructure is up, apply STA credentials, and restart Wi-Fi to connect.
+ * @brief Ensure infrastructure is up, apply STA credentials, and issue the one initial connect.
  * @param ssid      Network SSID.
  * @param password  Network password.
- * @version 1
+ * v2: no esp_wifi_stop/start restart (its second STA_START produced a second connect);
+ *     set_config applies to the running STA and network_try_initial_connect() connects.
+ * @version 2
  * @return ESP_OK on success, or the infrastructure init error.
  * @req REQ-NET-001
  */
@@ -373,8 +412,7 @@ esp_err_t network_init(const char* ssid, const char* password) {
         if (err != ESP_OK) return err;
     }
     network_set_credentials(ssid, password);
-    ESP_ERROR_CHECK(esp_wifi_stop());
-    ESP_ERROR_CHECK(esp_wifi_start());
+    network_try_initial_connect("network_init");
     ESP_LOGI(TAG, "Wi-Fi init complete, connecting to '%s'", ssid);
     return ESP_OK;
 }
@@ -664,7 +702,8 @@ esp_err_t network_scan(wifi_ap_info_t* ap_list, uint16_t max_aps, uint16_t* foun
  * @param ssid      Network SSID.
  * @param password  Network password; NULL for open networks.
  * @return ESP_OK on successful initiation.
- * @version 1
+ * v2: record that credentials are set (UI connect path), so a later STA restart reconnects.
+ * @version 2
  * @dg_internal
  */
 static esp_err_t network_set_and_connect(const char* ssid, const char* password) {
@@ -676,6 +715,7 @@ static esp_err_t network_set_and_connect(const char* ssid, const char* password)
         ESP_LOGE(TAG, "Failed to set WiFi config: %d", (int)err);
         return err;
     }
+    atomic_store(&s_have_credentials, ssid[0] != '\0');
     err = esp_wifi_connect();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to connect: %d", (int)err);
@@ -713,6 +753,16 @@ esp_err_t network_connect(const char* ssid, const char* password) {
 // =============================================================================
 // Public: status / info
 // =============================================================================
+
+/**
+ * @brief Report whether the STA has obtained an IP at any point since boot (latched).
+ * @version 1
+ * @req REQ-OTA-002
+ * @return true once the first IP of this boot has been obtained.
+ */
+bool network_has_had_ip(void) {
+    return atomic_load(&s_ever_got_ip);
+}
 
 /**
  * @brief Report whether the STA currently holds an IP address.

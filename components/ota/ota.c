@@ -428,17 +428,21 @@ static esp_err_t ota_confirm_pending(void) {
 // =============================================================================
 
 /**
- * @brief True when the running image is NEW or PENDING_VERIFY (rollback still armed).
- * @version 1
+ * @brief True when the running image is PENDING_VERIFY, the only state in which the
+ *        bootloader will roll back on reset.
+ * v2: NEW no longer counts. A rollback-enabled bootloader turns NEW into PENDING_VERIFY on
+ *     first boot, so NEW at runtime means no rollback is possible; treating it as armed
+ *     made a WiFi-less device reboot every 15 min forever instead of rolling back.
+ * @version 2
  * @req REQ-OTA-002
- * @return true for an unconfirmed image.
+ * @return true only for PENDING_VERIFY.
  */
 bool ota_is_unconfirmed(void) {
     esp_ota_img_states_t st;
     if (!s_running_partition || esp_ota_get_state_partition(s_running_partition, &st) != ESP_OK) {
         return false;  // factory image or no otadata: nothing to roll back
     }
-    return st == ESP_OTA_IMG_NEW || st == ESP_OTA_IMG_PENDING_VERIFY;
+    return st == ESP_OTA_IMG_PENDING_VERIFY;
 }
 
 // =============================================================================

@@ -80,7 +80,7 @@ ota_status_t ota_get_status(void);
 esp_err_t ota_mark_app_valid(void);
 
 /**
- * @brief Whether the running image is still unconfirmed (NEW or PENDING_VERIFY), i.e. a
+ * @brief Whether the running image is still unconfirmed (PENDING_VERIFY), i.e. a
  *        reboot before ota_mark_app_valid() makes the bootloader roll back.
  * @version 1
  * @req REQ-OTA-002
