@@ -13,6 +13,7 @@ guard:
       - "^managed_components/"
       - "^components/lvgl/"
       - "^components/cjson/"
+      - "^components/espressif__"
       - "^components/display_fsm/src/stb_image\\.h$"
       - "^components/fonts/"
       - "^components/images/"

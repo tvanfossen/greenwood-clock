@@ -1,3 +1,6 @@
+# Vendored Espressif components (pristine registry copy + patches/*.patch) — not our source.
+exclude: ^components/espressif__
+
 repos:
   - repo: https://github.com/brandon-arrendondo/knots
     rev: v1.8.3

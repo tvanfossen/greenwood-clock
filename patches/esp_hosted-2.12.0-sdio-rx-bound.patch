@@ -1,0 +1,40 @@
+diff -ru a/host/drivers/transport/sdio/sdio_drv.c b/host/drivers/transport/sdio/sdio_drv.c
+--- a/host/drivers/transport/sdio/sdio_drv.c	2026-11-16 21:12:43.733263216 -0500
++++ b/host/drivers/transport/sdio/sdio_drv.c	2026-11-16 21:12:43.777264372 -0500
+@@ -1147,7 +1147,19 @@
+ #else
+ 		ret = sdio_get_len_from_slave(&len_from_slave, ACQUIRE_LOCK);
+ #endif
+-		if (ret || !len_from_slave) {
++		/* LOCAL PATCH (greenwood): reject only an ABSURD length. A degraded C6/SDIO
++		 * link can report garbage (e.g. 820736); the unbounded sdio_rx_get_buffer()
++		 * then malloc()s it and assert()s on failure → panic loop.
++		 *
++		 * Do NOT bound at MAX_TRANSPORT_BUFFER_SIZE (1536): in STREAMING RX mode
++		 * len_from_slave is the aggregate of multiple queued packets in one CMD53
++		 * burst, so a valid length routinely exceeds a single 1536 buffer (observed
++		 * 2480). Bounding at 1536 dropped every aggregated stream → WiFi RX broke →
++		 * TLS/fetches failed. Bound instead at the RX queue capacity (20 buffers *
++		 * 1536 ≈ 30KB, rounded to 32KB): still rejects 820736-class garbage, but lets
++		 * legitimate aggregated streams through as they did before this patch. The
++		 * alloc below is also hardened to drop (not assert) if it ever fails. */
++		if (ret || !len_from_slave || len_from_slave > (32 * 1024)) {
+ 			ESP_LOGW(TAG, "invalid ret or len_from_slave: %d %ld", ret, len_from_slave);
+ 
+ 			SDIO_DRV_UNLOCK();
+@@ -1159,7 +1171,14 @@
+ 
+ 		/* Allocate rx buffer */
+ 		rxbuff = sdio_rx_get_buffer(len_from_slave);
+-		assert(rxbuff);
++		/* LOCAL PATCH (greenwood): drop instead of assert() on alloc failure so a
++		 * large (but in-bound) length under internal-DRAM pressure glitches the link
++		 * rather than crashing the device. */
++		if (!rxbuff) {
++			ESP_LOGW(TAG, "rx buffer alloc failed for len %ld — dropping", len_from_slave);
++			SDIO_DRV_UNLOCK();
++			continue;
++		}
+ 
+ 		data_left = len_from_slave;
+ 		pos = rxbuff;
