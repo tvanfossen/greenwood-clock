@@ -20,6 +20,10 @@ static const char *TAG = "clock_widget";
 LV_FONT_DECLARE(nunito_48);
 LV_FONT_DECLARE(nunito_128);
 LV_FONT_DECLARE(nunito_256);
+// 8 bpp static-bitmap time digits (inv gen-fonts): blended straight from flash, anti-aliased;
+// the 1 bpp fonts were re-expanded per glyph for every small dirty area (snowfall).
+LV_FONT_DECLARE(nunito_clock_256);
+LV_FONT_DECLARE(nunito_clock_128);
 
 // ---------------------------------------------------------------------------
 // Internal struct
@@ -131,13 +135,14 @@ static void format_time(const struct tm *ti, char *buf_time, size_t time_sz,
 // Does NOT touch container position/size — that's handled by animation or snap_to().
 /**
  * @brief Full-mode layout: 256pt time, 48pt AM/PM baseline-aligned to it, 48pt date at the bottom; does not move the container.
- * @version 1
+ * v2: time uses the 8 bpp static-bitmap digit font (same metrics).
+ * @version 2
  * @req REQ-CLOCK-001
  */
 static void apply_full_layout(clock_widget_t *w)
 {
     // Time: 256pt, centered in container
-    lv_obj_set_style_text_font(w->lbl_time, &nunito_256, 0);
+    lv_obj_set_style_text_font(w->lbl_time, &nunito_clock_256, 0);
     lv_obj_align(w->lbl_time, LV_ALIGN_TOP_MID, 0, 24);
 
     // AM/PM: 48pt, visual text-bottom aligned with time.
@@ -159,7 +164,8 @@ static void apply_full_layout(clock_widget_t *w)
 // Does NOT touch container position/size — that's handled by animation or snap_to().
 /**
  * @brief Minimized-mode layout: 128pt time shifted left so time + 48pt AM/PM are centred, 24pt date below; does not move the container.
- * @version 1
+ * v2: time uses the 8 bpp static-bitmap digit font (same metrics).
+ * @version 2
  * @req REQ-CLOCK-002
  */
 static void apply_minimized_layout(clock_widget_t *w)
@@ -167,7 +173,7 @@ static void apply_minimized_layout(clock_widget_t *w)
     // Time: 128pt. Shift left so the time + AM/PM *group* is centred in the
     // container — otherwise centring the time alone pushes the 48pt AM/PM past
     // the right screen edge (only "P"/"A" visible).
-    lv_obj_set_style_text_font(w->lbl_time, &nunito_128, 0);
+    lv_obj_set_style_text_font(w->lbl_time, &nunito_clock_128, 0);
     lv_obj_align(w->lbl_time, LV_ALIGN_TOP_MID, -40, 0);
 
     // AM/PM: 48pt, visual text-bottom aligned with time.
