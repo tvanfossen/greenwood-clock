@@ -646,19 +646,50 @@ static void boot_sdcard_init(const crash_ctx_t *ctx)
 // OTA image verification — confirm a freshly OTA'd image only once WiFi works
 // =============================================================================
 
-/** Wait this long at boot for the first IP before deferring confirmation to the health loop. */
-#define OTA_VERIFY_BOOT_WAIT_MS  20000
+/** Confirmation check period: short, so a good image leaves the rollback-armed state
+ *  (which also refuses further OTA pushes) within a second of its first IP. */
+#define OTA_VERIFY_PERIOD_US     (1000LL * 1000)
 /** An unconfirmed image with no IP by this deadline reboots, and the bootloader rolls back. */
 #define OTA_VERIFY_DEADLINE_US   (15LL * 60 * 1000 * 1000)
 
-static bool    s_ota_verify_pending = false;
-static int64_t s_ota_verify_start_us = 0;
+static esp_timer_handle_t s_ota_verify_timer = nullptr;
+static int64_t            s_ota_verify_start_us = 0;
 
 /**
- * @brief Confirm the running image unless it is a fresh OTA on a WiFi-configured device that
- *        has not yet obtained an IP. A WiFi-breaking build must stay unconfirmed so that it
- *        rolls back; marking it valid before connectivity is proven loses remote recovery.
+ * @brief esp_timer tick: confirm the pending image once an IP has been seen (latched), or
+ *        reboot into rollback at the 15-min deadline.
+ * Replaces the 60 s health-loop poll: runs every second and uses the latched
+ * network_has_had_ip() rather than the instantaneous link state (review: a good image
+ * stayed rollback-armed for minutes, and a flapping link could roll it back).
  * @version 1
+ * @req REQ-OTA-002
+ * @callback
+ */
+static void ota_verify_tick(void *)
+{
+    if (network_has_had_ip()) {
+        if (ota_mark_app_valid() == ESP_OK) {
+            ESP_LOGI(TAG, "[OTA] first IP after boot — image confirmed (%lld ms after boot stage)",
+                     (long long)((esp_timer_get_time() - s_ota_verify_start_us) / 1000));
+            esp_timer_stop(s_ota_verify_timer);
+        }
+        return;  // on mark failure, retry next tick
+    }
+    if (esp_timer_get_time() - s_ota_verify_start_us > OTA_VERIFY_DEADLINE_US) {
+        ESP_LOGE(TAG, "[OTA] unconfirmed image never reached the network in 15 min — rebooting so "
+                      "the bootloader rolls back to the previous firmware");
+        esp_timer_stop(s_ota_verify_timer);
+        vTaskDelay(pdMS_TO_TICKS(500));  // let the log reach SD / UDP
+        esp_restart();
+    }
+}
+
+/**
+ * @brief Confirm the running image unless it is a fresh OTA on a WiFi-configured device;
+ *        then start the 1 s verification timer, which confirms on the first IP or rolls back.
+ *        A WiFi-breaking build must stay unconfirmed so that it rolls back.
+ * v2: no 20 s blocking wait; confirmation moved to ota_verify_tick().
+ * @version 2
  * @req REQ-OTA-002
  */
 static void boot_ota_verify_start(bool wifi_configured)
@@ -667,45 +698,32 @@ static void boot_ota_verify_start(bool wifi_configured)
         ota_mark_app_valid();  // normal boot or nothing to verify: unchanged behaviour
         return;
     }
-    for (int waited = 0; waited < OTA_VERIFY_BOOT_WAIT_MS && !network_is_connected(); waited += 250) {
-        vTaskDelay(pdMS_TO_TICKS(250));
-    }
-    if (network_is_connected()) {
-        ESP_LOGI(TAG, "[BOOT] OTA: new image has an IP — confirming");
+    s_ota_verify_start_us = esp_timer_get_time();
+    const esp_timer_create_args_t args = {
+        .callback = ota_verify_tick,
+        .arg = nullptr,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "ota_verify",
+        .skip_unhandled_events = true,
+    };
+    esp_err_t err = esp_timer_create(&args, &s_ota_verify_timer);
+    if (err == ESP_OK) err = esp_timer_start_periodic(s_ota_verify_timer, OTA_VERIFY_PERIOD_US);
+    if (err != ESP_OK) {
+        // Without the timer the image could never be confirmed and would roll back on the
+        // next reset; confirming here keeps the old (pre-verification) behaviour instead.
+        ESP_LOGE(TAG, "[BOOT] OTA: verify timer failed (%s) — confirming now", esp_err_to_name(err));
         ota_mark_app_valid();
         return;
     }
-    s_ota_verify_pending = true;
-    s_ota_verify_start_us = esp_timer_get_time();
-    ESP_LOGW(TAG, "[BOOT] OTA: no IP within %d s — image stays unconfirmed; health loop will confirm "
-                  "on first IP or reboot (rollback) after 15 min", OTA_VERIFY_BOOT_WAIT_MS / 1000);
-}
-
-/**
- * @brief Health-loop hook: confirm a pending image on first IP, or reboot into rollback at the deadline.
- * @version 1
- * @req REQ-OTA-002
- */
-static void boot_ota_verify_poll(void)
-{
-    if (!s_ota_verify_pending) return;
-    if (network_is_connected()) {
-        ESP_LOGI(TAG, "[OTA] first IP after boot — confirming image");
-        s_ota_verify_pending = ota_mark_app_valid() != ESP_OK;
-        return;
-    }
-    if (esp_timer_get_time() - s_ota_verify_start_us > OTA_VERIFY_DEADLINE_US) {
-        ESP_LOGE(TAG, "[OTA] unconfirmed image never reached the network in 15 min — rebooting so "
-                      "the bootloader rolls back to the previous firmware");
-        vTaskDelay(pdMS_TO_TICKS(500));  // let the log reach SD / UDP
-        esp_restart();
-    }
+    ESP_LOGW(TAG, "[BOOT] OTA: new image unconfirmed — confirms on first IP, "
+                  "else reboots into rollback after 15 min");
 }
 
 /**
  * @brief Boot stage: start Wi-Fi (or scan-only infrastructure), then init OTA and confirm the
  *        image once networking is proven (rollback boundary; see boot_ota_verify_start).
- * @version 2
+ * v3: boot log reads the confirmation state from ota_is_unconfirmed().
+ * @version 3
  * @req REQ-BOOT-001
  * @req REQ-NET-001
  * @req REQ-OTA-002
@@ -733,7 +751,7 @@ static void boot_network_early(const clock_settings_t *cfg)
     boot_ota_verify_start(cfg->wifi_configured && cfg->wifi_ssid[0] != '\0');
     ESP_LOGI(TAG, "[BOOT] OTA: slot=%s, version=%s, %s",
              ota_get_running_partition(), ota_get_current_version(),
-             s_ota_verify_pending ? "UNCONFIRMED (awaiting first IP)" : "valid");
+             ota_is_unconfirmed() ? "UNCONFIRMED (awaiting first IP)" : "valid");
 }
 
 /**
@@ -1068,9 +1086,9 @@ static void boot_display_init(const clock_settings_t *cfg)
 
 /**
  * @brief Never-returning loop that logs heap, internal-DRAM low-water, chip temperature and LVGL tick every 60 s.
- * @version 2
+ * v3: OTA confirmation moved to its own 1 s timer (ota_verify_tick).
+ * @version 3
  * @req REQ-BOOT-004
- * @req REQ-OTA-002
  */
 static void boot_health_loop(void)
 {
@@ -1081,7 +1099,6 @@ static void boot_health_loop(void)
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(60000));
         loop_count++;
-        boot_ota_verify_poll();
 
         size_t free_heap     = esp_get_free_heap_size();
         size_t min_heap      = esp_get_minimum_free_heap_size();

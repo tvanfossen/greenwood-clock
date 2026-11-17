@@ -1,7 +1,32 @@
 diff -ru a/host/drivers/transport/sdio/sdio_drv.c b/host/drivers/transport/sdio/sdio_drv.c
 --- a/host/drivers/transport/sdio/sdio_drv.c	2026-11-16 21:12:43.733263216 -0500
-+++ b/host/drivers/transport/sdio/sdio_drv.c	2026-11-16 21:12:43.777264372 -0500
-@@ -1147,7 +1147,19 @@
++++ b/host/drivers/transport/sdio/sdio_drv.c	2026-11-17 00:48:31.004008275 -0500
+@@ -88,6 +88,7 @@
+ #include "esp_hosted_bt.h"
+ #include "port_esp_hosted_host_config.h"
+ #include "esp_hosted_event.h"
++#include "esp_heap_caps.h"  // LOCAL PATCH (greenwood): heap stats in the RX drop log
+ 
+ static const char TAG[] = "H_SDIO_DRV";
+ 
+@@ -893,7 +894,15 @@
+ 			g_h.funcs->_h_free_align(*buf);
+ 		}
+ 		*buf = (uint8_t *)g_h.funcs->_h_malloc_align(len, HOSTED_MEM_ALIGNMENT_64);
+-		assert(*buf);
++		/* LOCAL PATCH (greenwood): return NULL instead of assert() on alloc failure.
++		 * In streaming RX mode this is where the RX buffer is allocated (internal DMA
++		 * RAM), so the caller's "drop instead of assert" check below never ran: an
++		 * in-bound but large aggregate under low internal DRAM panicked here. The old
++		 * buffer is already freed, so record size 0 and let the next packet retry. */
++		if (!*buf) {
++			double_buf.buffer[index].buf_size = 0;
++			return NULL;
++		}
+ 		double_buf.buffer[index].buf_size = len;
+ 		ESP_LOGD(TAG, "buf %d size: %ld", index, double_buf.buffer[index].buf_size);
+ 	}
+@@ -1147,7 +1156,19 @@
  #else
  		ret = sdio_get_len_from_slave(&len_from_slave, ACQUIRE_LOCK);
  #endif
@@ -22,7 +47,7 @@ diff -ru a/host/drivers/transport/sdio/sdio_drv.c b/host/drivers/transport/sdio/
  			ESP_LOGW(TAG, "invalid ret or len_from_slave: %d %ld", ret, len_from_slave);
  
  			SDIO_DRV_UNLOCK();
-@@ -1159,7 +1171,14 @@
+@@ -1159,7 +1180,17 @@
  
  		/* Allocate rx buffer */
  		rxbuff = sdio_rx_get_buffer(len_from_slave);
@@ -31,7 +56,10 @@ diff -ru a/host/drivers/transport/sdio/sdio_drv.c b/host/drivers/transport/sdio/
 +		 * large (but in-bound) length under internal-DRAM pressure glitches the link
 +		 * rather than crashing the device. */
 +		if (!rxbuff) {
-+			ESP_LOGW(TAG, "rx buffer alloc failed for len %ld — dropping", len_from_slave);
++			ESP_LOGW(TAG, "rx buffer alloc failed for len %ld — dropping (internal DMA free=%u largest=%u)",
++			         len_from_slave,
++			         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
++			         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
 +			SDIO_DRV_UNLOCK();
 +			continue;
 +		}

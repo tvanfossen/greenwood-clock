@@ -52,6 +52,13 @@ esp_err_t network_connect(const char* ssid, const char* password);
 bool network_is_connected(void);
 
 /**
+ * @brief Whether the STA has obtained an IP at any point since boot (latched; a later
+ *        disconnect does not clear it). Used to confirm a fresh OTA image.
+ * @return true once the first IP of this boot has been obtained
+ */
+bool network_has_had_ip(void);
+
+/**
  * @brief Get current SSID
  * @param ssid Buffer to store SSID (must be at least 33 bytes)
  * @return ESP_OK on success

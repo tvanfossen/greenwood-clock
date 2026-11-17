@@ -2265,6 +2265,7 @@ static esp_err_t settings_get_handler(httpd_req_t *req)
 
 /** What a settings POST changed, so the handler applies only those parts live. */
 typedef struct {
+    bool brightness;
     bool bg;
     bool text_color;
     bool anim;
@@ -2273,7 +2274,8 @@ typedef struct {
 
 /**
  * @brief Merge brightness / text_color / background_image from @p root into @p cfg.
- * @version 1
+ * v2: records a brightness change so it is applied live (it was saved but never applied).
+ * @version 2
  * @dg_internal
  */
 static void settings_merge_blob_fields(const cJSON *root, clock_settings_t *cfg, settings_changes_t *ch)
@@ -2282,6 +2284,7 @@ static void settings_merge_blob_fields(const cJSON *root, clock_settings_t *cfg,
     if ((j = cJSON_GetObjectItem(root, "brightness")) && cJSON_IsNumber(j) &&
         j->valueint >= 0 && j->valueint <= 100) {
         cfg->brightness = (uint8_t)j->valueint;
+        ch->brightness = true;
     }
     if ((j = cJSON_GetObjectItem(root, "text_color")) && cJSON_IsString(j) &&
         j->valuestring[0] == '#' && strlen(j->valuestring) == 7) {
@@ -2311,26 +2314,46 @@ static bool settings_parse_anim(const cJSON *root, settings_changes_t *ch)
 }
 
 /**
- * @brief Persist and apply live: refresh background / text colour, switch clock animation.
+ * @brief Persist the clock-animation preference and switch to it live.
  * @version 1
+ * @dg_internal
+ * @return ESP_OK, or the NVS error (logged).
+ */
+static esp_err_t settings_apply_anim(clock_anim_t anim)
+{
+    esp_err_t err = clock_anim_pref_set(anim);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Clock animation save failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    clock_animation_select(anim);
+    return ESP_OK;
+}
+
+/**
+ * @brief Persist and apply live: refresh background / text colour, switch clock animation.
+ * v2: the blob and the animation preference are saved and applied independently, so a
+ *     failed animation save no longer leaves a saved-but-unapplied background/colour;
+ *     brightness is now applied live too.
+ * @version 2
  * @dg_internal
  * @return ESP_OK, or the first persistence error (logged).
  */
 static esp_err_t settings_persist_and_apply(const clock_settings_t *cfg, const settings_changes_t *ch)
 {
     esp_err_t err = settings_save(cfg);
-    if (err == ESP_OK && ch->anim) err = clock_anim_pref_set(ch->anim_value);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Settings save failed: %s", esp_err_to_name(err));
         return err;
     }
-    if (ch->bg) display_fsm_refresh_background();       // previously saved but never applied
+    if (ch->brightness) display_fsm_refresh_brightness(cfg->brightness);
+    if (ch->bg) display_fsm_refresh_background();
     if (ch->text_color) display_fsm_refresh_text_color();
-    if (ch->anim) clock_animation_select(ch->anim_value);
+    esp_err_t anim_err = ch->anim ? settings_apply_anim(ch->anim_value) : ESP_OK;
     ESP_LOGI(TAG, "Settings updated: brightness=%u text_color=#%06lx bg=%s anim=%s",
              cfg->brightness, (unsigned long)cfg->text_color, cfg->background_image,
              ch->anim ? clock_anim_name(ch->anim_value) : "(unchanged)");
-    return ESP_OK;
+    return anim_err;
 }
 
 /**

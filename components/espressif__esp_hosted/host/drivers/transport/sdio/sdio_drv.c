@@ -88,6 +88,7 @@
 #include "esp_hosted_bt.h"
 #include "port_esp_hosted_host_config.h"
 #include "esp_hosted_event.h"
+#include "esp_heap_caps.h"  // LOCAL PATCH (greenwood): heap stats in the RX drop log
 
 static const char TAG[] = "H_SDIO_DRV";
 
@@ -893,7 +894,15 @@ static uint8_t * sdio_rx_get_buffer(uint32_t len)
 			g_h.funcs->_h_free_align(*buf);
 		}
 		*buf = (uint8_t *)g_h.funcs->_h_malloc_align(len, HOSTED_MEM_ALIGNMENT_64);
-		assert(*buf);
+		/* LOCAL PATCH (greenwood): return NULL instead of assert() on alloc failure.
+		 * In streaming RX mode this is where the RX buffer is allocated (internal DMA
+		 * RAM), so the caller's "drop instead of assert" check below never ran: an
+		 * in-bound but large aggregate under low internal DRAM panicked here. The old
+		 * buffer is already freed, so record size 0 and let the next packet retry. */
+		if (!*buf) {
+			double_buf.buffer[index].buf_size = 0;
+			return NULL;
+		}
 		double_buf.buffer[index].buf_size = len;
 		ESP_LOGD(TAG, "buf %d size: %ld", index, double_buf.buffer[index].buf_size);
 	}
@@ -1175,7 +1184,10 @@ static void sdio_read_task(void const* pvParameters)
 		 * large (but in-bound) length under internal-DRAM pressure glitches the link
 		 * rather than crashing the device. */
 		if (!rxbuff) {
-			ESP_LOGW(TAG, "rx buffer alloc failed for len %ld — dropping", len_from_slave);
+			ESP_LOGW(TAG, "rx buffer alloc failed for len %ld — dropping (internal DMA free=%u largest=%u)",
+			         len_from_slave,
+			         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
+			         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
 			SDIO_DRV_UNLOCK();
 			continue;
 		}
