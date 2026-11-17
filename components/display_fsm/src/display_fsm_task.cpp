@@ -1072,24 +1072,21 @@ extern "C" void display_fsm_refresh_brightness(uint8_t percent)
 /**
  * @brief Reload the text colour from settings and apply it to the clock widget.
  *
- * @version 1
+ * v2: applies the same background-contrast derivation as boot (apply_clock_bg_contrast).
+ *     It used to set the raw colour, so a colour set live looked different after every
+ *     reboot/OTA, where the boot path legibility-adjusted it (white over a bright area
+ *     turned black), which read as "the colour resets to black".
+ * @version 2
  * @req REQ-BG-002
  */
 extern "C" void display_fsm_refresh_text_color(void)
 {
-    clock_widget_t *cw = DisplayFsm::get_clock();
-    if (!cw) return;
+    if (!DisplayFsm::get_clock()) return;
 
     clock_settings_t cfg;
     if (settings_load(&cfg) != ESP_OK) return;
 
-    lv_color_t color = lv_color_make(
-        (cfg.text_color >> 16) & 0xFF,
-        (cfg.text_color >>  8) & 0xFF,
-         cfg.text_color        & 0xFF);
-
-    lvgl_port_lock(0);
-    clock_widget_set_color(cw, color);
-    lvgl_port_unlock();
-    ESP_LOGI(TAG, "Text color refreshed: 0x%06lX", (unsigned long)cfg.text_color);
+    apply_clock_bg_contrast(&cfg);   // takes the LVGL lock itself
+    ESP_LOGI(TAG, "Text color refreshed: 0x%06lX (background-contrast adjusted)",
+             (unsigned long)cfg.text_color);
 }
