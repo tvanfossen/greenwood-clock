@@ -1,3 +1,6 @@
+## @file test_lottie_keyframes.py
+## @brief Structural test: every animated property in the generated Lottie set has strictly increasing keyframe times.
+## @version 1
 """Structural tests for generated Lottie files.
 
 A Lottie player interpolates between consecutive keyframes in time order; a
@@ -17,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent / "tools" / "lottie_gen" / "output
 
 
 ## @brief Yield (json_path, keyframe_list) for every animated property in a Lottie tree.
-## @utility
+## @req REQ-LOTTIE-002
 ## @version 1
 def animated_props(node, path="$"):
     if isinstance(node, dict):
@@ -31,7 +34,7 @@ def animated_props(node, path="$"):
 
 
 ## @brief Problems in one file: non-increasing keyframe times.
-## @utility
+## @req REQ-LOTTIE-002
 ## @version 1
 ## @return List of human-readable problem strings.
 def check_file(path):
@@ -46,7 +49,7 @@ def check_file(path):
 
 
 ## @brief Check every generated file; print failures; exit 1 on any.
-## @utility
+## @req REQ-LOTTIE-002
 ## @version 1
 ## @return Process exit code.
 def main():

@@ -1,5 +1,6 @@
 /**
  * @file clock_anim_pref.c
+ * @version 1
  * @brief NVS persistence for the clock-screen animation choice.
  */
 #include "clock_anim_pref.h"

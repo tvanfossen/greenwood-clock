@@ -1,5 +1,6 @@
 /**
  * @file test_leaf_physics.c
+ * @version 1
  * @brief Host tests: leaf_physics reproduces the regimes reported by
  *        Andersen, Pesavento & Wang (2005b), section 5.2 / figure 3:
  *        "periodic fluttering for I* = 1.1, period-one tumbling for I* = 1.4".
@@ -68,7 +69,7 @@ static regime_t simulate(float i_star, float dt)
 /**
  * @brief Coefficients equal the values stated in section 5.2.
  * @version 1
- * @req REQ-LEAF-001
+ * @req REQ-ANIM-003
  */
 static void test_coefficients_match_paper(void)
 {
@@ -82,7 +83,7 @@ static void test_coefficients_match_paper(void)
 /**
  * @brief I* = 1.1 flutters: bounded angle (< pi), repeated angular-velocity reversals, descends.
  * @version 1
- * @req REQ-LEAF-001
+ * @req REQ-ANIM-003
  */
 static void test_flutter_at_1_1(void)
 {
@@ -98,7 +99,7 @@ static void test_flutter_at_1_1(void)
 /**
  * @brief I* = 1.4 tumbles: the angle winds through more than a full turn.
  * @version 1
- * @req REQ-LEAF-001
+ * @req REQ-ANIM-003
  */
 static void test_tumble_at_1_4(void)
 {
@@ -112,7 +113,7 @@ static void test_tumble_at_1_4(void)
 /**
  * @brief The on-device step size (0.02) keeps the same regime as a fine step.
  * @version 1
- * @req REQ-LEAF-001
+ * @req REQ-ANIM-003
  */
 static void test_device_step_size(void)
 {
@@ -124,6 +125,8 @@ static void test_device_step_size(void)
 
 /**
  * @brief Run all leaf tests.
+ * @req REQ-ANIM-003
+ * @req REQ-TOOL-004
  * @version 2
  * @return 0 when every check passed.
  */

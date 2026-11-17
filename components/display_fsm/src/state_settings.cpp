@@ -1,5 +1,8 @@
-// components/display_fsm/src/state_settings.cpp
-//
+/**
+ * @file state_settings.cpp
+ * @version 1
+ * @brief Settings state: on-device settings sub-screens (Wi-Fi, brightness, background, colour, animation, about) on an internal navigation stack.
+ */
 // Settings state — manages settings sub-screens with an internal navigation
 // stack.  All sub-screens are LVGL containers on the shared s_screen, not
 // separate LVGL screens.  The FSM sees only one state: Settings.
@@ -105,7 +108,7 @@ static void destroy_all_subs(void)
 /**
  * @brief Hide the current sub-screen, create the requested one on demand, show it and push it on the stack.
  * @version 1
- * @dg_internal
+ * @req REQ-UI-001
  */
 static void show_sub(settings_sub_screen_t sub)
 {
@@ -138,7 +141,7 @@ static void show_sub(settings_sub_screen_t sub)
 /**
  * @brief Destroy the top sub-screen and re-show the previous one; at menu level, send DISPLAY_EVT_SETTINGS_BACK to exit settings.
  * @version 1
- * @dg_internal
+ * @req REQ-UI-001
  */
 static void pop_sub(void)
 {
@@ -301,7 +304,7 @@ static void menu_add_item(lv_obj_t *list, const char *icon,
 /**
  * @brief Build the top-level settings menu list, including the reboot button.
  * @version 1
- * @dg_internal
+ * @req REQ-UI-001
  * @return The sub-screen container.
  */
 static lv_obj_t *create_sub_menu(lv_obj_t *parent)
@@ -362,7 +365,7 @@ static void wifi_network_select_cb(lv_event_t *e);
 /**
  * @brief Update the status label with the scan count and add a selectable button per found network.
  * @version 1
- * @dg_internal
+ * @req REQ-NET-002
  */
 static void wifi_scan_populate(const wifi_ap_info_t *ap_list, uint16_t found)
 {
@@ -382,7 +385,7 @@ static void wifi_scan_populate(const wifi_ap_info_t *ap_list, uint16_t found)
 /**
  * @brief Clear the list, run a blocking WiFi scan with the LVGL lock released, then populate results or report none found.
  * @version 1
- * @dg_internal
+ * @req REQ-NET-002
  */
 static void wifi_scan_run(void)
 {
@@ -410,6 +413,7 @@ static void wifi_scan_run(void)
  * @brief Scan button handler: run a WiFi scan.
  * @version 1
  * @callback
+ * @req REQ-NET-002
  */
 static void wifi_scan_btn_cb(lv_event_t *e)
 {
@@ -422,6 +426,7 @@ static void wifi_scan_btn_cb(lv_event_t *e)
  * @brief Network button handler: record the selected SSID and reveal the password textarea and keyboard.
  * @version 1
  * @callback
+ * @req REQ-NET-002
  */
 static void wifi_network_select_cb(lv_event_t *e)
 {
@@ -448,6 +453,8 @@ static void wifi_network_select_cb(lv_event_t *e)
  * @brief Connect button handler: connect to the selected SSID with the LVGL lock released and persist credentials to NVS on success.
  * @version 1
  * @callback
+ * @req REQ-NET-002
+ * @req REQ-UI-001
  */
 static void wifi_connect_btn_cb(lv_event_t *e)
 {
@@ -493,7 +500,8 @@ static void wifi_connect_btn_cb(lv_event_t *e)
 /**
  * @brief Build the WiFi sub-screen: status label, scan button, network list, hidden password entry, connect button and keyboard.
  * @version 1
- * @dg_internal
+ * @req REQ-UI-001
+ * @req REQ-NET-002
  * @return The sub-screen container.
  */
 static lv_obj_t *create_sub_wifi(lv_obj_t *parent)
@@ -564,6 +572,7 @@ static lv_obj_t *create_sub_wifi(lv_obj_t *parent)
  * @brief Slider handler: apply the new backlight brightness, update the label and save it to NVS with the LVGL lock released.
  * @version 1
  * @callback
+ * @req REQ-UI-001
  */
 static void brightness_slider_cb(lv_event_t *e)
 {
@@ -597,7 +606,7 @@ static void brightness_slider_cb(lv_event_t *e)
 /**
  * @brief Build the brightness sub-screen with a 10-100% slider initialised from saved settings.
  * @version 1
- * @dg_internal
+ * @req REQ-UI-001
  * @return The sub-screen container.
  */
 static lv_obj_t *create_sub_brightness(lv_obj_t *parent)
@@ -664,6 +673,8 @@ static void bg_path_cleanup_cb(lv_event_t *e)
  * @brief Background button handler: save the chosen image path to NVS, refresh the background and show success.
  * @version 1
  * @callback
+ * @req REQ-UI-001
+ * @req REQ-BG-001
  */
 static void background_select_cb(lv_event_t *e)
 {
@@ -694,7 +705,8 @@ static void background_select_cb(lv_event_t *e)
 /**
  * @brief Add a selectable list button for each PNG/GIF file in /sdcard/backgrounds.
  * @version 1
- * @dg_internal
+ * @req REQ-UI-001
+ * @req REQ-BG-001
  * @return Number of image files added, or -1 if the directory cannot be opened.
  */
 static int bg_scan_directory(lv_obj_t *list)
@@ -729,7 +741,8 @@ static int bg_scan_directory(lv_obj_t *list)
 /**
  * @brief Build the background selector list from the SD card, showing a warning entry if unmounted, unreadable or empty.
  * @version 1
- * @dg_internal
+ * @req REQ-UI-001
+ * @req REQ-BG-001
  * @return The sub-screen container.
  */
 static lv_obj_t *create_sub_background(lv_obj_t *parent)
@@ -787,6 +800,7 @@ static constexpr int NUM_COLOR_PRESETS = sizeof(COLOR_PRESETS) / sizeof(COLOR_PR
  * @brief Color button handler: save the chosen text color to NVS, refresh the clock text color and show success.
  * @version 1
  * @callback
+ * @req REQ-UI-001
  */
 static void color_select_cb(lv_event_t *e)
 {
@@ -815,7 +829,7 @@ static void color_select_cb(lv_event_t *e)
 /**
  * @brief Build the text color preset list with the currently saved color focused.
  * @version 1
- * @dg_internal
+ * @req REQ-UI-001
  * @return The sub-screen container.
  */
 static lv_obj_t *create_sub_text_color(lv_obj_t *parent)
@@ -1019,7 +1033,8 @@ static lv_obj_t *create_sub_animation(lv_obj_t *parent)
 /**
  * @brief Build the About sub-screen showing version, platform, MAC, IP and heap statistics.
  * @version 1
- * @dg_internal
+ * @req REQ-UI-001
+ * @req REQ-OTA-003
  * @return The sub-screen container.
  */
 static lv_obj_t *create_sub_about(lv_obj_t *parent)
@@ -1074,6 +1089,8 @@ static lv_obj_t *create_sub_about(lv_obj_t *parent)
 /**
  * @brief FSM entry: pause the scheduler, create the settings root container, reset navigation and show the menu.
  * @version 1
+ * @req REQ-UI-001
+ * @req REQ-DISP-002
  */
 void Settings::entry()
 {
@@ -1104,6 +1121,8 @@ void Settings::entry()
 /**
  * @brief FSM exit: clear WiFi widget globals, destroy all sub-screens and the root, then resume the scheduler.
  * @version 1
+ * @req REQ-UI-001
+ * @req REQ-DISP-002
  */
 void Settings::exit()
 {
@@ -1127,14 +1146,17 @@ void Settings::exit()
 }
 
 /**
- * @brief Swipe-up in settings does nothing (already in settings).
+ * @brief Ignore all gestures while in settings (navigation uses on-screen buttons).
  * @version 1
+ * @req REQ-UI-001
+ * @req REQ-DISP-003
  */
 void Settings::react(EvGesture const &) { }
 
 /**
  * @brief Settings back returns to clock.
  * @version 1
+ * @req REQ-UI-001
  */
 void Settings::react(EvSettingsBack const &)
 {
@@ -1144,6 +1166,8 @@ void Settings::react(EvSettingsBack const &)
 /**
  * @brief Clock updates still work in settings: refresh the clock widget time.
  * @version 1
+ * @req REQ-UI-001
+ * @req REQ-CLOCK-002
  */
 void Settings::react(EvClockUpdate const &e)
 {
@@ -1160,6 +1184,8 @@ void Settings::react(EvClockUpdate const &e)
  * transit-inducing event in that window, Settings::exit() would
  * destroy widgets the LVGL task is still using → crash.
  * @version 1
+ * @req REQ-UI-001
+ * @req REQ-DISP-001
  */
 void Settings::react(EvSurpriseMessage const &)
 {
@@ -1169,6 +1195,8 @@ void Settings::react(EvSurpriseMessage const &)
 /**
  * @brief Force-state requests are ignored while in settings (see EvSurpriseMessage handler).
  * @version 1
+ * @req REQ-UI-001
+ * @req REQ-DISP-001
  */
 void Settings::react(EvForceState const &)
 {

@@ -1,3 +1,6 @@
+## @file lottie_render.py
+## @brief Host library: offline Lottie frame rendering with ThorVG (thorvg-python) plus an alpha-coverage metric.
+## @version 1
 """Offline Lottie rendering with ThorVG — the same engine the firmware uses (LVGL lv_lottie).
 
 Note: the device embeds ThorVG 0.15.3 (components/lvgl/src/libs/thorvg/config.h);
@@ -27,7 +30,7 @@ class LottieRenderer:
     """One Lottie file bound to a fixed-size software canvas."""
 
     ## @brief Load @p path and prepare a w x h straight-alpha canvas.
-    ## @utility
+    ## @req REQ-TOOL-003
     ## @version 1
     def __init__(self, path, w, h):
         self.path = Path(path)
@@ -45,7 +48,7 @@ class LottieRenderer:
         _, self.total_frames = self.anim.get_total_frame()
 
     ## @brief Render frame @p no.
-    ## @utility
+    ## @req REQ-TOOL-003
     ## @version 1
     ## @return PIL RGBA image.
     def render(self, no):

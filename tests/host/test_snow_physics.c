@@ -1,5 +1,6 @@
 /**
  * @file test_snow_physics.c
+ * @version 1
  * @brief Host unit tests for snow_physics (run: .venv/bin/inv test-host).
  *
  * Each test states the property it specifies. Physics constants are checked
@@ -31,7 +32,7 @@ static snow_field_t s_field_b;
 /**
  * @brief Fall speed matches Locatelli & Hobbs (1974) Fig. 20 and their 0.5-1.4 m/s range.
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  */
 static void test_fall_speed_matches_locatelli_hobbs(void)
 {
@@ -48,7 +49,7 @@ static void test_fall_speed_matches_locatelli_hobbs(void)
 /**
  * @brief Sampled diameters stay in range and follow the truncated-exponential mean.
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  */
 static void test_diameter_distribution(void)
 {
@@ -73,7 +74,7 @@ static void test_diameter_distribution(void)
 /**
  * @brief Default parameters reproduce the cited sway and jitter ranges.
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  */
 static void test_defaults_cite_kajikawa(void)
 {
@@ -89,7 +90,7 @@ static void test_defaults_cite_kajikawa(void)
 /**
  * @brief Init clamps the count, places flakes on screen, and is deterministic per seed.
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  */
 static void test_init_bounds_and_determinism(void)
 {
@@ -111,7 +112,7 @@ static void test_init_bounds_and_determinism(void)
 /**
  * @brief Roughly steady_fraction of flakes have no sway (Kajikawa 1982: ~80% spiral).
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  */
 static void test_steady_fraction(void)
 {
@@ -130,7 +131,7 @@ static void test_steady_fraction(void)
 /**
  * @brief Nearer flakes move more pixels per second than identical far ones (perspective parallax).
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  */
 static void test_parallax(void)
 {
@@ -160,7 +161,7 @@ static void test_parallax(void)
 /**
  * @brief Long simulation keeps every flake inside the respawn envelope; no flake is lost.
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  */
 static void test_recycling(void)
 {
@@ -180,7 +181,7 @@ static void test_recycling(void)
 /**
  * @brief Gentle default: a mid-depth, mid-size flake takes several seconds to cross the screen.
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  */
 static void test_gentle_crossing_time(void)
 {
@@ -194,6 +195,8 @@ static void test_gentle_crossing_time(void)
 
 /**
  * @brief Run all tests and report.
+ * @req REQ-ANIM-002
+ * @req REQ-TOOL-004
  * @version 1
  * @return 0 when every check passed, 1 otherwise.
  */

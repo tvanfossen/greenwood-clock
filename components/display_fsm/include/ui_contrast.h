@@ -1,5 +1,8 @@
-// components/display_fsm/include/ui_contrast.h
-//
+/**
+ * @file ui_contrast.h
+ * @version 1
+ * @brief Text-legibility helpers: WCAG contrast ratio, black/white pick and OKLCH lightness-adjusted legible colour.
+ */
 // Text-legibility helpers. Two distinct problems, two tools:
 //
 //  - ui_text_on(bg): pick black or white — whichever has the higher WCAG

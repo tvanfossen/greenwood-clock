@@ -1,5 +1,6 @@
 /**
  * @file particle_view.c
+ * @version 1
  * @brief Shared particle-field renderer: one custom-draw object, per-particle dirty rects.
  */
 #include "particle_view.h"
@@ -121,7 +122,7 @@ static void pv_timer_cb(lv_timer_t *t)
 /**
  * @brief Allocate in SPIRAM; create the click-through object and a paused timer.
  * @version 1
- * @req REQ-ANIM-003
+ * @req REQ-ANIM-004
  * @return New view, or NULL on allocation failure.
  */
 particle_view_t *particle_view_create(lv_obj_t *parent, const particle_view_ops_t *ops, void *model)
@@ -149,7 +150,7 @@ particle_view_t *particle_view_create(lv_obj_t *parent, const particle_view_ops_
 /**
  * @brief Run or freeze; resuming resets dt and the perf window so nothing jumps.
  * @version 1
- * @req REQ-ANIM-003
+ * @req REQ-ANIM-004
  */
 void particle_view_set_running(particle_view_t *v, bool running)
 {
@@ -169,7 +170,7 @@ void particle_view_set_running(particle_view_t *v, bool running)
 /**
  * @brief Tear down timer, object and storage (not the model).
  * @version 1
- * @req REQ-ANIM-003
+ * @req REQ-ANIM-004
  */
 void particle_view_destroy(particle_view_t *v)
 {

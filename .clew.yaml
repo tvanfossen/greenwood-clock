@@ -7,7 +7,7 @@ guard:
   output_dir: .claude/tmp/clew-guard/
 
   validate:
-    # Vendored / generated code only — mirrors the knots exclude list.
+    # Vendored / generated code only (vendored code is not held to the gate).
     exclude:
       - "^build/"
       - "^managed_components/"
@@ -15,11 +15,12 @@ guard:
       - "^components/cjson/"
       - "^components/espressif__"
       - "^components/display_fsm/src/stb_image\\.h$"
+      - "^components/display_fsm/include/tinyfsm\\.hpp$"
       - "^components/fonts/"
       - "^components/images/"
       - "^tools/lottie_gen/glyph_animator/"
       - "^\\.venv/"
-      - "^\\.claude/"
+      - "(^|/)\\.claude/"
 
     # `@p` is doxygen's inline parameter-reference command, used throughout
     # the existing C sources; clew-guard's vocabulary omits it.
@@ -28,10 +29,23 @@ guard:
     presence:
       require_doxygen: true
       require_return: true
+      require_file_doxygen: true
+
+    # The web control panel (sdcard/www/app.js) is first-party; gate its JSDoc too.
+    languages:
+      javascript: {}
+
+    tags:
+      req:
+        pattern: "^REQ-[A-Z]+-[0-9]{3}$"
 
     version:
       require_present: true
       require_increment_on_change: true
 
-  # No `impact.requirements` catalog: @req coverage stays OFF until
-  # docs/requirements.yaml exists (presence + version only, by decision 2026-11-14).
+  # Every function carries @req REQ-... from this catalog, or an honest exemption
+  # (@dg_internal private helper, @utility shared helper, @callback framework-called).
+  impact:
+    requirements:
+      file: docs/requirements.yaml
+      format: yaml

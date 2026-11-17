@@ -1,5 +1,8 @@
-// components/display_fsm/include/display_states.h
-//
+/**
+ * @file display_states.h
+ * @version 1
+ * @brief Concrete display state class declarations (implementations in state_*.cpp); complete types enable transit<S>().
+ */
 // Complete state class definitions for the display FSM.
 // Method declarations only — implementations are in individual state_*.cpp files.
 // Including this header gives complete types for all states, enabling transit<S>().
@@ -15,6 +18,11 @@
 
 struct ClockFull : DisplayFsm
 {
+    /**
+     * @brief Enter the home clock state.
+     * @version 1
+     * @req REQ-CLOCK-001
+     */
     void entry() override;
     void exit() override;
 
@@ -48,6 +56,12 @@ struct WeatherOverlay : DisplayFsm
 // RadarOverlay — minimized clock + map + radar PNG
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief RadarOverlay state: minimized clock over the basemap and radar image.
+ * @version 1
+ * @req REQ-RADAR-001
+ * @return Not applicable: type declaration (clew-guard parses this struct header as a function).
+ */
 struct RadarOverlay : DisplayFsm
 {
     static radar_view_t *s_rv;
@@ -64,6 +78,12 @@ struct RadarOverlay : DisplayFsm
 // Astronomy — moon phase, sunrise/sunset, aurora
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief Astronomy state: moon phase, sunrise/sunset and aurora.
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @return Not applicable: type declaration (clew-guard parses this struct header as a function).
+ */
 struct Astronomy : DisplayFsm
 {
     static lv_obj_t *s_container;
@@ -85,6 +105,11 @@ struct PhotoSlideshow : DisplayFsm
     static void            *s_advance_timer;   // FreeRTOS TimerHandle_t
     static bool             s_first_shown;
 
+    /**
+     * @brief Enter the photo slideshow state.
+     * @version 1
+     * @req REQ-PHOTO-001
+     */
     void entry() override;
     void exit() override;
 
@@ -119,6 +144,12 @@ struct AmbientDashboard : DisplayFsm
 // SurpriseMessage — JSON layout DSL rendering
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief SurpriseMessage state: renders a JSON layout pushed via the HTTP API.
+ * @version 1
+ * @req REQ-SURP-001
+ * @return Not applicable: type declaration (clew-guard parses this struct header as a function).
+ */
 struct SurpriseMessage : DisplayFsm
 {
     static json_layout_t *s_layout;

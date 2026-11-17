@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+## @file deploy_sdcard.py
+## @brief Host tool: push every mapped repo SD-card directory (backgrounds, www, maps, icons, generated Lotties) to the device via POST /files/.
+## @version 1
 """
 Sync all SD card content from the repo to the device.
 
@@ -36,7 +39,7 @@ FILE_MAPPINGS = [
 
 
 ## @brief Yield (local_abs_path, remote_path) for every file to deploy.
-## @utility
+## @req REQ-TOOL-002
 ## @version 1
 def collect_files():
     """Yield (local_abs_path, remote_path) for every file to deploy."""
@@ -60,7 +63,7 @@ def collect_files():
 
 
 ## @brief Upload a single file.
-## @utility
+## @req REQ-TOOL-002
 ## @version 1
 ## @return (bytes_sent, http_status).
 def push_file(host, local_path, remote_path):
@@ -79,7 +82,7 @@ def push_file(host, local_path, remote_path):
 
 
 ## @brief Push every mapped local directory to the device SD card.
-## @utility
+## @req REQ-TOOL-002
 ## @version 1
 def main():
     ap = argparse.ArgumentParser(description="Sync all SD card content to device")

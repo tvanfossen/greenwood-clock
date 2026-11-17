@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+## @file convert_lottie.py
+## @brief Host tool: wrap each Lottie JSON in json/ as an embeddable LVGL C array in c_array/ (legacy; the build now loads Lotties from storage at runtime).
+## @version 1
 """
 convert_lottie.py
 
@@ -11,6 +14,9 @@ import subprocess
 from pathlib import Path
 
 
+## @brief Convert every json/*.json via filetohex.py into c_array/<name>.c with a terminator byte and a <name>_size symbol; exits 1 if filetohex.py or json/ is missing.
+## @version 1
+## @req REQ-TOOL-002
 def main():
     base = Path(__file__).parent.resolve()
     src_dir = base / "json"

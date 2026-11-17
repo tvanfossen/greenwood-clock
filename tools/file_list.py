@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+## @file file_list.py
+## @brief Host tool: list a device SD card directory via GET /files/<path>.
+## @version 1
 """
 List a directory on the SD card of the Greenwood Clock.
 
@@ -16,6 +19,9 @@ import urllib.request
 import json
 
 
+## @brief CLI entry: fetch the directory JSON listing and print each entry's size (or <dir>) and path; exit 1 on error.
+## @version 1
+## @req REQ-TOOL-001
 def main() -> None:
     ap = argparse.ArgumentParser(description="List a directory on the device SD card.")
     ap.add_argument(

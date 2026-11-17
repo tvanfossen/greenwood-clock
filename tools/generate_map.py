@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+## @file generate_map.py
+## @brief Host tool: build the 1024x600 dark radar basemap PNG from ArcGIS (EPSG:4326, bbox matching the radar overlay).
+## @version 1
 """Generate a dark-themed static map PNG for the radar overlay background.
 
 Fetches from ArcGIS MapServer using the exact same bounding box and projection
@@ -55,6 +58,10 @@ BASEMAP_SERVICES = {
 USER_AGENT = "greenwood-clock-map-gen/1.0"
 
 
+## @brief Fetch one 1024x600 PNG from an ArcGIS MapServer export endpoint for an EPSG:4326 bbox; warns if the reply looks non-image.
+## @version 1
+## @req REQ-TOOL-002
+## @return The decoded PIL image.
 def fetch_arcgis_map(
     service_url: str,
     bbox: tuple[float, float, float, float],
@@ -86,6 +93,10 @@ def fetch_arcgis_map(
     return Image.open(BytesIO(data))
 
 
+## @brief Composite the dark-gray basemap with the reference-label layer (base only if labels fail) around lat/lon +/- bbox_deg.
+## @version 1
+## @req REQ-TOOL-002
+## @return A 1024x600 RGB PIL image.
 def generate_map(lat: float, lon: float, bbox_deg: float) -> Image.Image:
     """Generate a 1024x600 map using ArcGIS dark basemap + reference labels."""
     bbox = (
@@ -125,6 +136,9 @@ def generate_map(lat: float, lon: float, bbox_deg: float) -> Image.Image:
     return result
 
 
+## @brief CLI entry: generate the map for --lat/--lon/--bbox-deg and save it as an optimized PNG to --output.
+## @version 1
+## @req REQ-TOOL-002
 def main():
     parser = argparse.ArgumentParser(
         description="Generate dark map PNG for radar overlay (ArcGIS, EPSG:4326)"

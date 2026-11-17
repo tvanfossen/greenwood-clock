@@ -1,5 +1,6 @@
 /**
  * @file leaf_physics.c
+ * @version 1
  * @brief Thin falling card in air, Andersen, Pesavento & Wang (2005b), eqs. 5.1-5.3 + 4.7-4.9.
  */
 #include "leaf_physics.h"
@@ -11,7 +12,7 @@
 /**
  * @brief Section 5.2 coefficients.
  * @version 2
- * @req REQ-LEAF-001
+ * @req REQ-ANIM-003
  */
 void leaf_coeffs_default(leaf_coeffs_t *c)
 {
@@ -68,7 +69,7 @@ static leaf_vec_t leaf_axpy(const leaf_vec_t *s, const leaf_vec_t *d, float k)
 /**
  * @brief One classical RK4 step.
  * @version 2
- * @req REQ-LEAF-001
+ * @req REQ-ANIM-003
  */
 void leaf_step(const leaf_coeffs_t *c, float i_star, leaf_state_t *st, float dt)
 {
@@ -95,7 +96,7 @@ void leaf_step(const leaf_coeffs_t *c, float i_star, leaf_state_t *st, float dt)
 /**
  * @brief Rotate body-frame velocity into the laboratory frame.
  * @version 1
- * @req REQ-LEAF-001
+ * @req REQ-ANIM-003
  */
 void leaf_lab_velocity(const leaf_state_t *s, float *vx_lab, float *vy_lab)
 {

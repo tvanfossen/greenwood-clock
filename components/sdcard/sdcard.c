@@ -1,3 +1,8 @@
+/**
+ * @file sdcard.c
+ * @version 1
+ * @brief SD card mount via the BSP with graceful fallback, card/filesystem info and standard directories.
+ */
 // components/sdcard/sdcard.c
 
 #include "sdcard.h"
@@ -21,6 +26,8 @@ static sdcard_status_t s_status = SDCARD_STATUS_NOT_PRESENT;
  *
  * @param card  Card descriptor.
  * @return Literal string; no heap allocation.
+ * @version 1
+ * @req REQ-SD-002
  */
 static const char* sdcard_card_type_str(const sdmmc_card_t* card)
 {
@@ -36,6 +43,8 @@ static const char* sdcard_card_type_str(const sdmmc_card_t* card)
  * No-op if f_getfree() fails (fields remain zero-initialised).
  *
  * @param info  Info struct to fill.
+ * @version 1
+ * @req REQ-SD-002
  */
 static void sdcard_fill_fs_stats(sdcard_info_t* info)
 {
@@ -55,6 +64,8 @@ static void sdcard_fill_fs_stats(sdcard_info_t* info)
  *
  * @param info  Destination info struct.
  * @param card  Mounted card descriptor.
+ * @version 1
+ * @req REQ-SD-002
  */
 static void sdcard_populate_info(sdcard_info_t* info, const sdmmc_card_t* card)
 {
@@ -67,6 +78,8 @@ static void sdcard_populate_info(sdcard_info_t* info, const sdmmc_card_t* card)
  * @brief Ensure @p path exists as a directory, creating it if absent.
  *
  * @param path  Absolute directory path to create.
+ * @version 1
+ * @req REQ-SD-001
  */
 static void sdcard_ensure_dir(const char* path)
 {
@@ -84,6 +97,8 @@ static void sdcard_ensure_dir(const char* path)
  *
  * @param ret             Error code from bsp_sdcard_mount().
  * @param format_if_failed  Whether the caller requested formatting on failure.
+ * @version 1
+ * @req REQ-SD-001
  */
 static void sdcard_log_mount_failure(esp_err_t ret, bool format_if_failed)
 {
@@ -101,6 +116,8 @@ static void sdcard_log_mount_failure(esp_err_t ret, bool format_if_failed)
 
 /**
  * @brief Print the mounted card info via SDMMC and log the mount point.
+ * @version 1
+ * @req REQ-SD-001
  */
 static void sdcard_print_card_info(void)
 {
@@ -113,6 +130,12 @@ static void sdcard_print_card_info(void)
 // Public API
 // =============================================================================
 
+/**
+ * @brief Reset the SD subsystem state to NOT_PRESENT before mounting.
+ * @version 1
+ * @req REQ-SD-001
+ * @return ESP_OK (always).
+ */
 esp_err_t sdcard_init(void)
 {
     ESP_LOGI(TAG, "Initializing SD card subsystem");
@@ -126,6 +149,8 @@ esp_err_t sdcard_init(void)
  * @param format_if_failed  If true, a formatting notice is logged on ESP_FAIL
  *                          (actual formatting is not yet implemented via BSP).
  * @return ESP_OK on success; error code on failure.
+ * @version 1
+ * @req REQ-SD-001
  */
 esp_err_t sdcard_mount(bool format_if_failed)
 {
@@ -162,6 +187,12 @@ esp_err_t sdcard_mount(bool format_if_failed)
     return ESP_OK;
 }
 
+/**
+ * @brief Unmount the SD card via the BSP and update the status.
+ * @version 1
+ * @req REQ-SD-001
+ * @return ESP_OK on success, ESP_ERR_INVALID_STATE if not mounted, or the BSP unmount error.
+ */
 esp_err_t sdcard_unmount(void)
 {
     if (s_status != SDCARD_STATUS_MOUNTED) {
@@ -180,6 +211,12 @@ esp_err_t sdcard_unmount(void)
     return ret;
 }
 
+/**
+ * @brief Report whether the SD card is currently mounted.
+ * @version 1
+ * @req REQ-SD-001
+ * @return true if mounted.
+ */
 bool sdcard_is_mounted(void)
 {
     return (s_status == SDCARD_STATUS_MOUNTED);
@@ -192,6 +229,8 @@ bool sdcard_is_mounted(void)
  * @param info  Destination info struct.
  * @return ESP_OK, ESP_ERR_INVALID_ARG if info is NULL, or
  *         ESP_ERR_INVALID_STATE if not mounted / card handle unavailable.
+ * @version 1
+ * @req REQ-SD-002
  */
 esp_err_t sdcard_get_info(sdcard_info_t* info)
 {
@@ -204,6 +243,12 @@ esp_err_t sdcard_get_info(sdcard_info_t* info)
     return ESP_OK;
 }
 
+/**
+ * @brief Stub: formatting through this module is not implemented; logs a hint to format on a PC (remote format is done by the HTTP /api/sdcard/format handler).
+ * @version 1
+ * @req REQ-SD-002
+ * @return ESP_ERR_NOT_SUPPORTED (always).
+ */
 esp_err_t sdcard_format(void)
 {
     ESP_LOGW(TAG, "Format via BSP not yet implemented");
@@ -217,6 +262,8 @@ esp_err_t sdcard_format(void)
  * Silently skips directories that already exist.
  *
  * @return ESP_OK, or ESP_ERR_INVALID_STATE if the card is not mounted.
+ * @version 1
+ * @req REQ-SD-001
  */
 esp_err_t sdcard_create_directories(void)
 {

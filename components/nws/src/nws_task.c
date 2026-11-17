@@ -1,7 +1,9 @@
-// components/nws/src/nws_task.c
-//
-// FreeRTOS task: staggered polling of NWS endpoints, delivering events to
-// the display FSM.  Single task, priority 3, 12 KB stack.
+/**
+ * @file nws_task.c
+ * @version 1
+ * @brief FreeRTOS task: staggered polling of NWS endpoints, delivering events to
+ *        the display FSM.  Single task, priority 3, 12 KB stack.
+ */
 
 #include "nws_internal.h"
 
@@ -10,6 +12,11 @@ static const char *TAG = "nws_task";
 // Event delivery callback — set by nws_init(), NULL-safe
 static nws_event_cb_t s_event_cb;
 
+/**
+ * @brief Deliver @p evt through the registered event callback, if one is set.
+ * @version 1
+ * @dg_internal
+ */
 static void send_event(const display_event_t *evt)
 {
     if (s_event_cb) {
@@ -57,11 +64,42 @@ static size_t           s_radar_png_len = 0;
 static int              s_prev_alert_count;
 static char             s_prev_alert_event[64];
 
+/**
+ * @brief Last fetched current conditions (written only by nws_task).
+ * @version 1
+ * @req REQ-WX-002
+ * @return Pointer to the cached conditions; check its valid flag.
+ */
 const nws_conditions_t *nws_get_conditions(void) { return &s_conditions; }
+/**
+ * @brief Last fetched forecast (written only by nws_task).
+ * @version 1
+ * @req REQ-WX-003
+ * @return Pointer to the cached forecast; check its valid flag.
+ */
 const nws_forecast_t   *nws_get_forecast(void)   { return &s_forecast; }
+/**
+ * @brief Last fetched active alerts (written only by nws_task).
+ * @version 1
+ * @req REQ-ALERT-001
+ * @return Pointer to the cached alerts; check its valid flag.
+ */
 const nws_alerts_t     *nws_get_alerts(void)     { return &s_alerts; }
+/**
+ * @brief Last fetched planetary Kp index.
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @return Kp value, 0.0 until the first successful fetch.
+ */
 float                   nws_get_kp_index(void)   { return s_kp_index; }
 
+/**
+ * @brief Cached radar PNG from the last successful fetch.
+ * @version 1
+ * @req REQ-RADAR-001
+ * @return SPIRAM PNG buffer (valid until the next radar fetch; caller must not
+ *         free), or NULL if none cached. @p len_out receives its length if non-NULL.
+ */
 const uint8_t *nws_get_radar_png(size_t *len_out)
 {
     if (len_out) *len_out = s_radar_png_len;
@@ -73,6 +111,12 @@ const uint8_t *nws_get_radar_png(size_t *len_out)
 // Meaningful reflectivity data pushes well past 20KB.
 #define RADAR_PRECIP_SIZE_THRESHOLD 20000
 
+/**
+ * @brief Whether the cached radar image indicates precipitation (PNG > 20000 B).
+ * @version 1
+ * @req REQ-RADAR-002
+ * @return true if a radar PNG is cached and exceeds the size threshold.
+ */
 bool nws_radar_has_precipitation(void)
 {
     return (s_radar_png != NULL && s_radar_png_len > RADAR_PRECIP_SIZE_THRESHOLD);
@@ -82,6 +126,12 @@ bool nws_radar_has_precipitation(void)
 // Alert change detection
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief Compare @p new_alerts with the last snapshot (count and first event name).
+ * @version 1
+ * @req REQ-ALERT-001
+ * @return true if the alert count or the first alert's event differs.
+ */
 static bool alerts_changed(const nws_alerts_t *new_alerts)
 {
     if (new_alerts->alert_count != s_prev_alert_count) return true;
@@ -90,6 +140,11 @@ static bool alerts_changed(const nws_alerts_t *new_alerts)
     return false;
 }
 
+/**
+ * @brief Record the alert count and first event name for later change detection.
+ * @version 1
+ * @dg_internal
+ */
 static void alerts_snapshot(const nws_alerts_t *alerts)
 {
     s_prev_alert_count = alerts->alert_count;
@@ -116,6 +171,12 @@ typedef struct {
 } poll_stats_t;
 
 // True if a source is due (never fetched, or its interval has elapsed).
+/**
+ * @brief Decide whether a source is due for a fetch.
+ * @version 1
+ * @req REQ-WX-004
+ * @return true if never fetched (@p last == 0) or @p interval_s has elapsed.
+ */
 static bool poll_due(TickType_t now, TickType_t last, uint32_t interval_s)
 {
     return last == 0 || (now - last) >= pdMS_TO_TICKS(interval_s * 1000);
@@ -124,12 +185,24 @@ static bool poll_due(TickType_t now, TickType_t last, uint32_t interval_s)
 // Fabricate a "last fetch" tick so a source first becomes due `due_in_s` seconds
 // after `t0`. Used to spread each source's first fetch across separate poll cycles
 // at boot (unsigned tick wraparound makes now-last resolve to the true elapsed).
+/**
+ * @brief Compute a synthetic last-fetch tick so a source first falls due
+ *        @p due_in_s seconds after @p t0.
+ * @version 1
+ * @req REQ-WX-004
+ * @return The seeded tick, never 0 (0 means "never fetched").
+ */
 static TickType_t seed_due_in(TickType_t t0, uint32_t interval_s, uint32_t due_in_s)
 {
     TickType_t last = t0 - pdMS_TO_TICKS((interval_s - due_in_s) * 1000);
     return last == 0 ? 1 : last;   // 0 means "never fetched" (immediately due)
 }
 
+/**
+ * @brief Send a payload-less display event of @p type.
+ * @version 1
+ * @dg_internal
+ */
 static void send_simple_event(display_event_type_t type)
 {
     display_event_t evt = {};
@@ -138,12 +211,24 @@ static void send_simple_event(display_event_type_t type)
 }
 
 // Stagger between fetches in a cycle, then refresh `now`.
+/**
+ * @brief Sleep STAGGER_S (10 s) between fetches in a cycle, then refresh @p now.
+ * @version 1
+ * @req REQ-WX-004
+ */
 static void poll_stagger(TickType_t *now)
 {
     vTaskDelay(pdMS_TO_TICKS(STAGGER_S * 1000));
     *now = xTaskGetTickCount();
 }
 
+/**
+ * @brief If due (15 min), fetch current conditions, emit DISPLAY_EVT_WEATHER_UPDATE
+ *        on success, count the attempt/failure and stagger.
+ * @version 1
+ * @req REQ-WX-002
+ * @req REQ-WX-004
+ */
 static void poll_conditions(TickType_t *now, TickType_t *last, poll_stats_t *st)
 {
     if (!poll_due(*now, *last, CONDITIONS_INTERVAL_S)) return;
@@ -159,6 +244,13 @@ static void poll_conditions(TickType_t *now, TickType_t *last, poll_stats_t *st)
     poll_stagger(now);
 }
 
+/**
+ * @brief If due (1 h), fetch the forecast, emit DISPLAY_EVT_FORECAST_UPDATE on
+ *        success, count the attempt/failure and stagger.
+ * @version 1
+ * @req REQ-WX-003
+ * @req REQ-WX-004
+ */
 static void poll_forecast(TickType_t *now, TickType_t *last, poll_stats_t *st)
 {
     if (!poll_due(*now, *last, FORECAST_INTERVAL_S)) return;
@@ -175,6 +267,12 @@ static void poll_forecast(TickType_t *now, TickType_t *last, poll_stats_t *st)
 }
 
 // Adopt freshly-fetched alerts, emitting an event only when they changed.
+/**
+ * @brief Replace the cached alerts with @p new_alerts; on change, snapshot them
+ *        and emit DISPLAY_EVT_ALERT_RECEIVED.
+ * @version 1
+ * @req REQ-ALERT-001
+ */
 static void process_alerts(const nws_alerts_t *new_alerts)
 {
     bool changed = alerts_changed(new_alerts);
@@ -186,6 +284,13 @@ static void process_alerts(const nws_alerts_t *new_alerts)
     }
 }
 
+/**
+ * @brief If due (5 min), fetch alerts into a heap buffer (~17 KB), adopt them via
+ *        process_alerts(), count the attempt/failure and stagger.
+ * @version 1
+ * @req REQ-ALERT-001
+ * @req REQ-WX-004
+ */
 static void poll_alerts(float lat, float lon, TickType_t *now,
                         TickType_t *last, poll_stats_t *st)
 {
@@ -210,6 +315,13 @@ static void poll_alerts(float lat, float lon, TickType_t *now,
     poll_stagger(now);
 }
 
+/**
+ * @brief If due (10 min), fetch radar, swap it into the cached PNG buffer and emit
+ *        DISPLAY_EVT_RADAR_READY on success, count the attempt/failure and stagger.
+ * @version 1
+ * @req REQ-RADAR-001
+ * @req REQ-WX-004
+ */
 static void poll_radar(float lat, float lon, TickType_t *now,
                        TickType_t *last, poll_stats_t *st)
 {
@@ -232,6 +344,13 @@ static void poll_radar(float lat, float lon, TickType_t *now,
     poll_stagger(now);
 }
 
+/**
+ * @brief If due (3 h), fetch the Kp index and cache it; emit DISPLAY_EVT_ASTRO_TRIGGER
+ *        when Kp >= 6.0 (aurora possible). Last fetch of the cycle, so no stagger.
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @req REQ-WX-004
+ */
 static void poll_kp(TickType_t *now, TickType_t *last, poll_stats_t *st)
 {
     if (!poll_due(*now, *last, KP_INTERVAL_S)) return;
@@ -254,6 +373,13 @@ static void poll_kp(TickType_t *now, TickType_t *last, poll_stats_t *st)
 }
 
 // True (and logs/sleeps) if internal DRAM is too low to safely do HTTP/TLS work.
+/**
+ * @brief Skip a fetch cycle when free internal DRAM is below BACKOFF_HEAP_MIN
+ *        (4000 B), sleeping BACKOFF_BASE_S (5 min) before returning.
+ * @version 1
+ * @req REQ-MEM-002
+ * @return true if DRAM was too low and the cycle was skipped.
+ */
 static bool dram_too_low_backoff(void)
 {
     size_t internal_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
@@ -264,7 +390,14 @@ static bool dram_too_low_backoff(void)
     return true;
 }
 
-// Exponential backoff when every attempted fetch failed; normal cadence otherwise.
+// Linear backoff when every attempted fetch failed; normal cadence otherwise.
+/**
+ * @brief End-of-cycle sleep: when every attempted fetch failed, back off linearly
+ *        (5 min x failure streak, capped at 30 min); otherwise reset the streak
+ *        and sleep 60 s.
+ * @version 1
+ * @req REQ-WX-004
+ */
 static void apply_backoff(const poll_stats_t *st, int *streak)
 {
     if (st->attempted > 0 && st->failed == st->attempted) {
@@ -283,6 +416,15 @@ static void apply_backoff(const poll_stats_t *st, int *streak)
     vTaskDelay(pdMS_TO_TICKS(60 * 1000));  // normal sleep between poll cycles
 }
 
+/**
+ * @brief NWS polling task entry: waits 30 s, seeds each source's first fetch into
+ *        a separate ~60 s cycle, then loops forever polling conditions, forecast,
+ *        alerts, radar and Kp, skipping cycles on low DRAM and backing off on
+ *        total failure.
+ * @version 1
+ * @callback
+ * @req REQ-WX-004
+ */
 static void nws_task_fn(void *arg)
 {
     (void)arg;
@@ -330,6 +472,16 @@ static void nws_task_fn(void *arg)
 // Public API
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief Store the event callback, clear cached data, resolve the NWS location
+ *        and start the polling task (12 KB stack, priority 3).
+ * @version 1
+ * @req REQ-WX-001
+ * @req REQ-WX-004
+ * @return ESP_OK when the task started; the nws_resolve_location() error if the
+ *         location could not be resolved (weather disabled); ESP_ERR_NO_MEM if
+ *         task creation failed.
+ */
 esp_err_t nws_init(float lat, float lon, nws_event_cb_t event_cb)
 {
     ESP_LOGI(TAG, "init: lat=%.4f lon=%.4f cb=%s", lat, lon,

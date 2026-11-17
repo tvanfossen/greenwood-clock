@@ -1,5 +1,6 @@
 /**
  * @file particle_view.h
+ * @version 1
  * @brief Shared LVGL renderer for physics particle fields (snowfall, falling leaves).
  *
  * The base owns everything that is not specific to one effect: the full-screen
@@ -34,7 +35,7 @@ typedef struct particle_view_t particle_view_t;
 /**
  * @brief Create a hidden, paused view over @p parent driving @p model through @p ops.
  * @version 1
- * @req REQ-ANIM-003
+ * @req REQ-ANIM-004
  * @return New view, or NULL on allocation failure (logged).
  */
 particle_view_t *particle_view_create(lv_obj_t *parent, const particle_view_ops_t *ops, void *model);
@@ -42,14 +43,14 @@ particle_view_t *particle_view_create(lv_obj_t *parent, const particle_view_ops_
 /**
  * @brief Show and animate (true) or hide and freeze (false).
  * @version 1
- * @req REQ-ANIM-003
+ * @req REQ-ANIM-004
  */
 void particle_view_set_running(particle_view_t *v, bool running);
 
 /**
  * @brief Delete the object and timer and free the view (the model is the caller's).
  * @version 1
- * @req REQ-ANIM-003
+ * @req REQ-ANIM-004
  */
 void particle_view_destroy(particle_view_t *v);
 

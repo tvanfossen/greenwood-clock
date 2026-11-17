@@ -1,5 +1,6 @@
 /**
  * @file snow_physics.h
+ * @version 1
  * @brief Platform-independent physics for the snowfall clock animation.
  *
  * Pure C, no LVGL / ESP-IDF dependency, so it builds and is unit-tested on
@@ -76,14 +77,14 @@ typedef struct {
 /**
  * @brief Fill @p p with the default gentle-snowfall parameters for a W x H screen.
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  */
 void snow_params_default(snow_params_t *p, int screen_w_px, int screen_h_px);
 
 /**
  * @brief Terminal fall speed of an unrimed aggregate (Locatelli & Hobbs 1974, Fig. 20).
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  * @return Fall speed in m/s for maximum dimension @p d_mm (mm).
  */
 float snow_fall_speed_mps(float d_mm);
@@ -91,7 +92,7 @@ float snow_fall_speed_mps(float d_mm);
 /**
  * @brief Draw a diameter from an exponential distribution truncated to [d_min, d_max].
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  * @return Maximum dimension in mm.
  */
 float snow_sample_diameter_mm(uint32_t *rng, float lambda_per_mm, float d_min_mm, float d_max_mm);
@@ -99,7 +100,7 @@ float snow_sample_diameter_mm(uint32_t *rng, float lambda_per_mm, float d_min_mm
 /**
  * @brief Seed a field with @p count flakes spread over the whole screen.
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  * @return Number of flakes actually created (clamped to SNOW_MAX_FLAKES).
  */
 int snow_field_init(snow_field_t *f, const snow_params_t *p, int count, uint32_t seed);
@@ -107,14 +108,14 @@ int snow_field_init(snow_field_t *f, const snow_params_t *p, int count, uint32_t
 /**
  * @brief Advance every flake by @p dt_s seconds; flakes leaving the bottom respawn at the top.
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  */
 void snow_field_step(snow_field_t *f, float dt_s);
 
 /**
  * @brief Screen-space speed scale at depth @p z_m: pixels per metre (pinhole projection).
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  * @return focal_px / z_m.
  */
 float snow_px_per_m(const snow_params_t *p, float z_m);

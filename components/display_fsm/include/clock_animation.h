@@ -1,5 +1,6 @@
 /**
  * @file clock_animation.h
+ * @version 1
  * @brief The ambient animation on the full clock screen, selectable in Settings.
  *
  * One animation is "active" (from clock_anim_pref). show()/hide() are driven
@@ -21,28 +22,28 @@ extern "C" {
 /**
  * @brief Bind to the clock screen, load the stored choice and show it.
  * @version 1
- * @req REQ-ANIM-002
+ * @req REQ-ANIM-001
  */
 void clock_animation_init(lv_obj_t *scr);
 
 /**
  * @brief Make @p anim the active animation; the previous one is hidden.
  * @version 1
- * @req REQ-ANIM-002
+ * @req REQ-ANIM-001
  */
 void clock_animation_select(clock_anim_t anim);
 
 /**
  * @brief Show (creating on first use) the active animation.
  * @version 1
- * @req REQ-ANIM-002
+ * @req REQ-ANIM-001
  */
 void clock_animation_show(void);
 
 /**
  * @brief Hide and pause the active animation.
  * @version 1
- * @req REQ-ANIM-002
+ * @req REQ-ANIM-001
  */
 void clock_animation_hide(void);
 

@@ -1,5 +1,6 @@
 /**
  * @file snowfall_view.c
+ * @version 1
  * @brief Snowfall effect: snow_physics model + round-flake drawing on the shared particle_view.
  */
 #include "snowfall_view.h"
@@ -79,7 +80,7 @@ static const particle_view_ops_t SNOW_OPS = {
 /**
  * @brief Allocate the field in SPIRAM, seed it, and attach a particle view.
  * @version 2
- * @req REQ-SNOW-002
+ * @req REQ-ANIM-002
  * @return New view, or NULL on allocation failure.
  */
 snowfall_view_t *snowfall_view_create(lv_obj_t *parent, int flake_count)
@@ -103,7 +104,7 @@ snowfall_view_t *snowfall_view_create(lv_obj_t *parent, int flake_count)
 /**
  * @brief Run or freeze the snowfall.
  * @version 3
- * @req REQ-SNOW-002
+ * @req REQ-ANIM-002
  */
 void snowfall_view_set_running(snowfall_view_t *v, bool running)
 {
@@ -113,7 +114,7 @@ void snowfall_view_set_running(snowfall_view_t *v, bool running)
 /**
  * @brief Destroy the view and free the field.
  * @version 2
- * @req REQ-SNOW-002
+ * @req REQ-ANIM-002
  */
 void snowfall_view_destroy(snowfall_view_t *v)
 {

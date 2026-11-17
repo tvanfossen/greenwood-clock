@@ -1,3 +1,8 @@
+/**
+ * @file udp_log.c
+ * @version 1
+ * @brief Live log streaming: tees ESP log output to a registered host over UDP.
+ */
 // components/udp_log/udp_log.c
 
 #include "udp_log.h"
@@ -27,6 +32,13 @@ static char             s_buf[UDP_LOG_BUF_SIZE];
 // Internal helpers
 // =============================================================================
 
+/**
+ * @brief Log hook: chain to the previous vprintf, then send the formatted line as one non-blocking UDP datagram (dropped on congestion; reentrancy-guarded).
+ * @version 1
+ * @callback
+ * @req REQ-LOG-002
+ * @return Return value of the chained vprintf (0 if none).
+ */
 static int udp_log_vprintf(const char* fmt, va_list args)
 {
     // Copy args before passing to the chained vprintf (consuming args is UB).
@@ -62,6 +74,8 @@ static int udp_log_vprintf(const char* fmt, va_list args)
  * @brief Create a UDP socket for log streaming.
  *
  * @return Socket fd on success, or -1 on failure (error already logged).
+ * @version 1
+ * @req REQ-LOG-002
  */
 static int udp_log_create_socket(void)
 {
@@ -79,6 +93,8 @@ static int udp_log_create_socket(void)
  * @param port     Destination UDP port.
  * @param dest     Output sockaddr_in to populate.
  * @return ESP_OK on success, ESP_FAIL if host_ip is not a valid IPv4 address.
+ * @version 1
+ * @req REQ-LOG-002
  */
 static esp_err_t udp_log_build_dest(const char* host_ip, uint16_t port,
                                      struct sockaddr_in* dest)
@@ -93,6 +109,12 @@ static esp_err_t udp_log_build_dest(const char* host_ip, uint16_t port,
     return ESP_OK;
 }
 
+/**
+ * @brief Start streaming log output to @p host_ip:@p port over UDP, replacing any active session.
+ * @version 1
+ * @req REQ-LOG-002
+ * @return ESP_OK on success, ESP_FAIL if the socket cannot be created or the IP is invalid.
+ */
 esp_err_t udp_log_init(const char* host_ip, uint16_t port)
 {
     if (s_active) udp_log_deinit();
@@ -109,6 +131,11 @@ esp_err_t udp_log_init(const char* host_ip, uint16_t port)
     return ESP_OK;
 }
 
+/**
+ * @brief Stop UDP log streaming, restore the previous vprintf and close the socket.
+ * @version 1
+ * @req REQ-LOG-002
+ */
 void udp_log_deinit(void)
 {
     if (!s_active) return;
@@ -122,6 +149,12 @@ void udp_log_deinit(void)
     ESP_LOGI(TAG, "UDP log streaming stopped");
 }
 
+/**
+ * @brief Report whether UDP log streaming is active.
+ * @version 1
+ * @req REQ-LOG-002
+ * @return true while logs are being streamed.
+ */
 bool udp_log_is_active(void)
 {
     return s_active;

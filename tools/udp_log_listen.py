@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+## @file udp_log_listen.py
+## @brief Host tool: register this host with POST /debug/udp_log and print the device's UDP log stream.
+## @version 1
 """
 Listen for UDP log stream from the Greenwood Clock and print to stdout.
 
@@ -11,6 +14,10 @@ import sys
 import argparse
 
 
+## @brief Find this host's outbound IPv4 address by connecting a UDP socket toward 8.8.8.8.
+## @version 1
+## @req REQ-TOOL-001
+## @return The local IP string, or "127.0.0.1" if it cannot be determined.
 def get_local_ip() -> str:
     """Return the machine's outbound IPv4 address (best guess)."""
     try:
@@ -23,6 +30,9 @@ def get_local_ip() -> str:
         return "127.0.0.1"
 
 
+## @brief POST {host, port} to /debug/udp_log so the device streams logs here; on failure prints a note and continues.
+## @version 1
+## @req REQ-TOOL-001
 def register_with_device(device_host: str, my_ip: str, port: int) -> None:
     import urllib.request
     import json
@@ -46,6 +56,9 @@ def register_with_device(device_host: str, my_ip: str, port: int) -> None:
         )
 
 
+## @brief CLI entry: bind the UDP port, optionally register with the device, then print received datagrams until Ctrl+C.
+## @version 1
+## @req REQ-TOOL-001
 def main() -> None:
     ap = argparse.ArgumentParser(description="Receive live UDP log stream from device.")
     ap.add_argument(

@@ -1,3 +1,8 @@
+/**
+ * @file network.c
+ * @version 1
+ * @brief Wi-Fi station over the ESP32-C6 coprocessor: connect with reconnect backoff, AP scan, boot-time SNTP wait.
+ */
 // components/network/network.c
 
 #include "network.h"
@@ -315,6 +320,7 @@ static void network_configure_and_start(void) {
  * @brief Bring up TCP/IP, the Wi-Fi driver, event handlers and start STA mode without connecting.
  * @version 1
  * @return ESP_OK (also when already initialized).
+ * @req REQ-NET-001
  */
 esp_err_t network_init_infrastructure(void) {
     if (s_wifi_initialized) {
@@ -359,6 +365,7 @@ static void network_set_credentials(const char* ssid, const char* password) {
  * @param password  Network password.
  * @version 1
  * @return ESP_OK on success, or the infrastructure init error.
+ * @req REQ-NET-001
  */
 esp_err_t network_init(const char* ssid, const char* password) {
     if (!s_wifi_initialized) {
@@ -418,6 +425,8 @@ static bool sntp_poll_until_synced(int max_retries) {
  * If Wi-Fi does not connect within WIFI_CONNECT_BOOT_WAIT_MS, loads the last-known
  * time from NVS and returns so boot can continue.
  * @version 1
+ * @req REQ-TIME-001
+ * @req REQ-NET-001
  */
 void network_wait_for_time(void) {
     EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT,
@@ -609,6 +618,7 @@ static void scan_resume_connect(wifi_config_t* saved, bool had_cfg) {
  * @param found    Set to the number of entries copied.
  * @version 1
  * @return ESP_OK on success, ESP_ERR_INVALID_ARG/ESP_ERR_INVALID_STATE on bad input/state, or a scan error.
+ * @req REQ-NET-002
  */
 esp_err_t network_scan(wifi_ap_info_t* ap_list, uint16_t max_aps, uint16_t* found) {
     esp_err_t err = network_check_ready(ap_list);
@@ -685,6 +695,7 @@ static esp_err_t network_set_and_connect(const char* ssid, const char* password)
  * @param password  Network password; NULL for open networks.
  * @version 1
  * @return ESP_OK on successful initiation, or a precondition/driver error.
+ * @req REQ-NET-001
  */
 esp_err_t network_connect(const char* ssid, const char* password) {
     esp_err_t err = network_check_ready(ssid);
@@ -707,6 +718,7 @@ esp_err_t network_connect(const char* ssid, const char* password) {
  * @brief Report whether the STA currently holds an IP address.
  * @version 1
  * @return true if connected.
+ * @req REQ-NET-001
  */
 bool network_is_connected(void) {
     return s_wifi_connected;
@@ -717,6 +729,7 @@ bool network_is_connected(void) {
  * @param ssid  Destination buffer.
  * @version 1
  * @return ESP_OK on success, or a precondition/driver error.
+ * @req REQ-NET-001
  */
 esp_err_t network_get_ssid(char* ssid) {
     esp_err_t err = network_check_ready(ssid);

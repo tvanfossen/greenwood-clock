@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+## @file lottie_vet.py
+## @brief Host tool: detect frame-to-frame pops and loop-seam jumps in Lotties and write contact sheets.
+## @version 1
 """Visual vet of Lottie animations: frame-to-frame jumps, loop seams, contact sheets.
 
 For each file, renders every frame the device shows (frame 1..N-1; lv_lottie
@@ -41,7 +44,7 @@ SHEET_TILE = 96
 
 
 ## @brief Fraction of pixels whose RGBA difference exceeds POP_LEVEL between two frames.
-## @utility
+## @req REQ-TOOL-003
 ## @version 3
 ## @return Changed-area fraction (0..1).
 def frame_diff(a, b):
@@ -55,7 +58,7 @@ def frame_diff(a, b):
 
 
 ## @brief Render frames 1..N-1 of one file.
-## @utility
+## @req REQ-TOOL-003
 ## @version 1
 ## @return List of PIL images (index 0 is device frame 1).
 def render_all(path):
@@ -65,7 +68,7 @@ def render_all(path):
 
 
 ## @brief Visible-change area per frame step, at the loop seam, and the steps that pop.
-## @utility
+## @req REQ-TOOL-003
 ## @version 3
 ## @return dict with steps, median, max, seam, spikes, seam_bad.
 def analyse(frames):
@@ -84,7 +87,7 @@ def analyse(frames):
 
 
 ## @brief Contact sheet: every k-th frame, with spike pairs and the seam pair outlined.
-## @utility
+## @req REQ-TOOL-003
 ## @version 1
 def write_sheet(frames, res, out):
     marked = set()
@@ -116,7 +119,7 @@ def write_sheet(frames, res, out):
 
 
 ## @brief One table row.
-## @utility
+## @dg_internal
 ## @version 2
 ## @return Row text.
 def row(name, res):
@@ -130,7 +133,7 @@ def row(name, res):
 
 
 ## @brief Vet every input file; exit 1 if any spike or bad seam is found.
-## @utility
+## @req REQ-TOOL-003
 ## @version 1
 ## @return Process exit code.
 def main():

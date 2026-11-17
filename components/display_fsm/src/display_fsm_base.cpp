@@ -1,5 +1,8 @@
-// components/display_fsm/src/display_fsm_base.cpp
-//
+/**
+ * @file display_fsm_base.cpp
+ * @version 1
+ * @brief DisplayFsm base class: shared state, default event handlers, swipe carousel, dot indicator and fade helpers.
+ */
 // DisplayFsm base class — shared state management and default event handlers.
 
 #include "display_fsm_base.h"
@@ -43,6 +46,11 @@ static const int CAROUSEL_COUNT = sizeof(CAROUSEL_ORDER) / sizeof(CAROUSEL_ORDER
 // Base class default event handlers
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief Default gesture handler: swipe up opens Settings, swipe left/right moves to the next/previous carousel state.
+ * @version 1
+ * @req REQ-DISP-003
+ */
 void DisplayFsm::react(EvGesture const &e)
 {
     if (e.dir == LV_DIR_TOP) {
@@ -55,12 +63,23 @@ void DisplayFsm::react(EvGesture const &e)
     }
 }
 
+/**
+ * @brief Default settings-back handler: return to ClockFull.
+ * @version 1
+ * @req REQ-DISP-001
+ * @req REQ-UI-001
+ */
 void DisplayFsm::react(EvSettingsBack const &)
 {
     ESP_LOGI(TAG, "Settings back → ClockFull");
     transit<ClockFull>();
 }
 
+/**
+ * @brief Stash the surprise JSON and duration (default 30 s) and transit to SurpriseMessage.
+ * @version 1
+ * @req REQ-SURP-001
+ */
 void DisplayFsm::react(EvSurpriseMessage const &e)
 {
     // Stash event data before transit — entry() can't access event params
@@ -71,6 +90,11 @@ void DisplayFsm::react(EvSurpriseMessage const &e)
     transit<SurpriseMessage>();
 }
 
+/**
+ * @brief Update the persistent clock widget with the event's time.
+ * @version 1
+ * @req REQ-CLOCK-001
+ */
 void DisplayFsm::react(EvClockUpdate const &e)
 {
     if (s_clock) {
@@ -79,12 +103,37 @@ void DisplayFsm::react(EvClockUpdate const &e)
 }
 
 // Default no-ops for events that only specific states handle
+/**
+ * @brief Default EvDisplayTimeout handler: ignored unless a concrete state overrides it.
+ * @version 1
+ * @req REQ-DISP-001
+ */
 void DisplayFsm::react(EvDisplayTimeout const &)  { }
+/**
+ * @brief Default EvWeatherUpdate handler: ignored unless a concrete state overrides it.
+ * @version 1
+ * @req REQ-DISP-001
+ */
 void DisplayFsm::react(EvWeatherUpdate const &)   { }
+/**
+ * @brief Default EvForecastUpdate handler: ignored unless a concrete state overrides it.
+ * @version 1
+ * @req REQ-DISP-001
+ */
 void DisplayFsm::react(EvForecastUpdate const &)  { }
+/**
+ * @brief Default EvRadarReady handler: ignored unless a concrete state overrides it.
+ * @version 1
+ * @req REQ-DISP-001
+ */
 void DisplayFsm::react(EvRadarReady const &)      { }
 
 // Alert banner — handled in base class, composited on ALL states
+/**
+ * @brief Show the first active NWS alert in the banner on every state, or hide the banner when none are active.
+ * @version 1
+ * @req REQ-ALERT-001
+ */
 void DisplayFsm::react(EvAlertReceived const &)
 {
     if (!s_alert_banner) return;
@@ -100,16 +149,47 @@ void DisplayFsm::react(EvAlertReceived const &)
         ESP_LOGI(TAG, "Alert banner hidden: no active alerts");
     }
 }
+/**
+ * @brief Default EvAstroTrigger handler: ignored unless a concrete state overrides it.
+ * @version 1
+ * @req REQ-DISP-001
+ */
 void DisplayFsm::react(EvAstroTrigger const &)    { }
+/**
+ * @brief Default EvPhotoTrigger handler: ignored unless a concrete state overrides it.
+ * @version 1
+ * @req REQ-DISP-001
+ */
 void DisplayFsm::react(EvPhotoTrigger const &)    { }
+/**
+ * @brief Default EvAmbientTrigger handler: ignored unless a concrete state overrides it.
+ * @version 1
+ * @req REQ-DISP-001
+ */
 void DisplayFsm::react(EvAmbientTrigger const &)  { }
+/**
+ * @brief Default EvForceState handler: ignored unless a concrete state overrides it.
+ * @version 1
+ * @req REQ-DISP-001
+ */
 void DisplayFsm::react(EvForceState const &)      { }
+/**
+ * @brief Default EvScheduleConfig handler: ignored unless a concrete state overrides it.
+ * @version 1
+ * @req REQ-DISP-001
+ */
 void DisplayFsm::react(EvScheduleConfig const &)  { }
 
 // ---------------------------------------------------------------------------
 // Carousel navigation
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief Find a state's position in the carousel order.
+ * @version 1
+ * @dg_internal
+ * @return Carousel index, or 0 (clock) if the state is not in the carousel.
+ */
 static int carousel_index_of(display_state_id_t id)
 {
     for (int i = 0; i < CAROUSEL_COUNT; i++) {
@@ -118,6 +198,12 @@ static int carousel_index_of(display_state_id_t id)
     return 0;  // fallback to clock
 }
 
+/**
+ * @brief Move @p offset steps through the carousel (wrapping), updating the scheduler's return timer; from a non-carousel state go to the clock.
+ * @version 1
+ * @req REQ-DISP-003
+ * @req REQ-DISP-002
+ */
 void DisplayFsm::carousel_navigate(int offset)
 {
     // If in a non-carousel state (Surprise), go to clock
@@ -166,6 +252,11 @@ void DisplayFsm::carousel_navigate(int offset)
 #define DOT_SPACING       20
 #define DOT_BOTTOM_MARGIN 12
 
+/**
+ * @brief Create the carousel dot indicator (one dot per carousel state) at the bottom of the top layer; once only.
+ * @version 1
+ * @req REQ-DISP-003
+ */
 void DisplayFsm::create_dot_indicator()
 {
     lv_obj_t *parent = s_top_layer ? s_top_layer : s_screen;
@@ -201,6 +292,11 @@ void DisplayFsm::create_dot_indicator()
     update_dot_indicator();
 }
 
+/**
+ * @brief Highlight the dot for the current carousel state, or hide the dots in non-carousel states.
+ * @version 1
+ * @req REQ-DISP-003
+ */
 void DisplayFsm::update_dot_indicator()
 {
     if (!s_dot_container) return;
@@ -238,6 +334,11 @@ void DisplayFsm::update_dot_indicator()
 // Helpers for concrete states
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief Record the current state id and name and refresh the dot indicator.
+ * @version 1
+ * @req REQ-DISP-001
+ */
 void DisplayFsm::set_state_info(display_state_id_t id, const char *name)
 {
     s_state_id   = id;
@@ -249,11 +350,21 @@ void DisplayFsm::set_state_info(display_state_id_t id, const char *name)
 // Fade animation helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief lv_anim exec callback: set the object's opacity to @p v.
+ * @version 1
+ * @callback
+ */
 static void fade_anim_opa_cb(void *obj, int32_t v)
 {
     lv_obj_set_style_opa((lv_obj_t *)obj, (lv_opa_t)v, 0);
 }
 
+/**
+ * @brief Fade @p obj from transparent to opaque over 900 ms (ease-in-out); caller holds the LVGL lock.
+ * @version 1
+ * @req REQ-DISP-004
+ */
 void DisplayFsm::fade_in(lv_obj_t *obj)
 {
     if (!obj) return;
@@ -268,6 +379,11 @@ void DisplayFsm::fade_in(lv_obj_t *obj)
     lv_anim_start(&a);
 }
 
+/**
+ * @brief Fade @p obj from opaque to transparent over 600 ms (ease-in-out) without deleting it; caller holds the LVGL lock.
+ * @version 1
+ * @req REQ-DISP-004
+ */
 void DisplayFsm::fade_out(lv_obj_t *obj)
 {
     if (!obj) return;

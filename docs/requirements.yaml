@@ -1,0 +1,432 @@
+# Greenwood Clock: requirements catalog.
+#
+# Read by the clew-guard pre-commit gate (guard.impact.requirements in .clew.yaml).
+# Every @req tag in source must name an id here, and every id here should be
+# implemented by at least one tagged function (`clew guard coverage` reports gaps).
+#
+# Scope: behaviour IMPLEMENTED as of 2026-11-17, written from the code. It describes
+# what the firmware does, not a wish list. Add an entry when you add a behaviour.
+#
+# Id pattern: REQ-<SUBSYSTEM>-<NNN>. Subsystems:
+#   BOOT boot sequence & safety     OTA  firmware update        NET  Wi-Fi/mDNS
+#   TIME SNTP & timezone            SET  persistent settings    SD   SD card / files
+#   LOG  logging & diagnostics      API  local HTTP API         MEM  memory management
+#   WX   weather (NWS)              RADAR precipitation radar   ALERT weather alerts
+#   DISP display FSM & scheduling   CLOCK clock face            ANIM clock animations
+#   BG   backgrounds & contrast     PHOTO photo slideshow       ASTRO astronomy view
+#   AMB  ambient dashboard          SURP surprise animations    LOTTIE Lottie playback
+#   UI   settings UI / web UI       TOOL host tooling
+
+requirements:
+  # ---------------------------------------------------------------- BOOT
+  REQ-BOOT-001:
+    name: Staged boot sequence with logged stages
+    subsystem: BOOT
+    description: >-
+      app_main runs fixed boot stages (settings, SD, network+OTA, SNTP, timezone,
+      services, launch wait, SPIFFS, display, FSM, health loop), records the current
+      stage name, and logs each with a [BOOT] tag.
+    acceptance_criteria: >-
+      From power-on the device reaches the clock screen with Wi-Fi, time, HTTP API and display all working, and a fault in any stage is attributed to that stage by the crash report (REQ-BOOT-003).
+  REQ-BOOT-002:
+    name: OTA recovery window before feature start
+    subsystem: BOOT
+    description: >-
+      No task that processes external data (network fetches, JSON, LVGL, file parsing)
+      starts before boot_await_launch() returns (60 s or POST /debug/launch), so a
+      faulty image can always be replaced over HTTP.
+    acceptance_criteria: HTTP API and OTA reachable during the launch window; display not yet initialised.
+  REQ-BOOT-003:
+    name: Crash context capture and report
+    subsystem: BOOT
+    description: >-
+      Panic/abort reason, PC/RA/SP, stage and abort details are stored in RTC memory and
+      dumped on the next boot; the reset reason is logged and abnormal resets flagged.
+    acceptance_criteria: >-
+      After an induced panic the device restarts on its own, and the crash's boot stage, reason and PC/RA/SP are retrievable remotely (boot history / coredump API).
+  REQ-BOOT-004:
+    name: Health loop and watchdogs
+    subsystem: BOOT
+    description: >-
+      After boot, a periodic health loop logs heap (internal/SPIRAM) and temperature,
+      and display/LVGL watchdogs detect stalls.
+    acceptance_criteria: >-
+      Heap and chip-temperature figures reported by /api/status change over time; a stalled display task makes the device recover (restart) within the watchdog period instead of freezing.
+  REQ-BOOT-005:
+    name: Panel reset held through early boot
+    subsystem: BOOT
+    description: >-
+      The LCD reset line is asserted at the top of app_main so the panel does not latch
+      an error state after esp_restart (blue screen after OTA).
+    acceptance_criteria: Display initialises correctly after an OTA reboot.
+
+  # ---------------------------------------------------------------- OTA
+  REQ-OTA-001:
+    name: HTTP push OTA update
+    subsystem: OTA
+    description: >-
+      A token-authenticated POST /ota streams a firmware image into the inactive slot
+      (begin/write/finish/commit), then reboots into it; GET /ota/status reports progress.
+    acceptance_criteria: tools/ota_push.py (inv ota) updates the device and it boots the new version.
+  REQ-OTA-002:
+    name: Confirm a new image only after proving connectivity
+    subsystem: OTA
+    description: >-
+      An unconfirmed image (NEW/PENDING_VERIFY) is marked valid only after the device
+      obtains an IP; if none arrives within 15 minutes the device restarts into rollback.
+    acceptance_criteria: >-
+      A new image that obtains an IP is still the running image after a later reboot; an image that never obtains an IP within 15 min is replaced by the previous firmware without physical access.
+  REQ-OTA-003:
+    name: Report running firmware version and partition
+    subsystem: OTA
+    description: The running version, partition label and last OTA error are queryable (status API, boot log).
+    acceptance_criteria: /api/status shows version and slot.
+
+  # ---------------------------------------------------------------- NET
+  REQ-NET-001:
+    name: Wi-Fi station via ESP32-C6 coprocessor
+    subsystem: NET
+    description: >-
+      Connects as a STA through esp_hosted/esp_wifi_remote with stored credentials, one
+      connect per boot, exponential reconnect backoff, and boots without network.
+    acceptance_criteria: Device gets an IP after boot; recovers after AP loss; boots with no AP.
+  REQ-NET-002:
+    name: Wi-Fi scan and credential entry
+    subsystem: NET
+    description: Event-driven AP scan (scan takes precedence over connect) feeding the settings UI.
+    acceptance_criteria: Settings > Wi-Fi lists nearby APs; selecting one and entering a password connects.
+  REQ-NET-003:
+    name: mDNS hostname
+    subsystem: NET
+    description: The device advertises greenwood-clock.local.
+    acceptance_criteria: greenwood-clock.local resolves on the LAN.
+  REQ-NET-004:
+    name: Robust SDIO transport to coprocessor
+    subsystem: NET
+    description: >-
+      The host SDIO RX path rejects absurd lengths (> 32 KB) and drops instead of
+      asserting on buffer allocation failure (vendored esp_hosted patch).
+    acceptance_criteria: No panic on garbage SDIO lengths; TLS fetches succeed under streaming RX.
+
+  # ---------------------------------------------------------------- TIME
+  REQ-TIME-001:
+    name: SNTP time sync
+    subsystem: TIME
+    description: Multi-server SNTP, initialised once, with exponential backoff on failure.
+    acceptance_criteria: >-
+      Within 60 s of network availability the clock shows UTC-correct time to within 1 s; with NTP unreachable the device keeps retrying and syncs once it is reachable.
+  REQ-TIME-002:
+    name: Local timezone
+    subsystem: TIME
+    description: A POSIX TZ string from settings converts UTC to local time for all displays.
+    acceptance_criteria: Clock shows local time including DST.
+
+  # ---------------------------------------------------------------- SET
+  REQ-SET-001:
+    name: Persistent settings in NVS
+    subsystem: SET
+    description: >-
+      clock_settings_t (Wi-Fi, timezone, brightness, touch, background, colours, location,
+      NWS cache) loads and saves from NVS with a versioned blob.
+    acceptance_criteria: Settings survive reboot.
+  REQ-SET-002:
+    name: Independent preference keys
+    subsystem: SET
+    description: >-
+      Preferences added later (clock animation) live in their own NVS keys so the main
+      blob version, and with it the Wi-Fi credentials, is not reset.
+    acceptance_criteria: Changing the clock animation keeps Wi-Fi credentials.
+
+  # ---------------------------------------------------------------- SD
+  REQ-SD-001:
+    name: SD card mount with graceful fallback
+    subsystem: SD
+    description: SD card mounts at boot via the BSP; the device continues without it if absent.
+    acceptance_criteria: Boot completes without a card; with one, /sdcard is mounted and directories created.
+  REQ-SD-002:
+    name: Remote file access
+    subsystem: SD
+    description: >-
+      HTTP endpoints list, upload, download and delete files under /sdcard and report disk
+      usage; the card can be formatted remotely.
+    acceptance_criteria: inv ls / pull / push round-trip a file.
+
+  # ---------------------------------------------------------------- LOG
+  REQ-LOG-001:
+    name: Persistent rotating debug log
+    subsystem: LOG
+    description: ESP logs are mirrored to rotating files on the SD card, fsynced periodically.
+    acceptance_criteria: >-
+      Diagnostic output from the current and previous session can be downloaded from the SD card after a reboot, and older sessions rotate out instead of filling the card.
+  REQ-LOG-002:
+    name: Live UDP log streaming
+    subsystem: LOG
+    description: Logs can be streamed over UDP to a registered host (POST /debug/udp_log).
+    acceptance_criteria: >-
+      A registered host receives the device's diagnostic output in real time over UDP; streaming stops when deregistered.
+  REQ-LOG-003:
+    name: Coredump to flash and remote retrieval
+    subsystem: LOG
+    description: Panics write a coredump to flash; the API exposes info, download and erase.
+    acceptance_criteria: inv coredump-info reports a dump after a panic.
+  REQ-LOG-004:
+    name: Boot history
+    subsystem: LOG
+    description: Recent boots (reason, stage, time) are recorded and exposed at /api/boot_history.
+    acceptance_criteria: inv boot-history lists recent boots.
+
+  # ---------------------------------------------------------------- API
+  REQ-API-001:
+    name: Local REST API on port 80
+    subsystem: API
+    description: >-
+      An HTTP server exposes status, settings, display control, weather data, logs,
+      screenshots, files and debug endpoints on the LAN.
+    acceptance_criteria: GET /api/status returns JSON.
+  REQ-API-002:
+    name: Settings read/write with live apply
+    subsystem: API
+    description: >-
+      GET/POST /api/settings read and merge settings; background, text colour and clock
+      animation apply immediately, and are safe before the display is up.
+    acceptance_criteria: POST a new background; it shows without a reboot.
+  REQ-API-003:
+    name: Display control and screenshot
+    subsystem: API
+    description: The API reports and forces display states, edits the schedule, triggers surprises, and captures the framebuffer.
+    acceptance_criteria: inv show / inv screenshot work.
+  REQ-API-004:
+    name: Shared HTTPS client
+    subsystem: API
+    description: One helper performs HTTP(S) GETs with bounded buffers, timeouts and error logging for all fetchers.
+    acceptance_criteria: >-
+      An HTTPS GET to an unreachable or slow host returns an error to the caller within the configured timeout, without leaking memory across repeated failures.
+
+  # ---------------------------------------------------------------- MEM
+  REQ-MEM-001:
+    name: LVGL heap on aligned ESP allocator
+    subsystem: MEM
+    description: LVGL allocations go through a 64-byte-aligned ESP heap allocator (malloc/realloc/free hooks) that routes large blocks to SPIRAM.
+    acceptance_criteria: LVGL runs with no internal memory pool; large LVGL buffers come from SPIRAM, leaving internal DRAM for drivers.
+  REQ-MEM-002:
+    name: Heap-aware fetching
+    subsystem: MEM
+    description: Network fetch cycles are skipped while internal DRAM is below a floor, to avoid starving the Wi-Fi driver.
+    acceptance_criteria: >-
+      With internal DRAM held below the floor, no fetch is attempted that cycle and the device keeps running; fetches resume once memory recovers.
+
+  # ---------------------------------------------------------------- WX
+  REQ-WX-001:
+    name: NWS location resolution with cache
+    subsystem: WX
+    description: Lat/lon resolve to NWS office, grid and nearest observation station via /points, cached in NVS.
+    acceptance_criteria: >-
+      After a reboot at an unchanged location, weather loads without a new /points request; changing the location by more than ~100 m triggers a fresh resolution.
+  REQ-WX-002:
+    name: Current conditions
+    subsystem: WX
+    description: Current observations (temperature, description, condition) are fetched every 15 min.
+    acceptance_criteria: Weather screen shows current temperature and condition.
+  REQ-WX-003:
+    name: Multi-day forecast
+    subsystem: WX
+    description: The daily forecast is fetched hourly and parsed into per-day high/low and condition.
+    acceptance_criteria: Forecast strip shows upcoming days.
+  REQ-WX-004:
+    name: Staggered polling with backoff
+    subsystem: WX
+    description: One NWS task polls conditions, forecast, alerts, radar and Kp on staggered intervals with linear backoff when all fetches fail.
+    acceptance_criteria: >-
+      Each data set refreshes at its interval (conditions 15 min, forecast 1 h, alerts 5 min, radar 10 min, Kp 3 h); during a total outage retries back off, never more often than every 5 min nor less than every 30 min.
+  REQ-WX-005:
+    name: Weather screen with animated condition
+    subsystem: WX
+    description: The weather state shows current conditions with a day/night Lottie for the condition, falling back day -> mostly-cloudy.
+    acceptance_criteria: Every NWS condition shows an animation.
+  REQ-WX-006:
+    name: Forecast strip icons
+    subsystem: WX
+    description: Forecast days show static icons rendered offline from the Lottie set, with text as the fallback.
+    acceptance_criteria: Icons appear for each day; removing an icon shows the condition text.
+
+  # ---------------------------------------------------------------- RADAR
+  REQ-RADAR-001:
+    name: Precipitation radar overlay
+    subsystem: RADAR
+    description: NWS radar imagery is fetched on an interval and composited over a pre-decoded basemap.
+    acceptance_criteria: Radar state shows precipitation over the map.
+  REQ-RADAR-002:
+    name: Radar shown only when relevant
+    subsystem: RADAR
+    description: The scheduler shows radar when precipitation is detected (image-size heuristic).
+    acceptance_criteria: No radar on clear days.
+
+  # ---------------------------------------------------------------- ALERT
+  REQ-ALERT-001:
+    name: Weather alert banner
+    subsystem: ALERT
+    description: Active NWS alerts for the location are fetched every 5 min and shown as a scrolling banner.
+    acceptance_criteria: >-
+      An active NWS alert for the configured location appears in the banner within 5 min of issue and disappears after it expires.
+
+  # ---------------------------------------------------------------- DISP
+  REQ-DISP-001:
+    name: Display state machine
+    subsystem: DISP
+    description: >-
+      A tinyfsm state machine owns screens (clock, weather, radar, astronomy, ambient,
+      photos, surprise, settings) with entry/exit hooks and LVGL lock discipline.
+    acceptance_criteria: >-
+      Every state can be entered and returns to the clock without leaking LVGL objects or memory (heap stable over repeated cycles), and the UI never deadlocks or corrupts the display.
+  REQ-DISP-002:
+    name: Event-driven scheduler
+    subsystem: DISP
+    description: Clock is the home state; events trigger other states with per-state cooldowns and a timeout back to the clock.
+    acceptance_criteria: Weather shows on schedule and returns to the clock after its timeout.
+  REQ-DISP-003:
+    name: Touch navigation
+    subsystem: DISP
+    description: GT911 touch gestures navigate states and open settings; I2C touch faults recover.
+    acceptance_criteria: Swipes change screens; touch survives an I2C glitch.
+  REQ-DISP-004:
+    name: Smooth transitions
+    subsystem: DISP
+    description: Screen transitions and the clock minimise morph run without jitter, using PPA hardware scaling.
+    acceptance_criteria: Morph completes in ~350-500 ms without ghosting.
+  REQ-DISP-005:
+    name: JSON-defined layouts
+    subsystem: DISP
+    description: Screens can be described by JSON layout files (labels, images) loaded from storage.
+    acceptance_criteria: A JSON layout renders its labels and images.
+
+  # ---------------------------------------------------------------- CLOCK
+  REQ-CLOCK-001:
+    name: Large clock face
+    subsystem: CLOCK
+    description: The home screen shows local time in large Nunito digits, with AM/PM and date, updated every second.
+    acceptance_criteria: Time is correct and readable across the room.
+  REQ-CLOCK-002:
+    name: Minimised clock on other screens
+    subsystem: CLOCK
+    description: Non-clock screens show a small clock, morphed from the large one.
+    acceptance_criteria: Weather screen shows the small clock.
+  REQ-CLOCK-003:
+    name: Clock pixel-shift burn-in mitigation
+    subsystem: CLOCK
+    description: Every 10 minutes the clock face takes a random-walk step of -1, 0 or +1 px per axis, clamped to +/-4 px from home, to limit panel burn-in.
+    acceptance_criteria: Over an hour the clock face sits at several different offsets, never more than 4 px from home, always fully on screen.
+
+  # ---------------------------------------------------------------- ANIM
+  REQ-ANIM-001:
+    name: Selectable clock animation
+    subsystem: ANIM
+    description: >-
+      The clock screen shows one user-selected animation (Hummingbird, Snowfall, Falling
+      Leaves, None), chosen in Settings or via the API and persisted.
+    acceptance_criteria: Each choice shows on the clock screen and survives reboot.
+  REQ-ANIM-002:
+    name: Physically based snowfall
+    subsystem: ANIM
+    description: >-
+      Screen-wide gentle snowfall with fall speed from Locatelli & Hobbs (1974), spiral
+      drift from Kajikawa, exponential sizes and 1/z perspective (CITATIONS.md).
+    acceptance_criteria: Host tests (inv test-host) pass; flakes fall slowly with depth.
+  REQ-ANIM-003:
+    name: Physically based falling leaves
+    subsystem: ANIM
+    description: >-
+      Falling leaves following the Andersen, Pesavento & Wang (2005) thin-card model, with
+      flutter and tumble regimes and an autumn palette (CITATIONS.md).
+    acceptance_criteria: Host tests pass; leaves flutter and tumble.
+  REQ-ANIM-004:
+    name: Efficient particle rendering
+    subsystem: ANIM
+    description: Particle effects invalidate only per-particle dirty rectangles, never the full screen, each frame.
+    acceptance_criteria: Particle animations do not force full-screen redraws.
+
+  # ---------------------------------------------------------------- BG
+  REQ-BG-001:
+    name: User background image
+    subsystem: BG
+    description: A PNG or GIF (up to 1024 px wide) from SD/SPIFFS is shown as the background, decoded to RGB565 with orientation corrected.
+    acceptance_criteria: Full-screen PNG and GIF backgrounds display upright at full size.
+  REQ-BG-002:
+    name: Legible text over any background
+    subsystem: BG
+    description: Text colour is derived from the background via OKLCH (hue kept, lightness pushed) to meet WCAG AA contrast.
+    acceptance_criteria: Clock digits are readable on light and dark backgrounds.
+
+  # ---------------------------------------------------------------- PHOTO
+  REQ-PHOTO-001:
+    name: Photo slideshow
+    subsystem: PHOTO
+    description: PNGs in /sdcard/photos display as a periodic slideshow, decoded asynchronously with a decoded-RGB565 cache and next-photo prefetch; disabled when none exist.
+    acceptance_criteria: Photos advance without lag; no slideshow timer when the folder is empty.
+
+  # ---------------------------------------------------------------- ASTRO
+  REQ-ASTRO-001:
+    name: Astronomy view
+    subsystem: ASTRO
+    description: Shows sunrise and sunset, moon phase and the Kp index / aurora outlook; sun and moon computed locally (astro_calc), Kp fetched from NOAA.
+    acceptance_criteria: Sunrise/sunset within 2 min and moon phase matching a reference almanac for the configured location; Kp matches NOAA's current value.
+
+  # ---------------------------------------------------------------- AMB
+  REQ-AMB-001:
+    name: Ambient dashboard
+    subsystem: AMB
+    description: A periodic ambient screen summarises time, weather and astronomy at a glance.
+    acceptance_criteria: >-
+      The ambient screen appears on its configured interval and shows the current time, weather and astronomy values.
+
+  # ---------------------------------------------------------------- SURP
+  REQ-SURP-001:
+    name: Surprise messages
+    subsystem: SURP
+    description: A JSON layout pushed via POST /api/display/surprise is shown full-screen for a requested duration (default 30 s), with a fallback label if the layout is missing or invalid, then returns to the clock.
+    acceptance_criteria: Posting a layout with a 10 s duration shows it and returns to the clock after 10 s; posting invalid JSON shows the fallback instead of crashing.
+
+  # ---------------------------------------------------------------- LOTTIE
+  REQ-LOTTIE-001:
+    name: Lottie playback via ThorVG
+    subsystem: LOTTIE
+    description: Lottie JSON from SD is rendered by LVGL's ThorVG backend in a dedicated render task, capped at ~20 FPS, read off the LVGL lock.
+    acceptance_criteria: Hummingbird and weather animations play smoothly.
+  REQ-LOTTIE-002:
+    name: Generated Lottie asset set
+    subsystem: LOTTIE
+    description: Weather, astro, UI, ambient and surprise Lotties are generated by tools/lottie_gen with strictly increasing keyframe times (cyclic properties built by one helper).
+    acceptance_criteria: Every generated file has strictly increasing keyframe times (tests/test_lottie_keyframes.py); loop seams are checked visually by REQ-TOOL-003.
+
+  # ---------------------------------------------------------------- UI
+  REQ-UI-001:
+    name: On-device settings screens
+    subsystem: UI
+    description: Settings screens cover Wi-Fi, brightness, background, clock animation, time zone and software info, with a navigation stack.
+    acceptance_criteria: Every setting is reachable and saved from the touchscreen.
+  REQ-UI-002:
+    name: Web control panel
+    subsystem: UI
+    description: A browser UI served from /www shows status, current weather and forecast, and edits settings through the API.
+    acceptance_criteria: http://greenwood-clock.local/www/ loads and saves settings.
+
+  # ---------------------------------------------------------------- TOOL
+  REQ-TOOL-001:
+    name: Device operations from the host
+    subsystem: TOOL
+    description: Host scripts (wrapped by tasks.py) push OTA, push/pull/list/delete files, reboot, download logs, stream UDP logs and take screenshots.
+    acceptance_criteria: Each inv task completes against a live device.
+  REQ-TOOL-002:
+    name: Asset preparation
+    subsystem: TOOL
+    description: Host scripts convert images to the display format, generate the radar basemap, deploy SD/www content and render forecast icons.
+    acceptance_criteria: Converted assets display correctly on the device.
+  REQ-TOOL-003:
+    name: Animation verification
+    subsystem: TOOL
+    description: Host tools render every Lottie frame-by-frame (ThorVG), detect visible pops and loop-seam defects, and compare ThorVG versions.
+    acceptance_criteria: inv lottie-audit / lottie-vet report clean for the shipped set.
+  REQ-TOOL-004:
+    name: Host unit tests for pure-C physics
+    subsystem: TOOL
+    description: Physics modules compile and test on the host without ESP-IDF (inv test-host).
+    acceptance_criteria: All host tests pass.

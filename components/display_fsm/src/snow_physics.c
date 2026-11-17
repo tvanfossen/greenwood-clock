@@ -1,5 +1,6 @@
 /**
  * @file snow_physics.c
+ * @version 1
  * @brief Platform-independent snowfall physics. Sources: CITATIONS.md.
  *
  * Model, per flake:
@@ -36,7 +37,7 @@ static float clampf(float v, float lo, float hi)
 /**
  * @brief Default gentle-snowfall parameters; see snow_physics.h and CITATIONS.md.
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  */
 void snow_params_default(snow_params_t *p, int screen_w_px, int screen_h_px)
 {
@@ -64,7 +65,7 @@ void snow_params_default(snow_params_t *p, int screen_w_px, int screen_h_px)
 /**
  * @brief Locatelli & Hobbs (1974) Fig. 20 unrimed-aggregate fall speed.
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  * @return Fall speed in m/s.
  */
 float snow_fall_speed_mps(float d_mm)
@@ -75,7 +76,7 @@ float snow_fall_speed_mps(float d_mm)
 /**
  * @brief Truncated-exponential diameter sample (Gunn & Marshall 1958 form).
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  * @return Maximum dimension in mm.
  */
 float snow_sample_diameter_mm(uint32_t *rng, float lambda_per_mm, float d_min_mm, float d_max_mm)
@@ -90,7 +91,7 @@ float snow_sample_diameter_mm(uint32_t *rng, float lambda_per_mm, float d_min_mm
 /**
  * @brief Pinhole projection scale at depth z.
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  * @return Pixels per metre.
  */
 float snow_px_per_m(const snow_params_t *p, float z_m)
@@ -134,7 +135,7 @@ static void flake_randomise(snow_field_t *f, snow_flake_t *fl)
 /**
  * @brief Seed a field with flakes spread over the screen.
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  * @return Number of flakes created.
  */
 int snow_field_init(snow_field_t *f, const snow_params_t *p, int count, uint32_t seed)
@@ -179,7 +180,7 @@ static void flake_wrap_x(const snow_params_t *p, snow_flake_t *fl)
 /**
  * @brief Integrate all flakes by dt; respawn and wrap at the edges.
  * @version 1
- * @req REQ-SNOW-001
+ * @req REQ-ANIM-002
  */
 void snow_field_step(snow_field_t *f, float dt_s)
 {

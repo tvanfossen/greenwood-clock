@@ -1,3 +1,8 @@
+/**
+ * @file display_events.h
+ * @version 1
+ * @brief C-compatible display FSM event types, safe to pass through FreeRTOS queues.
+ */
 // components/display_events/include/display_events.h
 //
 // C-compatible event types for the display FSM.

@@ -1,6 +1,8 @@
-// components/nws/src/nws_conditions.c
-//
-// Fetch current weather conditions from NWS observations endpoint.
+/**
+ * @file nws_conditions.c
+ * @version 1
+ * @brief Fetch current weather conditions from the NWS observations endpoint.
+ */
 
 #include "nws_internal.h"
 
@@ -9,6 +11,11 @@ static const char *TAG = "nws_cond";
 #define NWS_OBS_URL_FMT  "https://api.weather.gov/stations/%s/observations/latest"
 
 // Wind direction degrees → cardinal string
+/**
+ * @brief Convert a wind direction in degrees to a 16-point cardinal ("N".."NNW").
+ * @version 1
+ * @dg_internal
+ */
 static void degrees_to_cardinal(int deg, char *out, size_t out_size)
 {
     static const char *dirs[] = {
@@ -20,6 +27,17 @@ static void degrees_to_cardinal(int deg, char *out, size_t out_size)
     out[out_size - 1] = '\0';
 }
 
+/**
+ * @brief Parse an observations/latest response into @p out.
+ *
+ * Reads temperature, wind chill (falls back to temperature), dew point, humidity,
+ * wind, pressure (Pa -> hPa when > 10000), visibility (m -> km when > 1000),
+ * text description, icon URL and station ID, then sets valid.
+ * @version 1
+ * @req REQ-WX-002
+ * @return ESP_OK on success, ESP_ERR_INVALID_RESPONSE if the JSON does not parse
+ *         or has no properties.
+ */
 static esp_err_t parse_conditions(const char *json_str, nws_conditions_t *out)
 {
     cJSON *root = cJSON_Parse(json_str);
@@ -83,6 +101,15 @@ static esp_err_t parse_conditions(const char *json_str, nws_conditions_t *out)
     return ESP_OK;
 }
 
+/**
+ * @brief Fetch and parse the latest observation for @p loc's station.
+ *
+ * @p out is zeroed first, so on failure valid=false.
+ * @version 1
+ * @req REQ-WX-002
+ * @return ESP_OK on success, ESP_ERR_HTTP_CONNECT if the fetch failed, or
+ *         ESP_ERR_INVALID_RESPONSE on a malformed response.
+ */
 esp_err_t nws_fetch_conditions(const nws_location_t *loc, nws_conditions_t *out)
 {
     memset(out, 0, sizeof(*out));

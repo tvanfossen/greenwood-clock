@@ -1,5 +1,8 @@
-// components/display_fsm/src/display_fsm_task.cpp
-//
+/**
+ * @file display_fsm_task.cpp
+ * @version 1
+ * @brief Display FSM task: owns the event queue, background loading/contrast, timers and the Lottie loader, and dispatches to TinyFSM.
+ */
 // FreeRTOS task that owns the event queue and dispatches to TinyFSM.
 // All LVGL operations happen under lvgl_port_lock in this task.
 
@@ -541,6 +544,8 @@ static void apply_clock_bg_contrast(const clock_settings_t *cfg)
  * to it. No-op for a GIF bg (no sampleable buffer) — the startup default stands.
  *
  * @version 1
+ * @req REQ-BG-002
+ * @req REQ-CLOCK-002
  */
 extern "C" void display_fsm_apply_min_bg_contrast(void)
 {
@@ -893,6 +898,7 @@ static void fsm_task(void *arg)
  * @brief Create the FSM event queue, the Lottie loader (if enabled), and the FSM task (idempotent).
  *
  * @version 1
+ * @req REQ-DISP-001
  */
 extern "C" void display_fsm_init(void)
 {
@@ -919,6 +925,7 @@ extern "C" void display_fsm_init(void)
  * @brief Enqueue an event for the FSM task, waiting up to 100 ms for queue space.
  *
  * @version 1
+ * @req REQ-DISP-001
  * @return true if the event was queued, false if uninitialized, evt is NULL, or the queue stayed full.
  */
 extern "C" bool display_fsm_send_event(const display_event_t *evt)
@@ -935,6 +942,7 @@ extern "C" bool display_fsm_send_event(const display_event_t *evt)
  * @brief Get the name of the current FSM state.
  *
  * @version 1
+ * @req REQ-DISP-001
  * @return Current state name string.
  */
 extern "C" const char *display_fsm_get_state_name(void)
@@ -946,6 +954,7 @@ extern "C" const char *display_fsm_get_state_name(void)
  * @brief Get the id of the current FSM state.
  *
  * @version 1
+ * @req REQ-DISP-001
  * @return Current display_state_id_t.
  */
 extern "C" display_state_id_t display_fsm_get_state_id(void)
@@ -957,6 +966,7 @@ extern "C" display_state_id_t display_fsm_get_state_id(void)
  * @brief Get the persistent clock widget.
  *
  * @version 1
+ * @req REQ-DISP-001
  * @return Clock widget, or NULL if not yet created.
  */
 extern "C" clock_widget_t *display_fsm_get_clock(void)
@@ -968,6 +978,7 @@ extern "C" clock_widget_t *display_fsm_get_clock(void)
  * @brief Get the FSM's active screen object.
  *
  * @version 1
+ * @req REQ-DISP-001
  * @return Screen object, or NULL if not yet initialized.
  */
 extern "C" lv_obj_t *display_fsm_get_screen(void)
@@ -979,6 +990,7 @@ extern "C" lv_obj_t *display_fsm_get_screen(void)
  * @brief Request a background reload by enqueueing DISPLAY_EVT_REFRESH_BG for fsm_task.
  *
  * @version 1
+ * @req REQ-BG-001
  */
 extern "C" void display_fsm_refresh_background(void)
 {
@@ -997,7 +1009,7 @@ extern "C" void display_fsm_refresh_background(void)
 /**
  * @brief Show the user-selected clock animation (FSM ClockFull / restore_clock).
  * @version 2
- * @req REQ-ANIM-002
+ * @req REQ-ANIM-001
  */
 extern "C" void display_fsm_show_clock_lottie(void)
 {
@@ -1007,7 +1019,7 @@ extern "C" void display_fsm_show_clock_lottie(void)
 /**
  * @brief Hide the clock animation whenever the clock is minimised or covered.
  * @version 2
- * @req REQ-ANIM-002
+ * @req REQ-ANIM-001
  */
 extern "C" void display_fsm_hide_clock_lottie(void)
 {
@@ -1018,6 +1030,7 @@ extern "C" void display_fsm_hide_clock_lottie(void)
  * @brief Queue a Lottie load job for the shared loader task (no-op when Lottie is disabled).
  *
  * @version 1
+ * @req REQ-LOTTIE-001
  * @return true if the job was queued, false if unavailable, job is NULL, or the queue stayed full.
  */
 extern "C" bool display_fsm_load_lottie(const lottie_load_job_t *job)
@@ -1039,6 +1052,7 @@ extern "C" bool display_fsm_load_lottie(const lottie_load_job_t *job)
  * @brief Reload the text colour from settings and apply it to the clock widget.
  *
  * @version 1
+ * @req REQ-BG-002
  */
 extern "C" void display_fsm_refresh_text_color(void)
 {

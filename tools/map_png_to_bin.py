@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+## @file map_png_to_bin.py
+## @brief Host tool: convert a map PNG to the raw [u16 w][u16 h][u32 stride][BGRA] binary the radar view loads.
+## @version 1
 """Convert a map PNG into the raw BGRA binary the radar widget reads.
 
 Output format (matches `radar_view.c` map.bin loader at line 101–219):
@@ -27,6 +30,9 @@ except ImportError:
     sys.exit(1)
 
 
+## @brief CLI entry: read the PNG as RGBA, write the little-endian header then each row reordered to BGRA.
+## @version 1
+## @req REQ-TOOL-002
 def main() -> None:
     ap = argparse.ArgumentParser(description="PNG → raw BGRA map binary.")
     ap.add_argument("input_png", help="Source PNG (1024x600 expected)")

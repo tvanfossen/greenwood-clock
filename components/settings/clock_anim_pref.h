@@ -1,5 +1,6 @@
 /**
  * @file clock_anim_pref.h
+ * @version 1
  * @brief Which ambient animation the clock screen shows (hummingbird / snowfall / none).
  *
  * Stored as its own NVS key beside the settings blob, NOT inside

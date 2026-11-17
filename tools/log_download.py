@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+## @file log_download.py
+## @brief Host tool: download debug log slots 0-2 (active slot via /api/logs/download, older via /files/logs/).
+## @version 1
 """
 Download debug log slot(s) from the Greenwood Clock.
 
@@ -25,6 +28,10 @@ import urllib.error
 from datetime import datetime
 
 
+## @brief Download one log slot to @p outfile; exits the process on any HTTP error other than 404.
+## @version 1
+## @req REQ-TOOL-001
+## @return True when saved, False when the slot is absent on the device (404).
 def download_slot(host: str, slot: int, outfile: str) -> bool:
     """Download one log slot.  Returns True on success, False on 404 (slot absent)."""
     if slot == 0:
@@ -53,6 +60,9 @@ def download_slot(host: str, slot: int, outfile: str) -> bool:
     return True
 
 
+## @brief CLI entry: download one slot (default 0) or, with --all, all three slots to timestamped files.
+## @version 1
+## @req REQ-TOOL-001
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Download debug log slot(s) from the Greenwood Clock."

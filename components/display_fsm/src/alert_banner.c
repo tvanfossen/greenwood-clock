@@ -1,8 +1,11 @@
-// components/display_fsm/src/alert_banner.c
-//
-// Layer 1: AlertBanner — colored banner with scrolling headline text.
-// Composited on top of any display state.
-// Caller must hold LVGL lock for all functions.
+/**
+ * @file alert_banner.c
+ * @version 1
+ * @brief Layer 1: AlertBanner — colored banner with scrolling headline text.
+ *
+ * Composited on top of any display state.
+ * Caller must hold LVGL lock for all functions.
+ */
 
 #include "display_widgets.h"
 #include "ui_contrast.h"
@@ -30,6 +33,13 @@ struct alert_banner_t {
     bool      visible;
 };
 
+/**
+ * @brief Map an NWS severity string to the banner background colour.
+ * @version 1
+ * @req REQ-ALERT-001
+ * @return Dark red (Extreme), coral (Severe), yellow (Moderate), blue (Minor),
+ *         coral for anything else.
+ */
 static lv_color_t severity_color(const char *severity)
 {
     if (strcmp(severity, "Extreme") == 0) return lv_color_hex(0xCC0000);  // dark red
@@ -39,6 +49,13 @@ static lv_color_t severity_color(const char *severity)
     return lv_color_hex(0xE76F51);  // default to coral
 }
 
+/**
+ * @brief Create a hidden full-width banner (1024 x ALERT_BANNER_HEIGHT) at the top
+ *        of @p parent with a circular-scrolling headline label.
+ * @version 1
+ * @req REQ-ALERT-001
+ * @return The new banner, or NULL if allocation failed.
+ */
 alert_banner_t *alert_banner_create(lv_obj_t *parent)
 {
     alert_banner_t *b = lv_malloc(sizeof(alert_banner_t));
@@ -78,6 +95,11 @@ alert_banner_t *alert_banner_create(lv_obj_t *parent)
     return b;
 }
 
+/**
+ * @brief Delete the banner's animations and LVGL objects and free it. NULL-safe.
+ * @version 1
+ * @req REQ-ALERT-001
+ */
 void alert_banner_destroy(alert_banner_t *b)
 {
     if (!b) return;
@@ -89,6 +111,12 @@ void alert_banner_destroy(alert_banner_t *b)
     ESP_LOGI(TAG, "AlertBanner destroyed");
 }
 
+/**
+ * @brief Show @p alert: severity colour with contrasting text, headline
+ *        "event — headline" scrolling at ~240 ms/char (min 8 s per cycle).
+ * @version 1
+ * @req REQ-ALERT-001
+ */
 void alert_banner_show(alert_banner_t *b, const nws_alert_t *alert)
 {
     if (!b || !alert) return;
@@ -117,6 +145,11 @@ void alert_banner_show(alert_banner_t *b, const nws_alert_t *alert)
     ESP_LOGW(TAG, "Alert shown: %s (%s)", alert->event, alert->severity);
 }
 
+/**
+ * @brief Hide the banner. NULL-safe.
+ * @version 1
+ * @req REQ-ALERT-001
+ */
 void alert_banner_hide(alert_banner_t *b)
 {
     if (!b) return;
@@ -124,6 +157,12 @@ void alert_banner_hide(alert_banner_t *b)
     b->visible = false;
 }
 
+/**
+ * @brief Query banner visibility.
+ * @version 1
+ * @req REQ-ALERT-001
+ * @return true if shown, false if hidden or @p b is NULL.
+ */
 bool alert_banner_is_visible(const alert_banner_t *b)
 {
     return b ? b->visible : false;

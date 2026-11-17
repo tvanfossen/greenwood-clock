@@ -1,7 +1,10 @@
-// components/display_fsm/src/state_weather.cpp
-//
-// WeatherOverlay state — minimized clock + current conditions + forecast strip.
-// Condition Lottie animation fills the weather card background.
+/**
+ * @file state_weather.cpp
+ * @version 1
+ * @brief WeatherOverlay state — minimized clock + current conditions + forecast strip.
+ *
+ * Condition Lottie animation fills the weather card background.
+ */
 
 #include "display_states.h"
 #include "display_scheduler.h"
@@ -24,6 +27,13 @@ static lv_timer_t     *s_lottie_timer = nullptr;
 static weather_card_t *s_lottie_card  = nullptr;
 static bool            s_lottie_is_day = false;
 
+/**
+ * @brief One-shot LVGL timer: load the condition Lottie into the weather card
+ *        if conditions are valid, then delete the timer.
+ * @version 1
+ * @callback
+ * @req REQ-WX-005
+ */
 static void deferred_lottie_cb(lv_timer_t *t)
 {
     s_lottie_timer = nullptr;
@@ -35,6 +45,16 @@ static void deferred_lottie_cb(lv_timer_t *t)
     lv_timer_delete(t);
 }
 
+/**
+ * @brief Enter the weather state: minimize the clock, build and fill the weather
+ *        card and forecast strip, apply text contrast, fade them in, and schedule
+ *        the condition Lottie 1.1 s later (day = 06:00-19:59 local).
+ * @version 1
+ * @req REQ-WX-002
+ * @req REQ-WX-003
+ * @req REQ-WX-005
+ * @req REQ-DISP-001
+ */
 void WeatherOverlay::entry()
 {
     // Per-phase timing — entry() runs under the LVGL lock, so every phase here
@@ -95,6 +115,12 @@ void WeatherOverlay::entry()
              t_end - t0);
 }
 
+/**
+ * @brief Leave the weather state: cancel a pending Lottie load, destroy the
+ *        forecast strip and weather card.
+ * @version 1
+ * @req REQ-DISP-001
+ */
 void WeatherOverlay::exit()
 {
     // Cancel a still-pending deferred Lottie load before destroying the card.
@@ -105,11 +131,21 @@ void WeatherOverlay::exit()
     ESP_LOGI(TAG, "WeatherOverlay: exit");
 }
 
+/**
+ * @brief Display timeout: return to the full clock.
+ * @version 1
+ * @req REQ-DISP-002
+ */
 void WeatherOverlay::react(EvDisplayTimeout const &)
 {
     transit<ClockFull>();
 }
 
+/**
+ * @brief New conditions fetched: refresh the weather card.
+ * @version 1
+ * @req REQ-WX-002
+ */
 void WeatherOverlay::react(EvWeatherUpdate const &)
 {
     const nws_conditions_t *cond = nws_get_conditions();
@@ -118,6 +154,11 @@ void WeatherOverlay::react(EvWeatherUpdate const &)
     }
 }
 
+/**
+ * @brief New forecast fetched: refresh the forecast strip.
+ * @version 1
+ * @req REQ-WX-003
+ */
 void WeatherOverlay::react(EvForecastUpdate const &)
 {
     const nws_forecast_t *fc = nws_get_forecast();
@@ -126,6 +167,13 @@ void WeatherOverlay::react(EvForecastUpdate const &)
     }
 }
 
+/**
+ * @brief Forced state change: if weather is requested, refresh card and strip in
+ *        place; otherwise defer to the base FSM handler.
+ * @version 1
+ * @req REQ-API-003
+ * @req REQ-DISP-001
+ */
 void WeatherOverlay::react(EvForceState const &e)
 {
     if (e.state == DISPLAY_STATE_WEATHER) {

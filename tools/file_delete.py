@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+## @file file_delete.py
+## @brief Host tool: delete a file or empty directory on the device SD card via DELETE /files/<path>.
+## @version 1
 """
 Delete a file or empty directory from the SD card on the Greenwood Clock.
 
@@ -18,6 +21,9 @@ import sys
 import urllib.request
 
 
+## @brief CLI entry: send DELETE /files/<remote> and print the HTTP reply; exit 1 on an HTTP or network error.
+## @version 1
+## @req REQ-TOOL-001
 def main() -> None:
     ap = argparse.ArgumentParser(description="Delete a file from the device SD card.")
     ap.add_argument(

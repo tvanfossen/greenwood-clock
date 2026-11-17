@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+## @file screenshot.py
+## @brief Host tool: fetch the live framebuffer from GET /api/screenshot and save it as a PNG.
+## @version 1
 """
 tools/screenshot.py — Capture the device's live framebuffer and save it as PNG.
 
@@ -22,6 +25,10 @@ CF_ARGB8888 = 16
 CF_XRGB8888 = 17
 
 
+## @brief Convert a strided little-endian RGB565 buffer to packed 8-bit RGB (bit-replicated to full range).
+## @version 1
+## @req REQ-TOOL-001
+## @return Packed RGB bytes, w*h*3 long.
 def rgb565_to_rgb(buf, w, h, stride):
     out = bytearray(w * h * 3)
     for y in range(h):
@@ -38,6 +45,10 @@ def rgb565_to_rgb(buf, w, h, stride):
     return bytes(out)
 
 
+## @brief Convert a strided LVGL ARGB8888 buffer (BGRA in memory) to packed 8-bit RGB, dropping alpha.
+## @version 1
+## @req REQ-TOOL-001
+## @return Packed RGB bytes, w*h*3 long.
 def argb8888_to_rgb(buf, w, h, stride):
     # LVGL ARGB8888 is BGRA in memory (little-endian).
     out = bytearray(w * h * 3)
@@ -52,6 +63,9 @@ def argb8888_to_rgb(buf, w, h, stride):
     return bytes(out)
 
 
+## @brief CLI entry: fetch the screenshot, parse the "w h stride cf" header, decode RGB565/ARGB8888/XRGB8888 and write a PNG (PIL, or a built-in zlib writer).
+## @version 1
+## @req REQ-TOOL-001
 def main():
     ap = argparse.ArgumentParser(description="Capture device framebuffer to PNG.")
     ap.add_argument("--host", default="greenwood-clock.local")

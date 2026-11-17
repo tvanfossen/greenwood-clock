@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+## @file image_convert.py
+## @brief Host tool: convert any image to a 1024x600 RGB PNG for the display (fill-crop or contain-letterbox).
+## @version 1
 """Convert an image to a display-optimised PNG for the Greenwood Clock (1024×600).
 
 Display specs
@@ -34,6 +37,9 @@ TARGET_W = 1024
 TARGET_H = 600
 
 
+## @brief Resize @p src to 1024x600 by fill (scale to cover, centre-crop) or contain (scale to fit, black bars) and save as optimized PNG.
+## @version 1
+## @req REQ-TOOL-002
 def convert(src: Path, dst: Path, fit: str) -> None:
     try:
         from PIL import Image
@@ -74,6 +80,9 @@ def convert(src: Path, dst: Path, fit: str) -> None:
     print(f"Output : {dst}  ({TARGET_W}×{TARGET_H}, {size_kb:.0f} KB)")
 
 
+## @brief CLI entry: validate the input exists and the output is .png (default <stem>.converted.png), then convert.
+## @version 1
+## @req REQ-TOOL-002
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Convert an image to a 1024×600 PNG for the Greenwood Clock display."

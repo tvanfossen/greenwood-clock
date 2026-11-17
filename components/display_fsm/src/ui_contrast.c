@@ -1,5 +1,8 @@
-// components/display_fsm/src/ui_contrast.c
-//
+/**
+ * @file ui_contrast.c
+ * @version 1
+ * @brief Text-legibility helpers: WCAG luminance/contrast, black/white pick, OKLCH lightness push and image-region mean colour.
+ */
 // Text-legibility helpers — see ui_contrast.h.
 
 #include "ui_contrast.h"
@@ -10,12 +13,24 @@
 // sRGB transfer + WCAG luminance
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief Convert an sRGB channel (0..1) to linear light.
+ * @version 1
+ * @dg_internal
+ * @return Linear channel value.
+ */
 static float srgb_to_linear(float c)
 {
     return (c <= 0.04045f) ? (c / 12.92f)
                            : powf((c + 0.055f) / 1.055f, 2.4f);
 }
 
+/**
+ * @brief Convert a linear channel to sRGB, clamped to 0..1.
+ * @version 1
+ * @dg_internal
+ * @return sRGB channel value.
+ */
 static float linear_to_srgb(float c)
 {
     if (c < 0.0f) c = 0.0f;
@@ -25,6 +40,12 @@ static float linear_to_srgb(float c)
 }
 
 // WCAG relative luminance (0..1).
+/**
+ * @brief WCAG relative luminance of a colour.
+ * @version 1
+ * @dg_internal
+ * @return Luminance in 0..1.
+ */
 static float rel_luminance(lv_color_t c)
 {
     float r = srgb_to_linear(c.red   / 255.0f);
@@ -33,6 +54,12 @@ static float rel_luminance(lv_color_t c)
     return 0.2126f * r + 0.7152f * g + 0.0722f * b;
 }
 
+/**
+ * @brief WCAG contrast ratio between two colours.
+ * @version 1
+ * @req REQ-BG-002
+ * @return Ratio from 1.0 (none) to 21.0 (black/white).
+ */
 float ui_contrast_ratio(lv_color_t a, lv_color_t b)
 {
     float la = rel_luminance(a);
@@ -42,6 +69,12 @@ float ui_contrast_ratio(lv_color_t a, lv_color_t b)
     return (hi + 0.05f) / (lo + 0.05f);
 }
 
+/**
+ * @brief Pick white or black, whichever has the higher WCAG contrast against @p bg.
+ * @version 1
+ * @req REQ-BG-002
+ * @return White or black.
+ */
 lv_color_t ui_text_on(lv_color_t bg)
 {
     lv_color_t white = lv_color_white();
@@ -55,8 +88,19 @@ lv_color_t ui_text_on(lv_color_t bg)
 // while preserving its chroma direction.
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief Cube a float.
+ * @version 1
+ * @dg_internal
+ * @return x * x * x.
+ */
 static float cube(float x) { return x * x * x; }
 
+/**
+ * @brief Convert an sRGB colour to OKLab (Ottosson's matrices).
+ * @version 1
+ * @dg_internal
+ */
 static void srgb_to_oklab(lv_color_t c, float *L, float *a, float *b)
 {
     float r  = srgb_to_linear(c.red   / 255.0f);
@@ -72,6 +116,12 @@ static void srgb_to_oklab(lv_color_t c, float *L, float *a, float *b)
     *b = 0.0259040371f * l_ + 0.7827717662f * m_ - 0.8086757660f * s_;
 }
 
+/**
+ * @brief Convert OKLab to an sRGB colour (channels clamped).
+ * @version 1
+ * @dg_internal
+ * @return sRGB colour.
+ */
 static lv_color_t oklab_to_srgb(float L, float a, float b)
 {
     float l_ = L + 0.3963377774f * a + 0.2158037573f * b;
@@ -99,6 +149,12 @@ static lv_color_t oklab_to_srgb(float L, float a, float b)
 // asymmetry made the clock black on the home screen but only mid-grey when
 // minimized over panels. Pushing to the extreme makes it consistently strong:
 // clearly light over dark, clearly dark over light, hue preserved.
+/**
+ * @brief Keep @p desired's OKLCH hue/chroma but push its lightness to the extreme away from @p bg: L <= 0.06 over a light bg, L >= 0.95 over a dark one.
+ * @version 1
+ * @req REQ-BG-002
+ * @return Legible text colour.
+ */
 lv_color_t ui_legible(lv_color_t desired, lv_color_t bg)
 {
     float L, a, b, bgL, bga, bgb;
@@ -113,6 +169,11 @@ lv_color_t ui_legible(lv_color_t desired, lv_color_t bg)
 
 // Add one pixel's 8-bit R/G/B to the running sums (RGB565 or ARGB/XRGB byte
 // order). Pulled out of the sample loop to keep its cognitive complexity down.
+/**
+ * @brief Add one RGB565 or BGRA pixel's 8-bit R/G/B to the running sums.
+ * @version 1
+ * @dg_internal
+ */
 static void accum_pixel(const uint8_t *row, int32_t xx, lv_color_format_t cf,
                         uint32_t *sr, uint32_t *sg, uint32_t *sb)
 {
@@ -129,6 +190,12 @@ static void accum_pixel(const uint8_t *row, int32_t xx, lv_color_format_t cf,
 }
 
 // Clamp a region to the image bounds; returns false if nothing remains.
+/**
+ * @brief Clamp a region to the image bounds.
+ * @version 1
+ * @dg_internal
+ * @return true if a non-empty region remains, false otherwise.
+ */
 static bool clamp_region(const lv_image_dsc_t *img,
                          int32_t *x, int32_t *y, int32_t *w, int32_t *h)
 {
@@ -141,6 +208,12 @@ static bool clamp_region(const lv_image_dsc_t *img,
 
 // Mean colour of a rectangular region of an RGB565/ARGB8888 image buffer
 // (coords in BUFFER space). Coarse grid sample (~64x64) for speed.
+/**
+ * @brief Mean colour of a region of an RGB565/ARGB8888 image buffer, sampled on a ~64x64 grid.
+ * @version 1
+ * @req REQ-BG-002
+ * @return Mean colour, or mid-grey (128,128,128) for missing data or an empty region.
+ */
 lv_color_t ui_image_region_mean(const lv_image_dsc_t *img,
                                 int32_t x, int32_t y, int32_t w, int32_t h)
 {

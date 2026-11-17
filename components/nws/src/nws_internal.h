@@ -1,6 +1,9 @@
-// components/nws/src/nws_internal.h
-//
-// Shared internals for NWS component source files.
+/**
+ * @file nws_internal.h
+ * @version 1
+ * @brief Shared internals for NWS component source files: HTTPS JSON fetch with
+ *        retry and NWS headers, and null-safe cJSON field extractors.
+ */
 
 #ifndef NWS_INTERNAL_H
 #define NWS_INTERNAL_H
@@ -28,8 +31,16 @@
 /**
  * @brief Fetch JSON from a URL with NWS-standard headers and retry logic.
  *
- * Returns a malloc'd null-terminated buffer on success (caller must free).
- * Returns NULL on failure after all retries exhausted.
+ * Up to NWS_MAX_RETRIES attempts with a linearly growing delay between them;
+ * stops early on an abort or rate-limit result.
+ * @version 1
+ * @req REQ-WX-001
+ * @req REQ-WX-002
+ * @req REQ-WX-003
+ * @req REQ-ALERT-001
+ * @req REQ-ASTRO-001
+ * @return malloc'd null-terminated buffer on success (caller must free), or NULL
+ *         on failure after all retries are exhausted.
  */
 static inline char *nws_http_fetch_json(const char *tag, const char *url)
 {
@@ -64,6 +75,8 @@ static inline char *nws_http_fetch_json(const char *tag, const char *url)
 /**
  * @brief Safely extract a string from a cJSON object.
  * Copies into dst, ensuring null termination.  No-op if key missing or null.
+ * @version 1
+ * @utility
  */
 static inline void json_get_str(const cJSON *obj, const char *key,
                                  char *dst, size_t dst_size)
@@ -78,7 +91,9 @@ static inline void json_get_str(const cJSON *obj, const char *key,
 /**
  * @brief Safely extract a float from a nested {value: N} object.
  * NWS wraps numeric values in {"value": 12.3, "unitCode": "..."}.
- * Returns fallback if missing or null.
+ * @version 1
+ * @utility
+ * @return The numeric "value" as float, or @p fallback if missing or null.
  */
 static inline float json_get_value_float(const cJSON *obj, const char *key,
                                           float fallback)
@@ -92,6 +107,9 @@ static inline float json_get_value_float(const cJSON *obj, const char *key,
 
 /**
  * @brief Safely extract an int from a nested {value: N} object.
+ * @version 1
+ * @utility
+ * @return The numeric "value" as int, or @p fallback if missing or null.
  */
 static inline int json_get_value_int(const cJSON *obj, const char *key,
                                       int fallback)

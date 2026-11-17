@@ -1,5 +1,6 @@
 /**
  * @file particle_rng.h
+ * @version 1
  * @brief Tiny deterministic xorshift32 RNG shared by the particle fields (seedable for tests).
  */
 #ifndef PARTICLE_RNG_H

@@ -1,3 +1,8 @@
+/**
+ * @file debug_log.c
+ * @version 1
+ * @brief Rotating SD-card debug log: tees ESP log output into three FIFO slot files with throttled fsync.
+ */
 // components/debug_log/debug_log.c
 
 #include "debug_log.h"
@@ -58,6 +63,11 @@ static vprintf_like_t original_vprintf = NULL;
 // Internal helpers
 // =============================================================================
 
+/**
+ * @brief Fill the three rotating slot paths (/sdcard/logs/debug_log<N>.log).
+ * @version 1
+ * @req REQ-LOG-001
+ */
 static void debug_log_init_slot_paths(void)
 {
     for (int i = 0; i < DEBUG_LOG_SLOT_COUNT; i++) {
@@ -74,6 +84,8 @@ static void debug_log_init_slot_paths(void)
  * Used on boot and on mid-session 5 MB rotation.
  * rename()/unlink() on non-existent files fail silently — correct on first boot.
  * No mtime dependency: gettimeofday() returns 0 before SNTP sync.
+ * @version 1
+ * @req REQ-LOG-001
  */
 static void debug_log_fifo_shift(void)
 {
@@ -84,6 +96,8 @@ static void debug_log_fifo_shift(void)
 
 /**
  * @brief Write rotation footer, close @p old_f, and FIFO-shift slot files.
+ * @version 1
+ * @req REQ-LOG-001
  */
 static void debug_log_close_and_shift(FILE* old_f)
 {
@@ -101,6 +115,8 @@ static void debug_log_close_and_shift(FILE* old_f)
  *        the new file handle under s_log_mux.
  *
  * Sets is_active = false if fopen fails.
+ * @version 1
+ * @req REQ-LOG-001
  */
 static void debug_log_open_fresh_slot0(void)
 {
@@ -126,6 +142,8 @@ static void debug_log_open_fresh_slot0(void)
  *
  * Called from within debug_log_vprintf (s_in_vprintf is true), so any
  * ESP_LOG* calls here go to console only — no reentrancy risk.
+ * @version 1
+ * @req REQ-LOG-001
  */
 static void debug_log_rotate(void)
 {
@@ -152,9 +170,11 @@ static void debug_log_rotate(void)
  * @param f    File handle to write to.
  * @param fmt  Format string.
  * @param args Variadic argument list (a va_copy is made internally).
+ * @return false if the SD write failed (card timing out / removed) so the caller
+ *         can count failures and eventually give up on the SD; true otherwise.
+ * @version 1
+ * @req REQ-LOG-001
  */
-// Returns false if the SD write failed (card timing out / removed) so the caller
-// can count failures and eventually give up on the SD.
 static bool debug_log_write_to_file(FILE* f, const char* fmt, va_list args)
 {
     va_list file_args;
@@ -184,6 +204,8 @@ static bool debug_log_write_to_file(FILE* f, const char* fmt, va_list args)
  * Thread safety: s_log_mux spinlock protects the log_file pointer snapshot
  * so a concurrent debug_log_pause_for_read() cannot fclose() the handle
  * between the NULL check and the vfprintf() call.
+ * @version 1
+ * @req REQ-LOG-001
  */
 static void debug_log_acquire_and_write(const char* fmt, va_list args)
 {
@@ -219,6 +241,10 @@ static void debug_log_acquire_and_write(const char* fmt, va_list args)
  *
  * Tracks bytes written and triggers rotation when the slot reaches 5 MB.
  * A reentrancy guard prevents rotate's ESP_LOG calls from looping back.
+ * @version 1
+ * @callback
+ * @req REQ-LOG-001
+ * @return Number of characters written to the console by the original vprintf (0 if none).
  */
 static int debug_log_vprintf(const char* fmt, va_list args)
 {
@@ -235,6 +261,9 @@ static int debug_log_vprintf(const char* fmt, va_list args)
 
 /**
  * @brief Ensure the /sdcard/logs directory exists, creating it if necessary.
+ * @version 1
+ * @req REQ-LOG-001
+ * @return ESP_OK if the directory exists or was created, ESP_FAIL if mkdir failed.
  */
 static esp_err_t debug_log_ensure_dir(void)
 {
@@ -251,6 +280,8 @@ static esp_err_t debug_log_ensure_dir(void)
 
 /**
  * @brief Write the session-start header to the already-open log_file and sync.
+ * @version 1
+ * @req REQ-LOG-001
  */
 static void debug_log_write_session_header(void)
 {
@@ -268,6 +299,9 @@ static void debug_log_write_session_header(void)
  *
  * Each boot starts a new file so the previous boot's content is preserved
  * in other slots until they are naturally rotated.
+ * @version 1
+ * @req REQ-LOG-001
+ * @return ESP_OK on success, ESP_FAIL if the slot file could not be opened.
  */
 static esp_err_t debug_log_open_file(void)
 {
@@ -281,6 +315,12 @@ static esp_err_t debug_log_open_file(void)
     return ESP_OK;
 }
 
+/**
+ * @brief Ensure the log directory exists, then open the active slot file.
+ * @version 1
+ * @req REQ-LOG-001
+ * @return ESP_OK on success, or the error from directory creation / file open.
+ */
 static esp_err_t debug_log_prepare_file(void)
 {
     esp_err_t err = debug_log_ensure_dir();
@@ -290,6 +330,8 @@ static esp_err_t debug_log_prepare_file(void)
 
 /**
  * @brief Write the test block to @p f and force a sync.
+ * @version 1
+ * @dg_internal
  */
 static void debug_log_write_test_block(FILE* f, const struct timeval* tv)
 {
@@ -308,6 +350,8 @@ static void debug_log_write_test_block(FILE* f, const struct timeval* tv)
  *
  * Logs confirmation messages via the newly redirected vprintf so they appear
  * in both console and SD card log.
+ * @version 1
+ * @req REQ-LOG-001
  */
 static void debug_log_activate(void)
 {
@@ -323,6 +367,12 @@ static void debug_log_activate(void)
 // Public API
 // =============================================================================
 
+/**
+ * @brief Start SD debug logging: shift the previous boots' slots, open slot 0 and hook ESP log output.
+ * @version 1
+ * @req REQ-LOG-001
+ * @return ESP_OK on success, ESP_FAIL if the SD card is not mounted or the log file cannot be prepared.
+ */
 esp_err_t debug_log_init(void)
 {
     ESP_LOGI(TAG, "Initializing debug log system");
@@ -340,6 +390,12 @@ esp_err_t debug_log_init(void)
     return ESP_OK;
 }
 
+/**
+ * @brief Restore the original vprintf, write the session-end marker and close the log file.
+ * @version 1
+ * @req REQ-LOG-001
+ * @return ESP_OK (always; no-op when logging is not active).
+ */
 esp_err_t debug_log_deinit(void)
 {
     if (!is_active) return ESP_OK;
@@ -365,16 +421,34 @@ esp_err_t debug_log_deinit(void)
     return ESP_OK;
 }
 
+/**
+ * @brief Report whether SD debug logging is active.
+ * @version 1
+ * @req REQ-LOG-001
+ * @return true while log output is being mirrored to the SD card.
+ */
 bool debug_log_is_active(void)
 {
     return is_active;
 }
 
+/**
+ * @brief Return the path of the active log slot.
+ * @version 1
+ * @req REQ-LOG-001
+ * @return Active slot path, or NULL if logging is not active.
+ */
 const char* debug_log_get_path(void)
 {
     return is_active ? s_slot_paths[s_slot] : NULL;
 }
 
+/**
+ * @brief Return the path of log slot @p slot, regardless of active state (used for HTTP listing).
+ * @version 1
+ * @req REQ-LOG-001
+ * @return Slot path, or NULL if @p slot is out of range.
+ */
 const char* debug_log_get_slot_path(int slot)
 {
     if (slot < 0 || slot >= DEBUG_LOG_SLOT_COUNT) return NULL;
@@ -383,11 +457,22 @@ const char* debug_log_get_slot_path(int slot)
     return s_slot_paths[slot];
 }
 
+/**
+ * @brief Return the index of the slot currently being written.
+ * @version 1
+ * @req REQ-LOG-001
+ * @return Active slot index, or -1 if logging is not active.
+ */
 int debug_log_get_active_slot(void)
 {
     return is_active ? s_slot : -1;
 }
 
+/**
+ * @brief Flush and fsync the active log file to the SD card.
+ * @version 1
+ * @req REQ-LOG-001
+ */
 void debug_log_flush(void)
 {
     FILE* f = NULL;
@@ -414,6 +499,8 @@ void debug_log_flush(void)
  * rather than calling vfprintf() on a handle that is being closed.
  *
  * @return Path to the active log file, or NULL if logging is not active.
+ * @version 1
+ * @req REQ-LOG-001
  */
 const char* debug_log_pause_for_read(void)
 {
@@ -436,6 +523,8 @@ const char* debug_log_pause_for_read(void)
  * @brief Reopen the log write handle after debug_log_pause_for_read().
  *
  * No-op if logging is not active or the handle is already open.
+ * @version 1
+ * @req REQ-LOG-001
  */
 void debug_log_reopen(void)
 {
@@ -455,6 +544,9 @@ void debug_log_reopen(void)
 
 /**
  * @brief Close and reopen the log file, then write a test diagnostic block.
+ * @version 1
+ * @req REQ-LOG-001
+ * @return ESP_OK on success, ESP_FAIL if logging is inactive or the file cannot be reopened.
  */
 esp_err_t debug_log_test_write(void)
 {

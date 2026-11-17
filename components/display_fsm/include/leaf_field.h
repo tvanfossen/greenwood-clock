@@ -1,5 +1,6 @@
 /**
  * @file leaf_field.h
+ * @version 1
  * @brief A screen-wide field of falling leaves driven by leaf_physics (Andersen et al. 2005b).
  *
  * Maps each leaf's non-dimensional motion to screen pixels with the same pinhole
@@ -53,14 +54,14 @@ typedef struct {
 /**
  * @brief Gentle autumn defaults for a W x H screen (see CITATIONS.md for sources).
  * @version 1
- * @req REQ-LEAF-002
+ * @req REQ-ANIM-003
  */
 void leaf_params_default(leaf_params_t *p, int screen_w_px, int screen_h_px);
 
 /**
  * @brief Seed @p count leaves in settled motion, spread over the screen.
  * @version 1
- * @req REQ-LEAF-002
+ * @req REQ-ANIM-003
  * @return Leaves created (clamped to LEAF_FIELD_MAX).
  */
 int leaf_field_init(leaf_field_t *f, const leaf_params_t *p, int count, uint32_t seed);
@@ -68,14 +69,14 @@ int leaf_field_init(leaf_field_t *f, const leaf_params_t *p, int count, uint32_t
 /**
  * @brief Advance all leaves by @p dt_s seconds; respawn at the top, wrap horizontally.
  * @version 1
- * @req REQ-LEAF-002
+ * @req REQ-ANIM-003
  */
 void leaf_field_step(leaf_field_t *f, float dt_s);
 
 /**
  * @brief Screen centre and on-screen rotation of leaf @p i.
  * @version 1
- * @req REQ-LEAF-002
+ * @req REQ-ANIM-003
  */
 void leaf_screen_pose(const leaf_field_t *f, int i, float *x_px, float *y_px, float *angle_rad);
 
