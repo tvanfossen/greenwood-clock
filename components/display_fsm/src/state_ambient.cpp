@@ -245,14 +245,14 @@ static void amb_fmt_next(char *buf, size_t n, const char *prefix, const char *ev
  * @brief Enter: sample bg contrast and minimize the clock, then build the dashboard panel (sun times, daylight bar, golden hour, NWS conditions, aurora from Kp, next solstice/equinox and meteor shower) and fade it in.
  * v2: sections split into helpers and the panel shared via info_panel.h (knots v2
  *     cognitive limit); output unchanged.
- * @version 2
+ * v3: clock uses the user's exact colour; no background sampling before minimizing.
+ * @version 3
  * @req REQ-AMB-001
  * @req REQ-ASTRO-001
  */
 void AmbientDashboard::entry()
 {
     set_state_info(DISPLAY_STATE_AMBIENT, "ambient");
-    display_fsm_apply_min_bg_contrast();   // sample bg behind clock BEFORE minimizing
     minimize_clock();
 
     clock_settings_t cfg;

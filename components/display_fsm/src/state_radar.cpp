@@ -7,7 +7,6 @@
 #include "display_states.h"
 #include "display_scheduler.h"
 #include "display_widgets.h"
-#include "ui_contrast.h"
 #include "nws.h"
 #include "settings.h"
 #include "esp_log.h"
@@ -21,7 +20,8 @@ radar_view_t *RadarOverlay::s_rv = nullptr;
  * @brief Enter the radar state: tint the minimized clock for legibility over the
  *        basemap, minimize it, create the radar view at the configured location,
  *        apply the staged overlay and fade it in.
- * @version 1
+ * v2: clock uses the user's exact colour; no background sampling before minimizing.
+ * @version 2
  * @req REQ-RADAR-001
  * @req REQ-DISP-001
  */
@@ -29,18 +29,6 @@ void RadarOverlay::entry()
 {
     set_state_info(DISPLAY_STATE_RADAR, "radar");
 
-    // The map (upright/not flipped) covers the clock bg, so set the minimized clock
-    // colour from a map sample BEFORE minimizing — the morph then recolours straight
-    // to it, with no colour pop after the animation settles.
-    clock_widget_t *clk = get_clock();
-    const lv_image_dsc_t *map = radar_view_map_dsc();
-    if (clk && map) {
-        lv_area_t a;
-        clock_widget_min_area(&a);
-        lv_color_t mean = ui_image_region_mean(map, a.x1, a.y1,
-                                               a.x2 - a.x1 + 1, a.y2 - a.y1 + 1);
-        clock_widget_set_minimized_base_color(clk, ui_legible(clock_widget_user_color(clk), mean));
-    }
     minimize_clock();
 
     // Get device location from settings

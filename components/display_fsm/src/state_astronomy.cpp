@@ -142,14 +142,14 @@ static void astro_fmt_aurora(char *buf, size_t n, float kp, float aurora_prob)
  *        aurora line from the cached Kp ("Kp data unavailable" when Kp is 0).
  * v2: panel, moon section and line formatting split into helpers (knots v2
  *     cognitive limit); output unchanged.
- * @version 2
+ * v3: clock uses the user's exact colour; no background sampling before minimizing.
+ * @version 3
  * @req REQ-ASTRO-001
  * @req REQ-DISP-001
  */
 void Astronomy::entry()
 {
     set_state_info(DISPLAY_STATE_ASTRONOMY, "astronomy");
-    display_fsm_apply_min_bg_contrast();   // sample bg behind clock BEFORE minimizing
     minimize_clock();
 
     clock_settings_t cfg;

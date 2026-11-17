@@ -1,11 +1,12 @@
 /**
  * @file particle_view.c
- * v2: old/new particle boxes joined only when they overlap.
- * @version 2
+ * v3: one rect per particle unless the join is huge; display render/refresh perf stats.
+ * @version 3
  * @brief Shared particle-field renderer: one custom-draw object, per-particle dirty rects.
  */
 #include "particle_view.h"
-#include "src/misc/lv_area_private.h"  /* lv_area_intersect / lv_area_join / lv_area_is_on (v9.3 private API) */
+#include "src/misc/lv_area_private.h"  /* lv_area_intersect / lv_area_join (private API) */
+#include "src/display/lv_display_private.h"  /* inv_p: dirty-area count per refresh (perf stats) */
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -31,6 +32,10 @@ struct particle_view_t {
     uint32_t     stats_ticks;
     int64_t      stats_cost_us;
     int64_t      stats_cost_max_us;
+    /* Display-side cost per refresh, from display events (render vs whole refresh incl. flush). */
+    int64_t      refr_t0_us, render_t0_us;
+    int64_t      stats_refr_us, stats_render_us;
+    uint32_t     stats_refrs, stats_areas;
 };
 
 /**
@@ -47,7 +52,8 @@ static int pv_count(const particle_view_t *v)
 
 /**
  * @brief Zero the perf window.
- * @version 1
+ * v2: also zeroes the display render/refresh counters.
+ * @version 3
  * @dg_internal
  */
 static void pv_stats_reset(particle_view_t *v, uint32_t now)
@@ -56,11 +62,16 @@ static void pv_stats_reset(particle_view_t *v, uint32_t now)
     v->stats_ticks = 0;
     v->stats_cost_us = 0;
     v->stats_cost_max_us = 0;
+    v->stats_refr_us = 0;
+    v->stats_render_us = 0;
+    v->stats_refrs = 0;
+    v->stats_areas = 0;
 }
 
 /**
  * @brief Accumulate one tick's cost; every PARTICLE_STATS_MS log achieved Hz and cost.
- * @version 1
+ * v2: logs display render/refresh time and dirty areas per refresh.
+ * @version 3
  * @dg_internal
  */
 static void pv_stats(particle_view_t *v, uint32_t now, int64_t cost_us)
@@ -70,10 +81,40 @@ static void pv_stats(particle_view_t *v, uint32_t now, int64_t cost_us)
     if (cost_us > v->stats_cost_max_us) v->stats_cost_max_us = cost_us;
     uint32_t span = lv_tick_diff(now, v->stats_start);
     if (span < PARTICLE_STATS_MS) return;
-    ESP_LOGI(TAG, "%s perf: %.1f Hz (target %d), tick cost avg %lld us max %lld us", v->ops->name,
-             (double)v->stats_ticks * 1000.0 / span, 1000 / PARTICLE_PERIOD_MS,
-             v->stats_cost_us / v->stats_ticks, v->stats_cost_max_us);
+    uint32_t refrs = v->stats_refrs ? v->stats_refrs : 1;
+    ESP_LOGI(TAG, "%s perf: %.1f Hz (target %d), tick cost avg %lld us max %lld us; "
+             "display: %lu refreshes, render avg %lld us, refresh avg %lld us, %lu dirty areas/refresh",
+             v->ops->name, (double)v->stats_ticks * 1000.0 / span, 1000 / PARTICLE_PERIOD_MS,
+             v->stats_cost_us / v->stats_ticks, v->stats_cost_max_us,
+             (unsigned long)v->stats_refrs, v->stats_render_us / refrs, v->stats_refr_us / refrs,
+             (unsigned long)(v->stats_areas / refrs));
     pv_stats_reset(v, now);
+}
+
+/**
+ * @brief Display event hook (LVGL task): time each refresh and its render phase and count the
+ *        dirty areas while this view runs, to show whether rendering or flushing bounds the rate.
+ * @version 1
+ * @callback
+ */
+static void pv_display_event_cb(lv_event_t *e)
+{
+    particle_view_t *v = (particle_view_t *)lv_event_get_user_data(e);
+    if (lv_timer_get_paused(v->timer)) return;
+    lv_display_t *disp = (lv_display_t *)lv_event_get_target(e);
+    int64_t now = esp_timer_get_time();
+    switch (lv_event_get_code(e)) {
+        case LV_EVENT_REFR_START:   v->refr_t0_us = now; break;
+        case LV_EVENT_RENDER_START: v->render_t0_us = now; v->stats_areas += disp->inv_p; break;
+        case LV_EVENT_RENDER_READY: if (v->render_t0_us) v->stats_render_us += now - v->render_t0_us; break;
+        case LV_EVENT_REFR_READY:
+            if (v->refr_t0_us && v->render_t0_us >= v->refr_t0_us) {   // only refreshes that rendered
+                v->stats_refr_us += now - v->refr_t0_us;
+                v->stats_refrs++;
+            }
+            break;
+        default: break;
+    }
 }
 
 /**
@@ -101,7 +142,7 @@ static void pv_draw_cb(lv_event_t *e)
  *     did not overlap; small fast flakes move further than their own size each tick, so most
  *     flakes produced two rects (~280 for 140 flakes), overflowing LV_INV_BUF_SIZE (256) and
  *     forcing a full-screen redraw every frame (laggy snowfall on device).
- * @version 2
+ * @version 3
  * @req REQ-ANIM-004
  */
 static void pv_invalidate_move(lv_obj_t *obj, const lv_area_t *before, const lv_area_t *after)
@@ -121,7 +162,7 @@ static void pv_invalidate_move(lv_obj_t *obj, const lv_area_t *before, const lv_
  * @brief Frame timer: step the model, then invalidate each particle's old and new rectangles.
  * v2: joins old/new only when they overlap (pv_invalidate_move); a respawn or wrap used to
  *     dirty a screen-spanning rectangle.
- * @version 2
+ * @version 3
  * @callback
  */
 static void pv_timer_cb(lv_timer_t *t)
@@ -147,7 +188,8 @@ static void pv_timer_cb(lv_timer_t *t)
 
 /**
  * @brief Allocate in SPIRAM; create the click-through object and a paused timer.
- * @version 1
+ * v2: hooks display refresh/render events for perf stats.
+ * @version 3
  * @req REQ-ANIM-004
  * @return New view, or NULL on allocation failure.
  */
@@ -168,6 +210,13 @@ particle_view_t *particle_view_create(lv_obj_t *parent, const particle_view_ops_
     lv_obj_add_event_cb(v->obj, pv_draw_cb, LV_EVENT_DRAW_MAIN, v);
     v->timer = lv_timer_create(pv_timer_cb, PARTICLE_PERIOD_MS, v);
     lv_timer_pause(v->timer);
+    lv_display_t *disp = lv_display_get_default();
+    if (disp) {
+        lv_display_add_event_cb(disp, pv_display_event_cb, LV_EVENT_REFR_START, v);
+        lv_display_add_event_cb(disp, pv_display_event_cb, LV_EVENT_REFR_READY, v);
+        lv_display_add_event_cb(disp, pv_display_event_cb, LV_EVENT_RENDER_START, v);
+        lv_display_add_event_cb(disp, pv_display_event_cb, LV_EVENT_RENDER_READY, v);
+    }
     v->last_tick = lv_tick_get();
     ESP_LOGI(TAG, "%s: view created (%d particles, %u B)", ops->name, pv_count(v), (unsigned)sizeof(*v));
     return v;
@@ -195,12 +244,15 @@ void particle_view_set_running(particle_view_t *v, bool running)
 
 /**
  * @brief Tear down timer, object and storage (not the model).
- * @version 1
+ * v2: unhooks the display perf events.
+ * @version 3
  * @req REQ-ANIM-004
  */
 void particle_view_destroy(particle_view_t *v)
 {
     if (!v) return;
+    lv_display_t *disp = lv_display_get_default();
+    if (disp) lv_display_remove_event_cb_with_user_data(disp, pv_display_event_cb, v);
     lv_timer_delete(v->timer);
     lv_obj_delete(v->obj);
     ESP_LOGI(TAG, "%s: destroyed", v->ops->name);

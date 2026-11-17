@@ -49,7 +49,8 @@ static void deferred_lottie_cb(lv_timer_t *t)
  * @brief Enter the weather state: minimize the clock, build and fill the weather
  *        card and forecast strip, apply text contrast, fade them in, and schedule
  *        the condition Lottie 1.1 s later (day = 06:00-19:59 local).
- * @version 1
+ * v2: clock uses the user's exact colour; no background sampling before minimizing.
+ * @version 2
  * @req REQ-WX-002
  * @req REQ-WX-003
  * @req REQ-WX-005
@@ -61,7 +62,6 @@ void WeatherOverlay::entry()
     // blocks rendering. Find what eats the transition budget.
     int64_t t0 = esp_timer_get_time();
     set_state_info(DISPLAY_STATE_WEATHER, "weather");
-    display_fsm_apply_min_bg_contrast();   // sample bg behind clock BEFORE minimizing
     minimize_clock();
     int64_t t_min = esp_timer_get_time();
 

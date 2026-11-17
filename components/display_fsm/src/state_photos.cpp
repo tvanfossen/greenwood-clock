@@ -9,7 +9,6 @@
 #include "display_scheduler.h"
 #include "display_widgets.h"
 #include "display_fsm.h"
-#include "ui_contrast.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
@@ -86,29 +85,6 @@ void PhotoSlideshow::prefetch()
 // a legible (OKLCH) clock colour — the photo is the one bright/variable bg where
 // a fixed white washes out. The photo buffer is vertically flipped (stb decode),
 // like the clock background, so screen-Y maps to buffer-Y as h-1-y.
-/**
- * @brief Under the LVGL lock: sample the shown photo behind the minimized clock (flipped buffer rows) and set a legible OKLCH clock colour.
- * @version 1
- * @req REQ-PHOTO-001
- * @req REQ-BG-002
- */
-void PhotoSlideshow::apply_clock_contrast()
-{
-    clock_widget_t *clk = get_clock();
-    const lv_image_dsc_t *photo = s_rotator ? image_rotator_shown_dsc(s_rotator) : nullptr;
-    if (!clk || !photo) return;
-
-    lv_area_t a;
-    clock_widget_min_area(&a);
-    int32_t ih  = (int32_t)photo->header.h;
-    int32_t rh  = a.y2 - a.y1 + 1;
-    int32_t by1 = ih - 1 - a.y2;
-    if (by1 < 0) by1 = 0;
-    lv_color_t mean    = ui_image_region_mean(photo, a.x1, by1, a.x2 - a.x1 + 1, rh);
-    lv_color_t legible = ui_legible(clock_widget_user_color(clk), mean);
-    clock_widget_set_minimized_color(clk, legible);
-}
-
 /**
  * @brief Enter: minimize the clock and create the rotator; with no photos show a "No photos" panel, otherwise start the 7 s advance timer and post the first advance.
  * @version 1
