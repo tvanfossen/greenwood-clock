@@ -463,40 +463,17 @@ static void load_background(lv_obj_t *scr, const clock_settings_t *cfg)
 }
 
 /**
- * @brief Legible version of `user` over the background image in the given screen-space area.
+ * @brief Apply the user's text colour to the clock in every mode; the clock widget's label
+ *        shadows keep it legible over any background.
  *
- * Sample the (predecoded) background under the full clock and set the clock text
- * colour to a guaranteed-legible variant of the user's chosen colour (keep hue,
- * adjust OKLCH lightness). The bg buffer is top-down like the screen, so screen-Y
- * maps to buffer-Y directly. GIF backgrounds have no sampleable buffer → use the
- * raw colour.
- * v2: sample screen-Y directly. The old h-1-y mapping assumed a bottom-up buffer, but
- *     the buffer was always top-down (stb decoded bottom-up and was "flipped" back), so
- *     the colour was chosen from the vertically opposite band of the image.
- *
- * @dg_internal
- * @version 2
- * @return The OKLCH-adjusted colour that contrasts with the mean background colour of the area.
- */
-static lv_color_t bg_legible_at(lv_color_t user, const lv_area_t *a)
-{
-    int32_t by1 = a->y1 < 0 ? 0 : a->y1;
-    lv_color_t mean = ui_image_region_mean(s_bg_dsc, a->x1, by1,
-                                           a->x2 - a->x1 + 1, a->y2 - a->y1 + 1);
-    return ui_legible(user, mean);
-}
-
-/**
- * @brief Derive the full and minimized clock colours from the background image (or the screen bg colour if none).
- *
- * Derive the FULL-clock colour from the background image (the clock screen's only
- * content behind the digits), NVS text colour as OKLCH base. The minimized clock
- * is handled separately by sampling the actual state screen (see below).
+ * Replaces apply_clock_bg_contrast(), which legibility-adjusted the colour against the
+ * background (OKLCH), so a chosen white could render black ("colour resets to black").
  *
  * @dg_internal
  * @version 1
+ * @req REQ-BG-002
  */
-static void apply_clock_bg_contrast(const clock_settings_t *cfg)
+static void apply_clock_user_color(const clock_settings_t *cfg)
 {
     clock_widget_t *clk = DisplayFsm::get_clock();
     if (!clk || !cfg) return;
@@ -504,55 +481,11 @@ static void apply_clock_bg_contrast(const clock_settings_t *cfg)
     lv_color_t user = lv_color_make((cfg->text_color >> 16) & 0xFF,
                                     (cfg->text_color >> 8) & 0xFF,
                                     cfg->text_color & 0xFF);
-    clock_widget_set_user_color(clk, user);
-
     lvgl_port_lock(0);
-    if (s_bg_dsc) {
-        lv_area_t fa, ma;
-        clock_widget_full_area(&fa);
-        clock_widget_min_area(&ma);
-        clock_widget_set_color(clk, bg_legible_at(user, &fa));
-        // Minimized default sampled at the clock's MINIMIZED position (top-right),
-        // not the whole image — the corner behind the minimized clock can be much
-        // lighter/darker than the average, so a full-image colour left it barely
-        // visible. States re-sample at entry too (display_fsm_apply_min_bg_contrast).
-        clock_widget_set_minimized_base_color(clk, bg_legible_at(user, &ma));
-    } else {
-        // No background image (GIF bg, or the SD read failed so nothing decoded) —
-        // there's no image to sample, but the clock must still be legible against the
-        // screen's OWN background colour. Using the raw NVS colour here left a dark
-        // text colour invisible on the black no-bg screen; contrast against the screen
-        // bg instead (→ white on black).
-        lv_obj_t *scr = DisplayFsm::get_screen();
-        lv_color_t scr_bg = scr ? lv_obj_get_style_bg_color(scr, LV_PART_MAIN)
-                                : lv_color_black();
-        lv_color_t c = ui_legible(user, scr_bg);
-        clock_widget_set_color(clk, c);
-        clock_widget_set_minimized_base_color(clk, c);
-    }
+    clock_widget_set_user_color(clk, user);
+    clock_widget_set_minimized_base_color(clk, user);
+    clock_widget_set_color(clk, user);
     lvgl_port_unlock();
-}
-
-/**
- * @brief Re-derive the minimized clock colour from the bg image directly behind the minimized clock position.
- *
- * Re-derive the minimized clock colour from the bg image directly behind the
- * minimized clock position. States that show the clock bg behind the minimized
- * clock (weather/astronomy/ambient) call this at entry() BEFORE minimize_clock(),
- * so the colour reflects the CURRENT background and the morph recolours straight
- * to it. No-op for a GIF bg (no sampleable buffer) — the startup default stands.
- *
- * @version 1
- * @req REQ-BG-002
- * @req REQ-CLOCK-002
- */
-extern "C" void display_fsm_apply_min_bg_contrast(void)
-{
-    clock_widget_t *clk = DisplayFsm::get_clock();
-    if (!clk || !s_bg_dsc) return;   // caller (state entry) already holds the LVGL lock
-    lv_area_t ma;
-    clock_widget_min_area(&ma);
-    clock_widget_set_minimized_base_color(clk, bg_legible_at(clock_widget_user_color(clk), &ma));
 }
 
 /**
@@ -563,7 +496,8 @@ extern "C" void display_fsm_apply_min_bg_contrast(void)
  * outside the LVGL lock.
  *
  * @dg_internal
- * @version 1
+ * v2: clock text uses the user's exact colour (legibility via label shadows), no bg sampling.
+ * @version 2
  */
 static void reload_background_from_settings(void)
 {
@@ -590,7 +524,7 @@ static void reload_background_from_settings(void)
     clock_settings_t cfg;
     if (settings_load(&cfg) == ESP_OK) {
         load_background(scr, &cfg);
-        apply_clock_bg_contrast(&cfg);   // re-derive legible clock colour for new bg
+        apply_clock_user_color(&cfg);
     }
 }
 
@@ -799,7 +733,8 @@ static void start_periodic_timers(void)
  *
  * v2: a forecast update rescans the forecast icons off-lock before dispatch.
  * @dg_internal
- * @version 2
+ * v3: clock text uses the user's exact colour (legibility via label shadows), no bg sampling.
+ * @version 3
  */
 static void process_event(const display_event_t *evt)
 {
@@ -821,7 +756,6 @@ static void process_event(const display_event_t *evt)
         PhotoSlideshow::decode_next();    // off-lock (instant if prefetched)
         lvgl_port_lock(0);
         PhotoSlideshow::present();          // under lock: fast swap
-        PhotoSlideshow::apply_clock_contrast();  // legible clock over this photo
         lvgl_port_unlock();
         PhotoSlideshow::prefetch();       // off-lock: decode next ahead
         return;   // not an FSM state event
@@ -860,7 +794,8 @@ static void fsm_run_event_loop(void)
  *
  * v2: resolves the forecast icons off-lock before the first weather screen can be built.
  * @dg_internal
- * @version 2
+ * v3: clock text uses the user's exact colour (legibility via label shadows), no bg sampling.
+ * @version 3
  */
 static void fsm_task(void *arg)
 {
@@ -874,7 +809,7 @@ static void fsm_task(void *arg)
 
     // Background + Lottie manage their own LVGL lock.
     load_background(scr, &cfg);
-    apply_clock_bg_contrast(&cfg);   // legible clock colour over the bg image
+    apply_clock_user_color(&cfg);
     clock_animation_init(scr);   // user-selected clock animation (hummingbird / snowfall / none)
 
     // Preload the radar basemap off-lock so the first radar transition doesn't
@@ -1072,11 +1007,12 @@ extern "C" void display_fsm_refresh_brightness(uint8_t percent)
 /**
  * @brief Reload the text colour from settings and apply it to the clock widget.
  *
- * v2: applies the same background-contrast derivation as boot (apply_clock_bg_contrast).
+ * v2: applies the same derivation as boot (apply_clock_bg_contrast, now apply_clock_user_color).
  *     It used to set the raw colour, so a colour set live looked different after every
  *     reboot/OTA, where the boot path legibility-adjusted it (white over a bright area
  *     turned black), which read as "the colour resets to black".
- * @version 2
+ * v3: clock text uses the user's exact colour (legibility via label shadows), no bg sampling.
+ * @version 3
  * @req REQ-BG-002
  */
 extern "C" void display_fsm_refresh_text_color(void)
@@ -1086,7 +1022,7 @@ extern "C" void display_fsm_refresh_text_color(void)
     clock_settings_t cfg;
     if (settings_load(&cfg) != ESP_OK) return;
 
-    apply_clock_bg_contrast(&cfg);   // takes the LVGL lock itself
+    apply_clock_user_color(&cfg);   // takes the LVGL lock itself
     ESP_LOGI(TAG, "Text color refreshed: 0x%06lX (background-contrast adjusted)",
              (unsigned long)cfg.text_color);
 }

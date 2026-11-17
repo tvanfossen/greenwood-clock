@@ -9,7 +9,9 @@
 // Caller must hold LVGL lock for all functions.
 
 #include "display_widgets.h"
+#include "ui_contrast.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -28,6 +30,12 @@ struct clock_widget_t {
     lv_obj_t    *lbl_time;      // HH:MM
     lv_obj_t    *lbl_ampm;      // AM/PM
     lv_obj_t    *lbl_date;      // Day, Month DD
+    // Drop shadows: one sibling label behind each text label (linked via the text label's
+    // user_data), mirroring its text/font/position/visibility, in a colour contrasting with
+    // the text. They keep the user's exact text colour legible over any background.
+    lv_obj_t    *sh_time;
+    lv_obj_t    *sh_ampm;
+    lv_obj_t    *sh_date;
     clock_mode_t mode;
     lv_color_t   user_color;  // raw NVS text colour — the OKLCH base for all modes
     lv_color_t   color;       // FULL-mode colour (legible over the bg image)
@@ -35,6 +43,45 @@ struct clock_widget_t {
     lv_color_t   min_base;    // default MINIMIZED colour (legible over the bg image,
                               // used by states that show the clock bg behind the clock)
 };
+
+#define SHADOW_OPA  LV_OPA_60   // shadow text opacity (on top of the label's own opa)
+
+/**
+ * @brief Create a shadow label in @p parent (call BEFORE the text label so it renders behind).
+ * @version 1
+ * @req REQ-BG-002
+ * @return The shadow label.
+ */
+static lv_obj_t *shadow_create(lv_obj_t *parent)
+{
+    lv_obj_t *sh = lv_label_create(parent);
+    lv_obj_set_style_text_opa(sh, SHADOW_OPA, 0);
+    lv_obj_remove_flag(sh, LV_OBJ_FLAG_CLICKABLE);
+    lv_label_set_text(sh, "");
+    return sh;
+}
+
+/**
+ * @brief Mirror a text label onto its linked shadow: text, font, alignment, visibility and
+ *        opacity, offset down-right by ~1/64 of the font's line height (min 2 px).
+ *        Requires the label's layout to be up to date.
+ * @version 1
+ * @req REQ-BG-002
+ */
+static void shadow_sync(lv_obj_t *lbl)
+{
+    lv_obj_t *sh = (lv_obj_t *)lv_obj_get_user_data(lbl);
+    if (!sh) return;
+    const lv_font_t *font = lv_obj_get_style_text_font(lbl, 0);
+    lv_label_set_text(sh, lv_label_get_text(lbl));
+    lv_obj_set_style_text_font(sh, font, 0);
+    lv_obj_set_style_text_align(sh, lv_obj_get_style_text_align(lbl, 0), 0);
+    lv_obj_set_style_opa(sh, lv_obj_get_style_opa(lbl, 0), 0);
+    int32_t off = LV_MAX(2, lv_font_get_line_height(font) / 64);
+    lv_obj_align_to(sh, lbl, LV_ALIGN_TOP_LEFT, off, off);
+    if (lv_obj_has_flag(lbl, LV_OBJ_FLAG_HIDDEN)) lv_obj_add_flag(sh, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_remove_flag(sh, LV_OBJ_FLAG_HIDDEN);
+}
 
 // ---------------------------------------------------------------------------
 // Position constants for full / minimized modes
@@ -165,6 +212,33 @@ static void apply_topbar_layout(clock_widget_t *w)
 static void mode_geometry(clock_mode_t mode, int32_t *x, int32_t *y, int32_t *w, int32_t *h);
 static void apply_effective_color(clock_widget_t *w);
 static void kill_fade(void);
+static void finalize_morph(bool crossfade);
+static void snap_cache_release(void);
+
+/**
+ * @brief Re-sync all three shadows with their labels (updates layout first so positions are current).
+ * @version 1
+ * @req REQ-BG-002
+ */
+static void shadows_sync(clock_widget_t *w)
+{
+    lv_obj_update_layout(w->container);
+    shadow_sync(w->lbl_time);
+    shadow_sync(w->lbl_ampm);
+    shadow_sync(w->lbl_date);
+}
+
+/**
+ * @brief Hide all three shadows (the morph snapshot is recoloured wholesale, so it must not contain them).
+ * @version 1
+ * @dg_internal
+ */
+static void shadows_hide(clock_widget_t *w)
+{
+    lv_obj_add_flag(w->sh_time, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(w->sh_ampm, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(w->sh_date, LV_OBJ_FLAG_HIDDEN);
+}
 
 /**
  * @brief Write the screen area occupied by the full-mode clock into @p out (no-op if NULL).
@@ -201,7 +275,8 @@ static void snap_to(clock_widget_t *w, clock_mode_t mode)
 
 /**
  * @brief Allocate a clock widget on @p parent: transparent container with white time, AM/PM and date labels in full mode.
- * @version 1
+ * v2: creates a drop-shadow label behind each text label.
+ * @version 2
  * @req REQ-CLOCK-001
  * @return New widget, or NULL if allocation fails.
  */
@@ -231,38 +306,49 @@ clock_widget_t *clock_widget_create(lv_obj_t *parent)
     lv_obj_clear_flag(w->container, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(w->container, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
 
-    // Time label
+    // Time label (shadow first so it renders behind)
+    w->sh_time  = shadow_create(w->container);
     w->lbl_time = lv_label_create(w->container);
+    lv_obj_set_user_data(w->lbl_time, w->sh_time);
     lv_obj_set_style_text_color(w->lbl_time, w->color, 0);
     lv_obj_set_style_text_align(w->lbl_time, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(w->lbl_time, "12:00");
 
     // AM/PM label
+    w->sh_ampm  = shadow_create(w->container);
     w->lbl_ampm = lv_label_create(w->container);
+    lv_obj_set_user_data(w->lbl_ampm, w->sh_ampm);
     lv_obj_set_style_text_color(w->lbl_ampm, w->color, 0);
     lv_label_set_text(w->lbl_ampm, "PM");
 
     // Date label
+    w->sh_date  = shadow_create(w->container);
     w->lbl_date = lv_label_create(w->container);
+    lv_obj_set_user_data(w->lbl_date, w->sh_date);
     lv_obj_set_style_text_color(w->lbl_date, w->color, 0);
     lv_obj_set_style_text_align(w->lbl_date, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(w->lbl_date, "");
 
     apply_full_layout(w);
     snap_to(w, CLOCK_MODE_FULL);
+    apply_effective_color(w);
+    shadows_sync(w);
     ESP_LOGI(TAG, "ClockWidget created");
     return w;
 }
 
 /**
  * @brief Cancel any in-flight crossfade, delete the widget's LVGL objects and free it (no-op if NULL).
- * @version 1
+ * v2: also settles any morph and frees the snapshot cache.
+ * @version 2
  * @req REQ-CLOCK-001
  */
 void clock_widget_destroy(clock_widget_t *w)
 {
     if (!w) return;
     kill_fade();   // drop any in-flight crossfade snapshot before teardown
+    finalize_morph(false);
+    snap_cache_release();
     if (w->container) {
         lv_anim_delete(w->container, NULL);
         lv_obj_delete(w->container);
@@ -273,7 +359,8 @@ void clock_widget_destroy(clock_widget_t *w)
 
 /**
  * @brief Set the time, AM/PM and date labels from @p ti and re-align AM/PM for the current mode.
- * @version 1
+ * v2: re-syncs the label shadows after the text changes.
+ * @version 2
  * @req REQ-CLOCK-001
  */
 void clock_widget_update(clock_widget_t *w, const struct tm *ti)
@@ -301,6 +388,7 @@ void clock_widget_update(clock_widget_t *w, const struct tm *ti)
             lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
             break;
     }
+    shadows_sync(w);
 }
 
 // Snapshot morph. LVGL re-rasterizes a transform layer every frame, so scaling
@@ -315,6 +403,12 @@ static clock_mode_t    s_morph_target;
 static int32_t s_mx0, s_my0, s_msc0;   // source pos + scale (256 = 1.0x)
 static int32_t s_mx1, s_my1, s_msc1;   // target pos + scale
 static lv_color_t s_mc0, s_mc1;        // source/target text colour (recolours snapshot)
+// Snapshot cache: the white FULL-layout time snapshot depends only on the time text, so it
+// is reused across morphs until the minute changes (rendering it is the bulk of a morph's
+// LVGL-lock time). The cache OWNS the buffer; morph/crossfade free a snapshot only once it
+// is no longer the cache.
+static lv_draw_buf_t *s_snap_cache;
+static char           s_snap_text[8];
 
 /**
  * @brief Linearly interpolate between two bytes at @p prog in 0..256.
@@ -406,18 +500,22 @@ static lv_draw_buf_t *s_fade_snap;
 
 /**
  * @brief lv_anim exec callback: set the object's opacity to @p v.
- * @version 1
+ * v2: fades a text label's linked shadow with it (snapshot images have no user_data).
+ * @version 2
  * @callback
  */
 static void fade_opa_cb(void *var, int32_t v)
 {
     lv_obj_set_style_opa((lv_obj_t *)var, (lv_opa_t)v, 0);
+    lv_obj_t *sh = (lv_obj_t *)lv_obj_get_user_data((lv_obj_t *)var);
+    if (sh) lv_obj_set_style_opa(sh, (lv_opa_t)v, 0);   // a text label's shadow fades with it
 }
 
 // Tear down any in-flight crossfade immediately (its anim, image, and buffer).
 /**
  * @brief Immediately tear down any in-flight crossfade: its animation, image and snapshot buffer.
- * @version 1
+ * v2: does not destroy the snapshot if it is the morph snapshot cache.
+ * @version 2
  * @dg_internal
  */
 static void kill_fade(void)
@@ -427,7 +525,8 @@ static void kill_fade(void)
         lv_obj_delete(s_fade_img);
         s_fade_img = NULL;
     }
-    if (s_fade_snap) { lv_draw_buf_destroy(s_fade_snap); s_fade_snap = NULL; }
+    if (s_fade_snap && s_fade_snap != s_snap_cache) lv_draw_buf_destroy(s_fade_snap);
+    s_fade_snap = NULL;
 }
 
 /**
@@ -447,7 +546,8 @@ static void fade_done_cb(lv_anim_t *a)
 // Strictly serial: an interrupted morph can never orphan its snapshot on the layer.
 /**
  * @brief Restore the real clock at the morph's target layout and colour, then dissolve the snapshot out (@p crossfade) or delete it instantly; idempotent.
- * @version 1
+ * v2: re-syncs the label shadows at the target layout.
+ * @version 2
  * @req REQ-DISP-004
  */
 static void finalize_morph(bool crossfade)
@@ -496,11 +596,12 @@ static void finalize_morph(bool crossfade)
         lv_obj_set_style_opa(w->lbl_ampm, LV_OPA_COVER, 0);
         lv_obj_set_style_opa(w->lbl_date, LV_OPA_COVER, 0);
         if (s_morph_img) { lv_anim_delete(s_morph_img, NULL); lv_obj_delete(s_morph_img); }
-        if (s_morph_snap) lv_draw_buf_destroy(s_morph_snap);
+        if (s_morph_snap && s_morph_snap != s_snap_cache) lv_draw_buf_destroy(s_morph_snap);
     }
     s_morph_img  = NULL;
     s_morph_snap = NULL;
     s_morph_w    = NULL;
+    shadows_sync(w);
 }
 
 /**
@@ -536,7 +637,8 @@ static void mode_geometry(clock_mode_t mode, int32_t *x, int32_t *y, int32_t *w,
 // colour — which may be dark — is not guaranteed to contrast.
 /**
  * @brief Apply the mode's effective text colour (full colour in FULL mode, minimized colour otherwise) to all three labels.
- * @version 1
+ * v2: also colours the drop shadows (contrasting black/white).
+ * @version 2
  * @req REQ-BG-002
  */
 static void apply_effective_color(clock_widget_t *w)
@@ -545,11 +647,69 @@ static void apply_effective_color(clock_widget_t *w)
     lv_obj_set_style_text_color(w->lbl_time, c, 0);
     lv_obj_set_style_text_color(w->lbl_ampm, c, 0);
     lv_obj_set_style_text_color(w->lbl_date, c, 0);
+    lv_color_t sc = ui_text_on(c);   // black under light text, white under dark text
+    lv_obj_set_style_text_color(w->sh_time, sc, 0);
+    lv_obj_set_style_text_color(w->sh_ampm, sc, 0);
+    lv_obj_set_style_text_color(w->sh_date, sc, 0);
+}
+
+/**
+ * @brief Drop the snapshot cache entry, destroying its buffer unless a morph or crossfade still
+ *        shows it (that owner then frees it, since it is no longer the cache).
+ * @version 1
+ * @dg_internal
+ */
+static void snap_cache_release(void)
+{
+    lv_draw_buf_t *old = s_snap_cache;
+    s_snap_cache = NULL;
+    s_snap_text[0] = '\0';
+    if (old && old != s_morph_snap && old != s_fade_snap) lv_draw_buf_destroy(old);
+}
+
+/**
+ * @brief Return the white FULL-layout time snapshot for the current time text: the cached one
+ *        when the text is unchanged, else render (and cache) a new one. Leaves the labels in
+ *        FULL layout, white, with AM/PM, date and shadows hidden on a render.
+ * @version 1
+ * @req REQ-DISP-004
+ * @return Snapshot buffer (owned by the cache), or NULL if rendering failed (OOM).
+ */
+static lv_draw_buf_t *morph_snapshot_get(clock_widget_t *w)
+{
+    const char *text = lv_label_get_text(w->lbl_time);
+    if (s_snap_cache && strcmp(text, s_snap_text) == 0) return s_snap_cache;
+
+    // Render the real clock at FULL (256pt) in WHITE and snapshot it once. The morph
+    // scales that static bitmap (no per-frame re-raster) and recolours it, so one white
+    // snapshot serves every colour (white -> recolour keeps glyph AA). AM/PM + date stay
+    // OUT of it: they reflow between layouts and crossfade separately.
+    int64_t t0 = esp_timer_get_time();
+    snap_to(w, CLOCK_MODE_FULL);
+    apply_full_layout(w);
+    lv_color_t white = lv_color_white();
+    lv_obj_set_style_text_color(w->lbl_time, white, 0);
+    lv_obj_set_style_text_color(w->lbl_ampm, white, 0);
+    lv_obj_set_style_text_color(w->lbl_date, white, 0);
+    lv_obj_add_flag(w->lbl_ampm, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(w->lbl_date, LV_OBJ_FLAG_HIDDEN);
+    shadows_hide(w);   // the snapshot is recoloured wholesale: no shadows in it
+    lv_obj_update_layout(w->container);
+    lv_draw_buf_t *snap = lv_snapshot_take(w->container, LV_COLOR_FORMAT_ARGB8888);
+    ESP_LOGI(TAG, "morph snapshot rendered for '%s' in %lld us (cache miss)", text,
+             (long long)(esp_timer_get_time() - t0));
+    if (!snap) return NULL;
+    snap_cache_release();
+    s_snap_cache = snap;
+    strlcpy(s_snap_text, text, sizeof(s_snap_text));
+    return snap;
 }
 
 /**
  * @brief Switch clock mode; animates a 500 ms snapshot morph (time scaled and recoloured, AM/PM and date crossfaded), or snaps instantly if the snapshot cannot be taken.
- * @version 1
+ * v2: keeps the drop shadows out of the morph snapshot and in sync around it.
+ * v3: reuses the cached time snapshot (morph_snapshot_get) instead of re-rendering it every morph.
+ * @version 3
  * @req REQ-CLOCK-002
  * @req REQ-DISP-004
  */
@@ -579,23 +739,8 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
     s_mc0 = (old_mode == CLOCK_MODE_FULL) ? w->color : w->min_color;
     s_mc1 = (mode     == CLOCK_MODE_FULL) ? w->color : w->min_color;
 
-    // Render the real clock at FULL (256pt) in WHITE and snapshot it once. The
-    // morph scales that static bitmap (no per-frame re-raster) and recolours it,
-    // so one white snapshot serves every colour (white→recolour keeps glyph AA).
-    snap_to(w, CLOCK_MODE_FULL);
-    apply_full_layout(w);
-    lv_color_t white = lv_color_white();
-    lv_obj_set_style_text_color(w->lbl_time, white, 0);
-    lv_obj_set_style_text_color(w->lbl_ampm, white, 0);
-    lv_obj_set_style_text_color(w->lbl_date, white, 0);
-    // Keep AM/PM + date OUT of the morph snapshot. They reflow between layouts, so
-    // scaling them uniformly with the time lands them in the wrong place and they
-    // ghost. Snapshot the time alone; the real AM/PM + date crossfade separately.
-    lv_obj_add_flag(w->lbl_ampm, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(w->lbl_date, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_update_layout(w->container);
-
-    s_morph_snap = lv_snapshot_take(w->container, LV_COLOR_FORMAT_ARGB8888);
+    // White FULL-layout time snapshot: cached per time text (re-rendered once a minute).
+    s_morph_snap = morph_snapshot_get(w);
 
     lv_obj_remove_flag(w->lbl_ampm, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(w->lbl_date, LV_OBJ_FLAG_HIDDEN);
@@ -605,6 +750,7 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
         snap_to(w, mode);
         apply_layout_for_mode(w, mode);
         apply_effective_color(w);
+        shadows_sync(w);
         ESP_LOGW(TAG, "morph: snapshot failed, snapping to mode %d", mode);
         return;
     }
@@ -627,6 +773,7 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
     lv_anim_set_exec_cb(&lf, fade_opa_cb);
     lv_anim_set_var(&lf, w->lbl_ampm); lv_anim_start(&lf);
     lv_anim_set_var(&lf, w->lbl_date); lv_anim_start(&lf);
+    shadows_sync(w);   // source layout; the hidden time's shadow stays hidden
 
     s_morph_img = lv_image_create(lv_obj_get_parent(w->container));
     lv_image_set_src(s_morph_img, s_morph_snap);

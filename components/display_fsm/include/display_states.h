@@ -107,7 +107,8 @@ struct PhotoSlideshow : DisplayFsm
 
     /**
      * @brief Enter the photo slideshow state.
-     * @version 1
+     * v2: class no longer declares apply_clock_contrast (clock uses the user's colour).
+     * @version 2
      * @req REQ-PHOTO-001
      */
     void entry() override;
@@ -123,7 +124,6 @@ struct PhotoSlideshow : DisplayFsm
     static void prefetch();
     // Sample the shown photo behind the minimized clock and set a legible
     // (OKLCH) clock colour. Call under the LVGL lock after present().
-    static void apply_clock_contrast();
 };
 
 // ---------------------------------------------------------------------------
