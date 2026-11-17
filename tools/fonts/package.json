@@ -1,0 +1,8 @@
+{
+  "name": "greenwood-fonts",
+  "private": true,
+  "description": "Pinned LVGL font converter for the clock fonts (inv gen-fonts)",
+  "devDependencies": {
+    "lv_font_conv": "1.5.3"
+  }
+}

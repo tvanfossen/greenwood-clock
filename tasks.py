@@ -469,6 +469,56 @@ def _push_staging_tree(c, subdir, pattern, host):
         )
 
 
+#: Clock digit fonts: (point size, original 1 bpp font whose line metrics they must keep).
+CLOCK_FONTS = ((256, "nunito_256"), (128, "nunito_128"))
+FONTS_DIR = REPO / "components" / "fonts"
+
+
+## @brief Copy `.line_height` / `.base_line` from the original font and mark the new font static_bitmap.
+## @dg_internal
+## @version 1
+## @return Patched C source text.
+def _patch_clock_font(src, original):
+    import re
+
+    for field in ("line_height", "base_line"):
+        value = re.search(rf"\.{field} = (\d+),", original).group(1)
+        src, n = re.subn(rf"\.{field} = \d+,", f".{field} = {value},", src, count=1)
+        assert n == 1, field
+    src, n = re.subn(
+        r"(\.dsc = &font_dsc,[^\n]*\n)", r"\1    .static_bitmap = 1,\n", src, count=1
+    )
+    assert n == 1, "static_bitmap"
+    return src
+
+
+## @brief Generate the 8 bpp static-bitmap clock digit fonts (0-9 and ':') from Nunito-ExtraBold.
+## The 1 bpp fonts made LVGL expand each whole glyph for every dirty area touching the digits
+## (snowfall redraws ~120 small areas per frame); 8 bpp static glyphs blend straight from flash
+## and are anti-aliased. Line metrics are copied from the original fonts so layout is unchanged.
+## @req REQ-CLOCK-001
+## @req REQ-ANIM-004
+## @version 1
+@task
+def gen_fonts(c):
+    conv = REPO / "tools" / "fonts" / "node_modules" / ".bin" / "lv_font_conv"
+    if not conv.exists():
+        c.run(f"npm ci --prefix {REPO / 'tools' / 'fonts'} --no-fund --no-audit")
+    ttf = FONTS_DIR / "fonts" / "Nunito-ExtraBold.ttf"
+    for size, original in CLOCK_FONTS:
+        name = f"nunito_clock_{size}"
+        out = FONTS_DIR / "c_array" / f"{name}.c"
+        c.run(
+            f"{conv} --font {ttf} --size {size} --bpp 8 --no-compress --symbols '0123456789:' "
+            f"--format lvgl --lv-font-name {name} -o {out}"
+        )
+        orig = (FONTS_DIR / "c_array" / f"{original}.c").read_text()
+        out.write_text(_patch_clock_font(out.read_text(), orig))
+        print(
+            f"{name}: {out.stat().st_size:,} B (metrics from {original}, static_bitmap)"
+        )
+
+
 ## @brief Upload sdcard/icons/** (forecast icons) to the device SD card.
 ## v2: shares _push_staging_tree with push-lottie.
 ## @req REQ-TOOL-002

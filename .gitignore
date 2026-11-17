@@ -18,3 +18,6 @@ tools/__pycache__/
 
 # Generated doxygen warning log
 /docs/api/
+
+# Pinned LVGL font converter install (inv gen-fonts)
+/tools/fonts/node_modules/
