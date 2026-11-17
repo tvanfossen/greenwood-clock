@@ -76,12 +76,6 @@ esp_err_t sdcard_get_info(sdcard_info_t* info);
 bool sdcard_is_mounted(void);
 
 /**
- * @brief Format SD card (WARNING: erases all data)
- * @return ESP_OK on success
- */
-esp_err_t sdcard_format(void);
-
-/**
  * @brief Create standard directories on SD card
  * @return ESP_OK on success
  */

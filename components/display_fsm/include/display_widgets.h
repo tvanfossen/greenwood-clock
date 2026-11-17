@@ -148,37 +148,6 @@ void forecast_strip_set_contrast(forecast_strip_t *s, lv_color_t base);
 lv_obj_t *forecast_strip_container(const forecast_strip_t *s);
 
 // ---------------------------------------------------------------------------
-// ParticleSystem — reusable animated particle effect
-// ---------------------------------------------------------------------------
-
-typedef struct particle_system_t particle_system_t;
-
-typedef struct {
-    int        count;                  // number of particles
-    int        width, height;          // particle size (px)
-    lv_color_t color;
-    lv_opa_t   opacity;
-    int        fall_time_ms;           // base fall/drift time
-    int        fall_time_variance_ms;  // randomization range
-    int        delay_variance_ms;      // stagger start
-    bool       horizontal_drift;       // snow-like wobble
-    bool       flash;                  // lightning flash (random opacity burst)
-} particle_config_t;
-
-// Pre-defined particle configurations
-extern const particle_config_t PARTICLE_RAIN;
-extern const particle_config_t PARTICLE_SNOW;
-extern const particle_config_t PARTICLE_DRIZZLE;
-extern const particle_config_t PARTICLE_ICE;
-extern const particle_config_t PARTICLE_CONFETTI;
-extern const particle_config_t PARTICLE_SPARKLE;
-
-particle_system_t *particle_system_create(lv_obj_t *parent, const particle_config_t *cfg);
-void particle_system_destroy(particle_system_t *ps);
-void particle_system_pause(particle_system_t *ps);
-void particle_system_resume(particle_system_t *ps);
-
-// ---------------------------------------------------------------------------
 // AlertBanner — colored banner with scrolling headline
 // ---------------------------------------------------------------------------
 
