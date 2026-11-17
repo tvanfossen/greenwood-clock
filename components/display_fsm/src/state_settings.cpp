@@ -9,6 +9,7 @@
 #include "display_states.h"
 #include "display_scheduler.h"
 #include "display_fsm.h"
+#include "clock_animation.h"
 
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
@@ -25,6 +26,7 @@ extern "C" {
 #include "sdcard.h"
 #include "display_fsm.h"    // display_fsm_refresh_background, display_fsm_refresh_text_color
 #include "bsp/display.h"    // bsp_display_brightness_set
+#include "clock_anim_pref.h"  // clock_anim_pref_get/set
 }
 
 #include <cstring>
@@ -45,6 +47,7 @@ enum settings_sub_screen_t {
     SUB_BACKGROUND,
     SUB_TEXT_COLOR,
     SUB_ANIMATION,
+    SUB_CLOCK_ANIM,
     SUB_ABOUT,
     SUB_MAX
 };
@@ -62,6 +65,7 @@ static lv_obj_t *create_sub_brightness(lv_obj_t *parent);
 static lv_obj_t *create_sub_background(lv_obj_t *parent);
 static lv_obj_t *create_sub_text_color(lv_obj_t *parent);
 static lv_obj_t *create_sub_animation(lv_obj_t *parent);
+static lv_obj_t *create_sub_clock_anim(lv_obj_t *parent);
 static lv_obj_t *create_sub_about(lv_obj_t *parent);
 
 typedef lv_obj_t *(*sub_creator_fn_t)(lv_obj_t *parent);
@@ -72,6 +76,7 @@ static const sub_creator_fn_t SUB_CREATORS[SUB_MAX] = {
     [SUB_BACKGROUND] = create_sub_background,
     [SUB_TEXT_COLOR]  = create_sub_text_color,
     [SUB_ANIMATION]  = create_sub_animation,
+    [SUB_CLOCK_ANIM] = create_sub_clock_anim,
     [SUB_ABOUT]      = create_sub_about,
 };
 
@@ -81,6 +86,11 @@ static const sub_creator_fn_t SUB_CREATORS[SUB_MAX] = {
 
 static lv_obj_t *s_settings_root = nullptr;  // root container for all settings
 
+/**
+ * @brief Delete every created sub-screen container and reset the navigation stack.
+ * @version 1
+ * @dg_internal
+ */
 static void destroy_all_subs(void)
 {
     for (int i = 0; i < SUB_MAX; i++) {
@@ -92,6 +102,11 @@ static void destroy_all_subs(void)
     s_sub_top = -1;
 }
 
+/**
+ * @brief Hide the current sub-screen, create the requested one on demand, show it and push it on the stack.
+ * @version 1
+ * @dg_internal
+ */
 static void show_sub(settings_sub_screen_t sub)
 {
     if (sub >= SUB_MAX || !s_settings_root) return;
@@ -120,6 +135,11 @@ static void show_sub(settings_sub_screen_t sub)
     ESP_LOGI(TAG, "show_sub: %d (depth=%d)", sub, s_sub_top + 1);
 }
 
+/**
+ * @brief Destroy the top sub-screen and re-show the previous one; at menu level, send DISPLAY_EVT_SETTINGS_BACK to exit settings.
+ * @version 1
+ * @dg_internal
+ */
 static void pop_sub(void)
 {
     if (s_sub_top <= 0) {
@@ -150,14 +170,25 @@ static void pop_sub(void)
 // Shared UI helpers
 // ============================================================================
 
+/**
+ * @brief Back button handler: pop the current sub-screen.
+ * @version 1
+ * @callback
+ */
 static void back_btn_cb(lv_event_t *e)
 {
     (void)e;
     pop_sub();
 }
 
-/** Create a styled container with title and back button.  All sub-screens
- *  share the same visual style: dark bg, rounded corners, centered. */
+/**
+ * @brief Create a styled container with title and back button.
+ *
+ * All sub-screens share the same visual style: dark bg, rounded corners, centered.
+ * @version 1
+ * @dg_internal
+ * @return The new sub-screen container.
+ */
 static lv_obj_t *make_sub_container(lv_obj_t *parent, const char *title)
 {
     lv_obj_t *cont = lv_obj_create(parent);
@@ -190,9 +221,14 @@ static lv_obj_t *make_sub_container(lv_obj_t *parent, const char *title)
     return cont;
 }
 
-/** Dismiss callback — fired by lv_timer after 1.5 s.  Deletes the msgbox
- *  and pops the sub-screen.  Runs inside lv_timer_handler() in the LVGL
- *  task, so the lock is already held — no extra lock/unlock needed. */
+/**
+ * @brief Dismiss callback — fired by lv_timer after 1.5 s; deletes the msgbox and pops the sub-screen.
+ *
+ * Runs inside lv_timer_handler() in the LVGL task, so the lock is already
+ * held — no extra lock/unlock needed.
+ * @version 1
+ * @callback
+ */
 static void success_dismiss_cb(lv_timer_t *timer)
 {
     lv_obj_t *mbox = (lv_obj_t *)lv_timer_get_user_data(timer);
@@ -201,8 +237,13 @@ static void success_dismiss_cb(lv_timer_t *timer)
     lv_timer_delete(timer);
 }
 
-/** Show success message box, auto-dismiss after 1.5 s, then pop.
- *  Non-blocking — returns immediately so the LVGL task keeps rendering. */
+/**
+ * @brief Show success message box, auto-dismiss after 1.5 s, then pop.
+ *
+ * Non-blocking — returns immediately so the LVGL task keeps rendering.
+ * @version 1
+ * @dg_internal
+ */
 static void show_success_and_pop(const char *msg)
 {
     lv_obj_t *mbox = lv_msgbox_create(NULL);
@@ -218,6 +259,11 @@ static void show_success_and_pop(const char *msg)
 // Settings menu
 // ============================================================================
 
+/**
+ * @brief Menu list click handler: show the sub-screen stored in the event user data.
+ * @version 1
+ * @callback
+ */
 static void menu_item_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -225,6 +271,11 @@ static void menu_item_cb(lv_event_t *e)
     show_sub(sub);
 }
 
+/**
+ * @brief Reboot button handler: release the LVGL lock, wait 500 ms, then restart the device.
+ * @version 1
+ * @callback
+ */
 static void reboot_btn_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -234,6 +285,11 @@ static void reboot_btn_cb(lv_event_t *e)
     esp_restart();
 }
 
+/**
+ * @brief Add a settings menu button that opens the given sub-screen when clicked.
+ * @version 1
+ * @dg_internal
+ */
 static void menu_add_item(lv_obj_t *list, const char *icon,
                            const char *label, settings_sub_screen_t sub)
 {
@@ -242,6 +298,12 @@ static void menu_add_item(lv_obj_t *list, const char *icon,
                         (void *)(uintptr_t)sub);
 }
 
+/**
+ * @brief Build the top-level settings menu list, including the reboot button.
+ * @version 1
+ * @dg_internal
+ * @return The sub-screen container.
+ */
 static lv_obj_t *create_sub_menu(lv_obj_t *parent)
 {
     lv_obj_t *cont = make_sub_container(parent, "Settings");
@@ -255,6 +317,7 @@ static lv_obj_t *create_sub_menu(lv_obj_t *parent)
     menu_add_item(list, LV_SYMBOL_IMAGE,    "Brightness",        SUB_BRIGHTNESS);
     menu_add_item(list, LV_SYMBOL_IMAGE,    "Background Image",  SUB_BACKGROUND);
     menu_add_item(list, LV_SYMBOL_EDIT,     "Text Color",        SUB_TEXT_COLOR);
+    menu_add_item(list, LV_SYMBOL_LOOP,     "Clock Animation",   SUB_CLOCK_ANIM);
     menu_add_item(list, LV_SYMBOL_PLAY,     "Animation Preview", SUB_ANIMATION);
     menu_add_item(list, LV_SYMBOL_SETTINGS, "About",             SUB_ABOUT);
 
@@ -275,6 +338,11 @@ static lv_obj_t *s_wifi_status_label = nullptr;
 static char s_selected_ssid[33]      = "";
 static char s_wifi_password[64]      = "";
 
+/**
+ * @brief Append a network button (lock marker, SSID, RSSI) to the WiFi list, storing an lv_malloc'd SSID copy as user data.
+ * @version 1
+ * @dg_internal
+ */
 static void wifi_scan_add_network(const wifi_ap_info_t *ap)
 {
     char btn_text[64];
@@ -291,6 +359,11 @@ static void wifi_scan_add_network(const wifi_ap_info_t *ap)
 
 static void wifi_network_select_cb(lv_event_t *e);
 
+/**
+ * @brief Update the status label with the scan count and add a selectable button per found network.
+ * @version 1
+ * @dg_internal
+ */
 static void wifi_scan_populate(const wifi_ap_info_t *ap_list, uint16_t found)
 {
     char buf[64];
@@ -306,6 +379,11 @@ static void wifi_scan_populate(const wifi_ap_info_t *ap_list, uint16_t found)
     }
 }
 
+/**
+ * @brief Clear the list, run a blocking WiFi scan with the LVGL lock released, then populate results or report none found.
+ * @version 1
+ * @dg_internal
+ */
 static void wifi_scan_run(void)
 {
     if (s_wifi_list) lv_obj_clean(s_wifi_list);
@@ -328,6 +406,11 @@ static void wifi_scan_run(void)
     wifi_scan_populate(ap_list, found);
 }
 
+/**
+ * @brief Scan button handler: run a WiFi scan.
+ * @version 1
+ * @callback
+ */
 static void wifi_scan_btn_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -335,6 +418,11 @@ static void wifi_scan_btn_cb(lv_event_t *e)
     wifi_scan_run();
 }
 
+/**
+ * @brief Network button handler: record the selected SSID and reveal the password textarea and keyboard.
+ * @version 1
+ * @callback
+ */
 static void wifi_network_select_cb(lv_event_t *e)
 {
     lv_obj_t *btn = (lv_obj_t *)lv_event_get_target(e);
@@ -356,6 +444,11 @@ static void wifi_network_select_cb(lv_event_t *e)
     }
 }
 
+/**
+ * @brief Connect button handler: connect to the selected SSID with the LVGL lock released and persist credentials to NVS on success.
+ * @version 1
+ * @callback
+ */
 static void wifi_connect_btn_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -397,6 +490,12 @@ static void wifi_connect_btn_cb(lv_event_t *e)
     ESP_LOGI(TAG, "WiFi connect result for %s: %d", s_selected_ssid, (int)err);
 }
 
+/**
+ * @brief Build the WiFi sub-screen: status label, scan button, network list, hidden password entry, connect button and keyboard.
+ * @version 1
+ * @dg_internal
+ * @return The sub-screen container.
+ */
 static lv_obj_t *create_sub_wifi(lv_obj_t *parent)
 {
     lv_obj_t *cont = make_sub_container(parent, "WiFi Settings");
@@ -461,6 +560,11 @@ static lv_obj_t *create_sub_wifi(lv_obj_t *parent)
 // Brightness settings
 // ============================================================================
 
+/**
+ * @brief Slider handler: apply the new backlight brightness, update the label and save it to NVS with the LVGL lock released.
+ * @version 1
+ * @callback
+ */
 static void brightness_slider_cb(lv_event_t *e)
 {
     lv_obj_t *slider = (lv_obj_t *)lv_event_get_target(e);
@@ -490,6 +594,12 @@ static void brightness_slider_cb(lv_event_t *e)
     lvgl_port_lock(0);
 }
 
+/**
+ * @brief Build the brightness sub-screen with a 10-100% slider initialised from saved settings.
+ * @version 1
+ * @dg_internal
+ * @return The sub-screen container.
+ */
 static lv_obj_t *create_sub_brightness(lv_obj_t *parent)
 {
     lv_obj_t *cont = make_sub_container(parent, "Brightness");
@@ -529,16 +639,32 @@ static lv_obj_t *create_sub_brightness(lv_obj_t *parent)
 // Background selector
 // ============================================================================
 
+/**
+ * @brief Check whether a file extension is a supported background image (.png or .gif, case-insensitive).
+ * @version 1
+ * @dg_internal
+ * @return true if the extension is .png or .gif.
+ */
 static bool bg_is_image_file(const char *ext)
 {
     return (strcasecmp(ext, ".png") == 0 || strcasecmp(ext, ".gif") == 0);
 }
 
+/**
+ * @brief Button delete handler: free the strdup'd background path stored in the event user data.
+ * @version 1
+ * @callback
+ */
 static void bg_path_cleanup_cb(lv_event_t *e)
 {
     free(lv_event_get_user_data(e));
 }
 
+/**
+ * @brief Background button handler: save the chosen image path to NVS, refresh the background and show success.
+ * @version 1
+ * @callback
+ */
 static void background_select_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -565,6 +691,12 @@ static void background_select_cb(lv_event_t *e)
     show_success_and_pop("Background updated!");
 }
 
+/**
+ * @brief Add a selectable list button for each PNG/GIF file in /sdcard/backgrounds.
+ * @version 1
+ * @dg_internal
+ * @return Number of image files added, or -1 if the directory cannot be opened.
+ */
 static int bg_scan_directory(lv_obj_t *list)
 {
     DIR *dir = opendir("/sdcard/backgrounds");
@@ -594,6 +726,12 @@ static int bg_scan_directory(lv_obj_t *list)
     return count;
 }
 
+/**
+ * @brief Build the background selector list from the SD card, showing a warning entry if unmounted, unreadable or empty.
+ * @version 1
+ * @dg_internal
+ * @return The sub-screen container.
+ */
 static lv_obj_t *create_sub_background(lv_obj_t *parent)
 {
     lv_obj_t *cont = make_sub_container(parent, "Select Background");
@@ -645,6 +783,11 @@ static const color_preset_t COLOR_PRESETS[] = {
 };
 static constexpr int NUM_COLOR_PRESETS = sizeof(COLOR_PRESETS) / sizeof(COLOR_PRESETS[0]);
 
+/**
+ * @brief Color button handler: save the chosen text color to NVS, refresh the clock text color and show success.
+ * @version 1
+ * @callback
+ */
 static void color_select_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -669,6 +812,12 @@ static void color_select_cb(lv_event_t *e)
     show_success_and_pop("Text color updated!");
 }
 
+/**
+ * @brief Build the text color preset list with the currently saved color focused.
+ * @version 1
+ * @dg_internal
+ * @return The sub-screen container.
+ */
 static lv_obj_t *create_sub_text_color(lv_obj_t *parent)
 {
     lv_obj_t *cont = make_sub_container(parent, "Text Color");
@@ -697,6 +846,58 @@ static lv_obj_t *create_sub_text_color(lv_obj_t *parent)
 }
 
 // ============================================================================
+// Clock animation selector (hummingbird / snowfall / none)
+// ============================================================================
+
+/**
+ * @brief Persist the chosen clock animation and make it active.
+ * @version 1
+ * @req REQ-ANIM-001
+ * @callback
+ */
+static void clock_anim_select_cb(lv_event_t *e)
+{
+    clock_anim_t anim = (clock_anim_t)(uintptr_t)lv_event_get_user_data(e);
+    ESP_LOGI(TAG, "Clock animation selected: %s", clock_anim_name(anim));
+
+    lvgl_port_unlock();                    // NVS write off the LVGL lock
+    esp_err_t err = clock_anim_pref_set(anim);
+    lvgl_port_lock(0);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Clock animation save failed: %s", esp_err_to_name(err));
+        return;
+    }
+    clock_animation_select(anim);          // shown when the clock screen is restored
+    show_success_and_pop("Clock animation updated!");
+}
+
+/**
+ * @brief List the available clock animations with the current one focused.
+ * @version 2
+ * @req REQ-ANIM-001
+ * @return The sub-screen container.
+ */
+static lv_obj_t *create_sub_clock_anim(lv_obj_t *parent)
+{
+    lv_obj_t *cont = make_sub_container(parent, "Clock Animation");
+    clock_anim_t current = clock_anim_pref_get();
+
+    lv_obj_t *list = lv_list_create(cont);
+    lv_obj_set_size(list, 700, 380);
+    lv_obj_align(list, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_text_font(list, &lv_font_montserrat_20, 0);
+
+    for (int i = 0; i < CLOCK_ANIM_COUNT; i++) {
+        clock_anim_t anim = CLOCK_ANIM_MENU_ORDER[i];
+        lv_obj_t *btn = lv_list_add_button(list, LV_SYMBOL_BULLET, clock_anim_name(anim));
+        lv_obj_add_event_cb(btn, clock_anim_select_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)anim);
+        if (anim == current) lv_obj_add_state(btn, LV_STATE_FOCUSED);
+    }
+    return cont;
+}
+
+// ============================================================================
 // Animation preview
 // ============================================================================
 
@@ -708,6 +909,12 @@ static lv_obj_t *create_sub_text_color(lv_obj_t *parent)
 
 static uint8_t *s_lottie_buf = nullptr;
 
+/**
+ * @brief Create a centered Lottie widget and attach a shared 64-byte aligned SPIRAM render buffer.
+ * @version 1
+ * @dg_internal
+ * @return The Lottie widget, or nullptr if creation, render task start or buffer allocation fails.
+ */
 static lv_obj_t *anim_create_widget(lv_obj_t *scr)
 {
     lv_obj_t *widget = lv_lottie_create(scr);
@@ -742,6 +949,11 @@ static lv_obj_t *anim_create_widget(lv_obj_t *scr)
     return widget;
 }
 
+/**
+ * @brief Queue an asynchronous Lottie file load for the widget via display_fsm_load_lottie().
+ * @version 1
+ * @dg_internal
+ */
 static void anim_spawn_load_task(lv_obj_t *widget, const char *path)
 {
     lottie_load_job_t job = {};
@@ -754,6 +966,12 @@ static void anim_spawn_load_task(lv_obj_t *widget, const char *path)
 
 #endif // LV_USE_LOTTIE
 
+/**
+ * @brief Build the animation preview sub-screen: a Lottie preview if enabled and heap allows, otherwise an error label.
+ * @version 1
+ * @dg_internal
+ * @return The sub-screen container.
+ */
 static lv_obj_t *create_sub_animation(lv_obj_t *parent)
 {
     lv_obj_t *cont = make_sub_container(parent, "Animation Preview");
@@ -798,6 +1016,12 @@ static lv_obj_t *create_sub_animation(lv_obj_t *parent)
 // About screen
 // ============================================================================
 
+/**
+ * @brief Build the About sub-screen showing version, platform, MAC, IP and heap statistics.
+ * @version 1
+ * @dg_internal
+ * @return The sub-screen container.
+ */
 static lv_obj_t *create_sub_about(lv_obj_t *parent)
 {
     lv_obj_t *cont = make_sub_container(parent, "About");
@@ -847,6 +1071,10 @@ static lv_obj_t *create_sub_about(lv_obj_t *parent)
 // Settings FSM state — out-of-line method implementations
 // ============================================================================
 
+/**
+ * @brief FSM entry: pause the scheduler, create the settings root container, reset navigation and show the menu.
+ * @version 1
+ */
 void Settings::entry()
 {
     set_state_info(DISPLAY_STATE_SETTINGS, "settings");
@@ -873,6 +1101,10 @@ void Settings::entry()
     ESP_LOGI(TAG, "Settings: entry");
 }
 
+/**
+ * @brief FSM exit: clear WiFi widget globals, destroy all sub-screens and the root, then resume the scheduler.
+ * @version 1
+ */
 void Settings::exit()
 {
     // Clear wifi globals
@@ -894,16 +1126,25 @@ void Settings::exit()
     ESP_LOGI(TAG, "Settings: exit");
 }
 
-// Swipe-up in settings does nothing (already in settings)
+/**
+ * @brief Swipe-up in settings does nothing (already in settings).
+ * @version 1
+ */
 void Settings::react(EvGesture const &) { }
 
-// Settings back returns to clock
+/**
+ * @brief Settings back returns to clock.
+ * @version 1
+ */
 void Settings::react(EvSettingsBack const &)
 {
     transit<ClockFull>();
 }
 
-// Clock updates still work in settings
+/**
+ * @brief Clock updates still work in settings: refresh the clock widget time.
+ * @version 1
+ */
 void Settings::react(EvClockUpdate const &e)
 {
     if (s_clock) {
@@ -911,16 +1152,24 @@ void Settings::react(EvClockUpdate const &e)
     }
 }
 
-// Block external state-changing events while in settings.
-// Settings callbacks release the LVGL lock during blocking I/O
-// (wifi scan, NVS writes).  If the FSM task processes a
-// transit-inducing event in that window, Settings::exit() would
-// destroy widgets the LVGL task is still using → crash.
+/**
+ * @brief Block external state-changing events while in settings; surprise messages are ignored.
+ *
+ * Settings callbacks release the LVGL lock during blocking I/O
+ * (wifi scan, NVS writes).  If the FSM task processes a
+ * transit-inducing event in that window, Settings::exit() would
+ * destroy widgets the LVGL task is still using → crash.
+ * @version 1
+ */
 void Settings::react(EvSurpriseMessage const &)
 {
     ESP_LOGW(TAG, "Surprise message ignored while in settings");
 }
 
+/**
+ * @brief Force-state requests are ignored while in settings (see EvSurpriseMessage handler).
+ * @version 1
+ */
 void Settings::react(EvForceState const &)
 {
     ESP_LOGW(TAG, "Force-state ignored while in settings");
