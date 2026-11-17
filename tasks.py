@@ -457,18 +457,41 @@ def _pull_lottie(host, rel_paths, root, staging):
             print(f"DRIFT: device {rel} differs from sdcard/{rel}")
 
 
-## @brief Upload sdcard/icons/** (forecast icons) to the device SD card.
-## @req REQ-TOOL-002
-## @req REQ-WX-006
+## @brief Upload every file matching @p pattern under sdcard/<subdir> to the same path on the device SD card.
+## @req REQ-TOOL-001
 ## @version 1
-@task(help={"host": "Device host or IP"})
-def push_icons(c, host=DEFAULT_HOST):
+def _push_staging_tree(c, subdir, pattern, host):
     staging = REPO / "sdcard"
-    for src in sorted((staging / "icons").rglob("*.png")):
+    for src in sorted((staging / subdir).rglob(pattern)):
         remote = src.relative_to(staging).as_posix()
         c.run(
             f"{sys.executable} {REPO / 'tools' / 'file_push.py'} {src} {remote} --host {host}"
         )
+
+
+## @brief Upload sdcard/icons/** (forecast icons) to the device SD card.
+## v2: shares _push_staging_tree with push-lottie.
+## @req REQ-TOOL-002
+## @req REQ-WX-006
+## @version 2
+@task(help={"host": "Device host or IP"})
+def push_icons(c, host=DEFAULT_HOST):
+    _push_staging_tree(c, "icons", "*.png", host)
+
+
+## @brief Upload sdcard/lottie/<group>/** (generated Lotties, default: weather + ui) to the device SD card.
+## @req REQ-TOOL-002
+## @req REQ-LOTTIE-002
+## @version 1
+@task(
+    help={
+        "host": "Device host or IP",
+        "groups": "Comma-separated sdcard/lottie subdirs to push (default: weather,ui)",
+    }
+)
+def push_lottie(c, host=DEFAULT_HOST, groups="weather,ui"):
+    for group in groups.split(","):
+        _push_staging_tree(c, f"lottie/{group.strip()}", "*.json", host)
 
 
 ## @brief Build and run the host-side C unit tests (pure-logic modules, no ESP-IDF).
