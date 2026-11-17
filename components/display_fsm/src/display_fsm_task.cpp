@@ -102,8 +102,11 @@ static uint8_t *read_lottie_file(const char *path, size_t *size_out)
  *
  * v2: a widget hidden while its file was loading (clock minimised, animation switched) is left
  *     paused; its owner resumes it on show, so it never renders hidden.
+ * v3: target_fps caps the RENDER rate (lv_lottie_set_render_fps) at real-time playback.
+ *     Stretching the duration by 60/target_fps played every Lottie at 1/3 speed (a 20 fps
+ *     target turned the 8 s fog loop into 24 s, which looked static).
  * @dg_internal
- * @version 2
+ * @version 3
  */
 static void apply_lottie_src(const lottie_load_job_t *job, const uint8_t *data, size_t size)
 {
@@ -122,13 +125,7 @@ static void apply_lottie_src(const lottie_load_job_t *job, const uint8_t *data, 
     lv_lottie_parse_src_data(job->widget, data, size);
     lv_lottie_finalize_src(job->widget);
     if (job->target_fps > 0) {
-        lv_anim_t *anim = lv_lottie_get_anim(job->widget);
-        if (anim) {
-            uint32_t dur = lv_anim_get_time(anim);
-            lv_anim_set_duration(anim, dur * 60 / job->target_fps);
-            anim->act_time = 0;
-            lv_anim_start(anim);
-        }
+        lv_lottie_set_render_fps(job->widget, job->target_fps);   // real-time speed, capped renders
     }
     if (lv_obj_has_flag(job->widget, LV_OBJ_FLAG_HIDDEN)) {
         lv_lottie_pause(job->widget);  // hidden meanwhile: don't render off-screen until resumed
@@ -318,7 +315,7 @@ static lv_obj_t *s_bg_img = NULL;
 static lv_image_dsc_t *s_bg_dsc = NULL;   // persistent decoded background (non-GIF)
 
 /**
- * @brief Predecode a non-GIF background PNG once into a persistent, vertically-flipped RGB565 SPIRAM descriptor.
+ * @brief Predecode a non-GIF background PNG once into a persistent, top-down RGB565 SPIRAM descriptor.
  *
  * Predecode a non-GIF background PNG ONCE (outside the LVGL lock — SD I/O + a
  * ~2.5MB alloc) into a persistent SPIRAM descriptor. Handing LVGL a static
@@ -326,9 +323,11 @@ static lv_image_dsc_t *s_bg_dsc = NULL;   // persistent decoded background (non-
  * image cache evicts it under memory pressure — the root cause of clock-screen
  * lag and the occasional blank background. NULL → caller uses on-demand decode.
  * MUST run in a deep-stack task (fsm_task): stb_image inflate needs ~8KB stack.
+ * v2: no vertical flip. Decode is pinned top-down; the old flip only undid stb's
+ *     accidental bottom-up decode on the IDF beta, and on v5.5.6 it inverted the bg.
  *
  * @dg_internal
- * @version 1
+ * @version 2
  * @return Decoded descriptor, or NULL on failure (caller then skips the background).
  */
 static lv_image_dsc_t *predecode_bg(const char *path)
@@ -339,11 +338,7 @@ static lv_image_dsc_t *predecode_bg(const char *path)
     // redraws as a straight copy during animations — no per-frame ARGB->RGB565
     // conversion.
     lv_image_dsc_t *dsc = image_decode_png_file_rgb565(fs_path);
-    if (dsc) {
-        // The RGB565 full-screen blit renders vertically flipped on this panel;
-        // flip so the background is upright (confirmed on hardware).
-        image_decode_flip_vertical(dsc);
-    } else {
+    if (!dsc) {
         ESP_LOGW(TAG, "bg: predecode failed for '%s' (%s) — on-demand fallback",
                  path, fs_path);
     }
@@ -468,27 +463,24 @@ static void load_background(lv_obj_t *scr, const clock_settings_t *cfg)
 }
 
 /**
- * @brief Legible version of `user` over the (vertically-flipped) background image in the given screen-space area.
+ * @brief Legible version of `user` over the background image in the given screen-space area.
  *
  * Sample the (predecoded) background under the full clock and set the clock text
  * colour to a guaranteed-legible variant of the user's chosen colour (keep hue,
- * adjust OKLCH lightness). The bg buffer is vertically flipped vs the screen
- * (the panel flips the RGB565 blit), so the clock's top screen region maps to the
- * bottom of the buffer. GIF backgrounds have no sampleable buffer → use the raw
- * colour.
- * Legible version of `user` over the (vertically-flipped) background image in the
- * given screen-space area. The RGB565 bg buffer is pre-flipped vs the screen, so
- * screen-Y maps to buffer-Y as h-1-y.
+ * adjust OKLCH lightness). The bg buffer is top-down like the screen, so screen-Y
+ * maps to buffer-Y directly. GIF backgrounds have no sampleable buffer → use the
+ * raw colour.
+ * v2: sample screen-Y directly. The old h-1-y mapping assumed a bottom-up buffer, but
+ *     the buffer was always top-down (stb decoded bottom-up and was "flipped" back), so
+ *     the colour was chosen from the vertically opposite band of the image.
  *
  * @dg_internal
- * @version 1
+ * @version 2
  * @return The OKLCH-adjusted colour that contrasts with the mean background colour of the area.
  */
 static lv_color_t bg_legible_at(lv_color_t user, const lv_area_t *a)
 {
-    int32_t ih  = (int32_t)s_bg_dsc->header.h;
-    int32_t by1 = ih - 1 - a->y2;
-    if (by1 < 0) by1 = 0;
+    int32_t by1 = a->y1 < 0 ? 0 : a->y1;
     lv_color_t mean = ui_image_region_mean(s_bg_dsc, a->x1, by1,
                                            a->x2 - a->x1 + 1, a->y2 - a->y1 + 1);
     return ui_legible(user, mean);

@@ -32,14 +32,20 @@ static const char *TAG = "image_decode";
 // Decode a PNG buffer to RGBA via stb_image (lodepng produces corrupt output on
 // RISC-V/ESP32-P4). Validates dimensions. Returns raw pixels or NULL.
 /**
- * @brief Decode a PNG buffer to RGBA with stb_image and reject dimensions outside 1..2048 x 1..1200.
- * @version 1
+ * @brief Decode a PNG buffer to top-down RGBA with stb_image and reject dimensions outside 1..2048 x 1..1200.
+ * v2: pin stb's thread-local flip-on-load flag to 0 before decoding (top-down rows always).
+ * @version 2
  * @req REQ-BG-001
  * @return stb-allocated RGBA pixels (free with stbi_image_free), or NULL on decode failure or bad size.
  */
 static unsigned char *decode_rgba(const uint8_t *png, size_t len, int *w, int *h)
 {
     int channels = 0;
+    // stb_image keeps its flip-on-load flag in two implicitly-initialised thread-local
+    // ints; on the old IDF beta they read non-zero in fsm_task, so every decode was
+    // silently bottom-up and callers 'flipped' it upright. Pin it explicitly so decode
+    // output is always top-down regardless of thread-local memory state.
+    stbi_set_flip_vertically_on_load_thread(0);
     unsigned char *raw = stbi_load_from_memory(png, (int)len, w, h, &channels, 4);
     if (!raw) {
         ESP_LOGE(TAG, "stb decode failed: %s (len=%zu)", stbi_failure_reason(), len);
@@ -291,39 +297,6 @@ lv_image_dsc_t *image_decode_png_file_rgb565(const char *path)
                  (unsigned long)dsc->data_size, path);
     }
     return dsc;
-}
-
-/**
- * @brief Flip a descriptor's pixel rows in place (top to bottom) and cache-sync the buffer.
- * @version 1
- * @req REQ-BG-001
- * @req REQ-PHOTO-001
- * @req REQ-RADAR-001
- */
-void image_decode_flip_vertical(lv_image_dsc_t *dsc)
-{
-    if (!dsc || !dsc->data) return;
-
-    uint32_t stride = dsc->header.stride;
-    uint32_t h      = dsc->header.h;
-    uint8_t *data   = (uint8_t *)dsc->data;
-
-    uint8_t *tmp = (uint8_t *)heap_caps_malloc(stride, MALLOC_CAP_8BIT);
-    if (!tmp) {
-        ESP_LOGE(TAG, "flip: row buffer alloc failed (%lu B)", (unsigned long)stride);
-        return;
-    }
-    for (uint32_t y = 0; y < h / 2; y++) {
-        uint8_t *top = data + (size_t)y * stride;
-        uint8_t *bot = data + (size_t)(h - 1 - y) * stride;
-        memcpy(tmp, top, stride);
-        memcpy(top, bot, stride);
-        memcpy(bot, tmp, stride);
-    }
-    heap_caps_free(tmp);
-
-    esp_cache_msync(data, (size_t)stride * h,
-                    ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
 }
 
 // Raw RGB565 cache file format: [u16 w][u16 h][u32 stride][RGB565 pixel data].

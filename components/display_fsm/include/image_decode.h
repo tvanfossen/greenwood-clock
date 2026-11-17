@@ -55,16 +55,6 @@ lv_image_dsc_t *image_decode_png_file(const char *path);
 lv_image_dsc_t *image_decode_png_file_rgb565(const char *path);
 
 /**
- * @brief Flip a decoded ARGB8888 descriptor vertically, in place.
- *
- * The ESP32-P4 PPA blit path renders a raw pre-decoded descriptor vertically
- * flipped relative to LVGL's own software-decoded images. Raw-dsc images that
- * must match the upright software-decoded appearance (clock background, radar
- * map + overlay) call this after decode. Re-syncs the cache.
- */
-void image_decode_flip_vertical(lv_image_dsc_t *dsc);
-
-/**
  * @brief Load a raw RGB565 cache file ([u16 w][u16 h][u32 stride][data]) into a
  * persistent SPIRAM descriptor. Fast (fread, no decode). Returns NULL if the
  * file is missing/invalid — caller should then decode the PNG and save a cache.
