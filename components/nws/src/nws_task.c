@@ -421,9 +421,13 @@ static void apply_backoff(const poll_stats_t *st, int *streak)
  *        a separate ~60 s cycle, then loops forever polling conditions, forecast,
  *        alerts, radar and Kp, skipping cycles on low DRAM and backing off on
  *        total failure.
- * @version 1
+ * v2: the forecast's first fetch shares cycle 1 with conditions (sequential, right after
+ *     it), so the forecast strip is populated for the first weather screen instead of
+ *     showing "---" for ~3 min after boot. Alerts/radar/Kp keep their stagger.
+ * @version 2
  * @callback
  * @req REQ-WX-004
+ * @req REQ-WX-003
  */
 static void nws_task_fn(void *arg)
 {
@@ -438,13 +442,14 @@ static void nws_task_fn(void *arg)
 
     // Spread the FIRST fetch of each source across separate ~60s poll cycles rather
     // than bursting all five at boot — the burst is what trips the C6 SDIO panic.
-    // Order by weight/importance: conditions first, then alerts, forecast, radar
+    // Order by weight/importance: conditions + forecast first (both feed the first
+    // weather screen; fetched sequentially, not concurrently), then alerts, radar
     // (heaviest, deferred most), Kp last.
     TickType_t t0 = xTaskGetTickCount();
     poll_ticks_t last = {
         .conditions = seed_due_in(t0, CONDITIONS_INTERVAL_S,  0),   // ~cycle 1
+        .forecast   = seed_due_in(t0, FORECAST_INTERVAL_S,    0),   // ~cycle 1, after conditions
         .alerts     = seed_due_in(t0, ALERTS_INTERVAL_S,     60),   // ~cycle 2
-        .forecast   = seed_due_in(t0, FORECAST_INTERVAL_S,  120),   // ~cycle 3
         .radar      = seed_due_in(t0, RADAR_INTERVAL_S,     180),   // ~cycle 4
         .kp         = seed_due_in(t0, KP_INTERVAL_S,        240),   // ~cycle 5
     };

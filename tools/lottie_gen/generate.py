@@ -24,7 +24,13 @@ CLOUD_MID = [0.545, 0.647, 0.769, 1]  # Day cloud mid
 CLOUD_DARK = [0.29, 0.373, 0.502, 1]  # Dark storm cloud
 CLOUD_VERY_DARK = [0.227, 0.310, 0.435, 1]
 SNOW_WHITE = [0.98, 0.98, 1.0, 1]
-NIGHT_CLOUD = [0.227, 0.310, 0.431, 1]
+# Moonlit slate: cooler/darker than the day cloud tones but visible on the dark weather
+# card (#0a0a1e @ 70%). The old [0.227, 0.31, 0.431] nearly matched the card, so night
+# clouds and their motion were close to invisible on the device.
+NIGHT_CLOUD = [0.471, 0.541, 0.671, 1]  # #788AAB
+NIGHT_CLOUD_DARK = [0.353, 0.416, 0.537, 1]  # #5A6A89 moonlit ramp: front/heavy
+NIGHT_CLOUD_LIGHT = [0.588, 0.647, 0.761, 1]  # #96A5C2 moonlit ramp: back/thin
+NIGHT_FOG = [0.66, 0.71, 0.82, 1]  # moonlit mist
 MOON_SILVER = [0.98, 0.98, 0.98, 1]
 LAVENDER = [0.643, 0.565, 0.761, 1]
 NIGHT_SKY = [0.102, 0.102, 0.243, 1]
@@ -1570,7 +1576,8 @@ def gen_day_haze():
 
 
 ## @brief Generate night mostly-cloudy: two night cloud layers in front of two stars and a moon.
-## @version 1
+## v2: moonlit night cloud ramp instead of hard-coded near-card-colour darks (invisible on device).
+## @version 2
 ## @return Lottie composition dict from lottie().
 ## @req REQ-LOTTIE-002
 def gen_night_mostly_cloudy():
@@ -1592,7 +1599,7 @@ def gen_night_mostly_cloudy():
         [135, 130, 0],
         [125, 132, 0],
         [(-22, 0, 70, 45), (15, -4, 65, 42)],
-        [0.20, 0.26, 0.38, 1],
+        NIGHT_CLOUD_DARK,
         op,
         opacity=70,
     )
@@ -1602,7 +1609,8 @@ def gen_night_mostly_cloudy():
 
 
 ## @brief Generate night overcast: three dark drifting cloud layers on a 360-frame loop.
-## @version 1
+## v2: moonlit night cloud ramp instead of hard-coded near-card-colour darks (invisible on device).
+## @version 2
 ## @return Lottie composition dict from lottie().
 ## @req REQ-LOTTIE-002
 def gen_night_overcast():
@@ -1612,7 +1620,7 @@ def gen_night_overcast():
         [145, 155, 0],
         [158, 153, 0],
         [(-35, 5, 85, 55), (0, -8, 95, 62), (38, 3, 80, 52)],
-        [0.15, 0.18, 0.28, 1],
+        NIGHT_CLOUD_DARK,
         op,
         opacity=95,
         bob_y=2,
@@ -1622,7 +1630,7 @@ def gen_night_overcast():
         [160, 135, 0],
         [148, 137, 0],
         [(-25, 0, 80, 50), (18, -4, 72, 48)],
-        [0.18, 0.22, 0.32, 1],
+        NIGHT_CLOUD,
         op,
         opacity=80,
     )
@@ -1631,7 +1639,7 @@ def gen_night_overcast():
         [140, 118, 0],
         [152, 120, 0],
         [(-20, 0, 70, 42), (15, -3, 65, 40)],
-        [0.22, 0.28, 0.38, 1],
+        NIGHT_CLOUD_LIGHT,
         op,
         opacity=55,
     )
@@ -1782,7 +1790,8 @@ def gen_night_thunderstorm():
 
 
 ## @brief Generate night snow: breathing cloud with 12 drifting snowflakes and three stars.
-## @version 1
+## v2: moonlit night cloud ramp instead of hard-coded near-card-colour darks (invisible on device).
+## @version 2
 ## @return Lottie composition dict from lottie().
 ## @req REQ-LOTTIE-002
 def gen_night_snow():
@@ -1793,7 +1802,7 @@ def gen_night_snow():
         [150, 78, 0],
         [156, 78, 0],
         [(-28, 3, 72, 46), (5, -5, 82, 54), (32, 2, 68, 44)],
-        [0.25, 0.30, 0.42, 1],
+        NIGHT_CLOUD,
         op,
         opacity=80,
         lobe_breathe=True,
@@ -1834,7 +1843,8 @@ def gen_night_snow():
 
 
 ## @brief Generate night ice: dark cloud with 10 fast ice pellets.
-## @version 1
+## v2: moonlit night cloud ramp instead of hard-coded near-card-colour darks (invisible on device).
+## @version 2
 ## @return Lottie composition dict from lottie().
 ## @req REQ-LOTTIE-002
 def gen_night_ice():
@@ -1844,7 +1854,7 @@ def gen_night_ice():
         [150, 78, 0],
         [153, 78, 0],
         [(-30, 4, 78, 48), (2, -6, 86, 56), (32, 2, 72, 46)],
-        [0.15, 0.20, 0.30, 1],
+        NIGHT_CLOUD_DARK,
         op,
         opacity=88,
     )
@@ -1882,8 +1892,10 @@ def gen_night_ice():
     return lottie("weather-night-ice", 300, 300, op, [cloud] + drops)
 
 
-## @brief Generate night fog: four dark translucent drifting bands with opacity breathing, plus two stars.
-## @version 1
+## @brief Generate night fog: four moonlit translucent drifting bands with opacity breathing, plus two stars.
+## v2: moonlit fill at day-fog opacities with 1.5x drift; the dark navy fill at 8-14 %
+##     opacity was nearly invisible on the dark card (measured motion 1.27 vs day 9.34).
+## @version 2
 ## @return Lottie composition dict from lottie().
 ## @req REQ-LOTTIE-002
 def gen_night_fog():
@@ -1891,10 +1903,10 @@ def gen_night_fog():
     stars = star_layers([(90, 60, 2.5), (210, 45, 2)], op)
     layers = []
     band_specs = [
-        ("fog-1", 150, 110, 18, 14, 85, 250),
-        ("fog-2", 140, 160, -14, 11, 72, 220),
-        ("fog-3", 160, 200, 22, 8, 100, 270),
-        ("fog-4", 145, 250, -16, 12, 60, 235),
+        ("fog-1", 150, 110, 27, 16, 85, 250),
+        ("fog-2", 140, 160, -21, 13, 72, 220),
+        ("fog-3", 160, 200, 33, 10, 100, 270),
+        ("fog-4", 145, 250, -24, 14, 60, 235),
     ]
     for nm, cx, cy, drift, ob, rh, rw in band_specs:
         pos = animated(
@@ -1922,7 +1934,7 @@ def gen_night_fog():
         )
         shapes = [
             rect("band", [0, 0], [rw, rh], roundness=rh / 2),
-            fill("fog-fill", [0.25, 0.28, 0.38, 1]),
+            fill("fog-fill", NIGHT_FOG),
         ]
         layers.append(
             shape_layer(nm, shapes, layer_transform(pos, opacity=o_kf), op=op)
