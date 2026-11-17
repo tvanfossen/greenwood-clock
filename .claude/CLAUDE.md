@@ -1,6 +1,8 @@
 # Greenwood Clock — Project Instructions
 
-ESP32-P4 smart clock. ESP-IDF v5.5, LVGL v9.3, 1024×600 MIPI DSI display, GT911 touchscreen.
+ESP32-P4 (pre-v3 silicon) smart clock. ESP-IDF v5.5.6 (`~/esp/esp-idf-v5.5.6`, see `tasks.py` `IDF_PATH`), LVGL v9.5.0 fork (`components/lvgl`, branch `tvanfossen/lottie`), 1024×600 MIPI DSI display, GT911 touchscreen.
+
+Requirements: `docs/requirements.yaml`. Every function carries `@req` or an exemption (clew-guard gate).
 
 ## Key Files
 
@@ -93,7 +95,7 @@ All boot log lines use tag `[BOOT]`. Sequence is:
 |---|---|---|
 | Settings | `boot_settings_init()` | `[BOOT] settings_load: OK` |
 | SD card | `boot_sdcard_init()` | `[BOOT] Reset reason: ...` |
-| Network + OTA | `boot_network_early()` | `[BOOT] OTA valid: slot=...` ← rollback boundary |
+| Network + OTA | `boot_network_early()` | `[BOOT] OTA: slot=..., version=..., valid\|UNCONFIRMED` ← an UNCONFIRMED image is marked valid only after first IP, else rolls back after 15 min |
 | SNTP | `boot_sntp_wait()` | `[BOOT] SNTP sync complete` |
 | Timezone | `boot_timezone()` | `[BOOT] TZ: ...` |
 | Services | `boot_services()` | `[BOOT] HTTP API started on port 80` |
@@ -105,16 +107,15 @@ All boot log lines use tag `[BOOT]`. Sequence is:
 ## OTA Workflow
 
 ```bash
-idf.py build
-python tools/ota_server.py          # serves build/greenwood-clock.bin on port 8000
-# On device: Settings → Software Update → Check for Update
+.venv/bin/inv build                 # ESP-IDF v5.5.6 build
+.venv/bin/inv ota                   # push build/greenwood-clock.bin over HTTP (token from secrets.h)
 ```
 
 ## Common Debugging Commands
 
 ```bash
 idf.py -p /dev/ttyUSB0 monitor     # Serial monitor (Ctrl+] to exit)
-idf.py fullclean && idf.py build    # Clean rebuild
+idf.py fullclean && .venv/bin/inv build   # Clean rebuild (export v5.5.6 first for idf.py)
 idf.py -p /dev/ttyUSB0 erase-flash # Nuclear option — wipes NVS settings too
 
 ```
