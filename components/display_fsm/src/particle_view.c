@@ -94,16 +94,22 @@ static void pv_draw_cb(lv_event_t *e)
 }
 
 /**
- * @brief Invalidate a particle's old and new boxes: joined when they overlap, else separately.
- *        A respawn (bottom -> top) or a horizontal wrap must not dirty the span between them.
- * @version 1
+ * @brief Invalidate a particle's old and new boxes as ONE joined rect unless that rect is far
+ *        larger than the two boxes (a respawn bottom -> top or a horizontal wrap), which are
+ *        invalidated separately so the span between them is not redrawn.
+ * v2: join unless the join exceeds 4x the boxes' combined area. v1 split whenever the boxes
+ *     did not overlap; small fast flakes move further than their own size each tick, so most
+ *     flakes produced two rects (~280 for 140 flakes), overflowing LV_INV_BUF_SIZE (256) and
+ *     forcing a full-screen redraw every frame (laggy snowfall on device).
+ * @version 2
  * @req REQ-ANIM-004
  */
 static void pv_invalidate_move(lv_obj_t *obj, const lv_area_t *before, const lv_area_t *after)
 {
-    if (lv_area_is_on(before, after)) {
-        lv_area_t both;
-        lv_area_join(&both, before, after);
+    lv_area_t both;
+    lv_area_join(&both, before, after);
+    uint32_t parts = lv_area_get_size(before) + lv_area_get_size(after);
+    if (lv_area_get_size(&both) <= 4 * parts) {
         lv_obj_invalidate_area(obj, &both);
     } else {
         lv_obj_invalidate_area(obj, before);

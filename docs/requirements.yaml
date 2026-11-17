@@ -378,10 +378,13 @@ requirements:
     name: Efficient particle rendering
     subsystem: ANIM
     description: >-
-      Particle effects invalidate only per-particle dirty rectangles each frame: a particle's
-      old and new boxes are merged only when they overlap, so a respawn or horizontal wrap
-      dirties two small boxes, never the span between them.
-    acceptance_criteria: Particle animations do not force full-screen redraws.
+      Particle effects invalidate only per-particle dirty rectangles each frame: one rect per
+      particle (old and new boxes merged), except when the merged rect would exceed 4x the two
+      boxes' area (a respawn or horizontal wrap), which dirties the two boxes separately. The
+      rect count per frame stays below LVGL's invalidation buffer (256).
+    acceptance_criteria: >-
+      With 140 snowflakes on screen, frames redraw only the flakes' regions (never the full
+      screen), and the snowfall frame rate does not drop compared with an idle clock screen.
 
   # ---------------------------------------------------------------- BG
   REQ-BG-001:
