@@ -19,8 +19,11 @@ static const char *TAG = "state_surprise";
 json_layout_t *SurpriseMessage::s_layout = nullptr;
 
 /**
- * @brief Enter: minimize the clock, build the stashed JSON layout (or a "Surprise!" label if absent or invalid), free the JSON, force-show the state and record its duration.
- * @version 1
+ * @brief Enter: minimize the clock, build the stashed JSON layout (or a "Surprise!" label if absent or invalid), free the JSON, set the requested duration and force-show the state.
+ * v2: set_duration() before force_show(). force_show() arms the return timer from the
+ *     configured duration, so the old order showed every fresh surprise for the 30 s
+ *     default that exit() restores, ignoring the posted duration_s.
+ * @version 2
  * @req REQ-SURP-001
  * @req REQ-DISP-005
  */
@@ -53,10 +56,10 @@ void SurpriseMessage::entry()
         lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
     }
 
-    // Set display duration via scheduler
-    display_scheduler_get()->force_show(DISPLAY_STATE_SURPRISE);
+    // Duration first: force_show() arms the return timer from the configured duration.
     display_scheduler_get()->set_duration(DISPLAY_STATE_SURPRISE,
                                            s_surprise_duration_s * 1000);
+    display_scheduler_get()->force_show(DISPLAY_STATE_SURPRISE);
 
     ESP_LOGI(TAG, "SurpriseMessage: entry (duration=%lus)",
              (unsigned long)s_surprise_duration_s);
