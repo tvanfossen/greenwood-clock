@@ -1,3 +1,8 @@
+/**
+ * @file main.cpp
+ * @version 1
+ * @brief Firmware entry point: staged boot sequence, OTA recovery window, crash capture, watchdogs and health loop.
+ */
 // main/main.cpp
 
 #include "esp_log.h"
@@ -64,8 +69,9 @@ static RTC_NOINIT_ATTR bool     s_panic_restart;   // skip SD I/O in shutdown ha
 
 /**
  * @brief Record the current boot stage name in RTC no-init memory for crash reports.
- * @dg_internal
  * @version 1
+ * @req REQ-BOOT-001
+ * @req REQ-BOOT-003
  */
 static inline void set_boot_stage(const char *stage)
 {
@@ -96,8 +102,8 @@ static float s_tsens_last_c = 0.0f;
 
 /**
  * @brief Install and enable the internal chip-temperature sensor; disables telemetry on failure.
- * @dg_internal
  * @version 1
+ * @req REQ-BOOT-004
  */
 static void tsens_init(void)
 {
@@ -124,9 +130,9 @@ static void tsens_init(void)
 
 /**
  * @brief Read the chip temperature once and update the last/min/max trackers.
- * @dg_internal
  * @version 1
  * @return true on a successful read, false if the sensor is unavailable or the read failed.
+ * @req REQ-BOOT-004
  */
 static bool tsens_sample(float *out_c)
 {
@@ -144,6 +150,7 @@ static bool tsens_sample(float *out_c)
  * @brief Public accessor for /api/status: copy last/min/max chip temperatures (extern "C" linkage matches http_api caller).
  * @version 1
  * @return true if the sensor is installed and outputs were filled, false otherwise.
+ * @req REQ-BOOT-004
  */
 extern "C" bool main_tsens_get_last(float *out_last, float *out_min, float *out_max)
 {
@@ -172,8 +179,8 @@ static_assert(sizeof(boot_hist_entry_t) == 8, "boot_hist_entry_t must be 8 bytes
 
 /**
  * @brief Append this boot's reset reason and timestamp to the NVS boot-history ring buffer.
- * @dg_internal
  * @version 1
+ * @req REQ-LOG-004
  */
 static void boot_history_record(void)
 {
@@ -214,6 +221,7 @@ static void boot_history_record(void)
  * (sparse buffer after fresh erase).
  * @version 1
  * @return Number of valid entries written to @p out_entries (0 on bad args or NVS open failure).
+ * @req REQ-LOG-004
  */
 extern "C" size_t main_boot_history_get(struct boot_hist_entry_t *out_entries, size_t capacity)
 {
@@ -244,6 +252,7 @@ extern "C" size_t main_boot_history_get(struct boot_hist_entry_t *out_entries, s
  * @brief LVGL timer callback that stamps the heartbeat tick watched by display_watchdog_task.
  * @callback
  * @version 1
+ * @req REQ-BOOT-004
  */
 static void heartbeat_cb(lv_timer_t *timer)
 {
@@ -259,6 +268,7 @@ static void heartbeat_cb(lv_timer_t *timer)
  * @brief FreeRTOS task that restarts the device when the LVGL heartbeat goes silent past the timeout.
  * @callback
  * @version 1
+ * @req REQ-BOOT-004
  */
 static void display_watchdog_task(void *arg)
 {
@@ -315,6 +325,7 @@ static void display_watchdog_task(void *arg)
  *        reach the SD card debug log and UDP stream.
  * @callback
  * @version 1
+ * @req REQ-LOG-001
  */
 static void lvgl_log_cb(lv_log_level_t level, const char* buf)
 {
@@ -329,6 +340,7 @@ static void lvgl_log_cb(lv_log_level_t level, const char* buf)
  * @brief LVGL assert handler — record crash context, flush the log and reset instead of hanging.
  * @callback
  * @version 1
+ * @req REQ-BOOT-003
  */
 extern "C" void lv_assert_handler(void) {
     set_boot_stage("lvgl_assert");
@@ -365,6 +377,7 @@ extern "C" void lv_assert_handler(void) {
  * in any context), then calls esp_restart().
  * @callback
  * @version 1
+ * @req REQ-BOOT-003
  */
 extern "C" void __wrap_esp_panic_handler(panic_info_t *info)
 {
@@ -414,6 +427,7 @@ extern "C" void __wrap_esp_panic_handler(panic_info_t *info)
  * General panics still output backtrace via esp_rom_printf (serial only).
  * @callback
  * @version 1
+ * @req REQ-BOOT-003
  */
 extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 {
@@ -435,6 +449,7 @@ extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskNa
  * Actual panic detection uses esp_reset_reason() at boot_sdcard_init() on the next boot.
  * @callback
  * @version 1
+ * @req REQ-BOOT-003
  */
 static void panic_handler_hook(void) {
     // After a panic, the SD bus mutex may be held by the interrupted task.
@@ -466,8 +481,10 @@ static void panic_handler_hook(void) {
 
 /**
  * @brief Boot stage: hold the panel in reset, register the shutdown handler, and load NVS settings.
- * @dg_internal
  * @version 1
+ * @req REQ-BOOT-001
+ * @req REQ-BOOT-005
+ * @req REQ-SET-001
  */
 static void boot_settings_init(clock_settings_t *cfg)
 {
@@ -506,9 +523,84 @@ typedef struct {
 } crash_ctx_t;
 
 /**
- * @brief Boot stage: log the reset reason, mount the SD card, open the debug log, and dump any previous crash context.
- * @dg_internal
+ * @brief Map a reset reason to its log name and whether it indicates a fault.
  * @version 1
+ * @return Static name string ("UNKNOWN" for reasons not listed); *abnormal set true for faults.
+ * @req REQ-BOOT-003
+ */
+static const char *reset_reason_name(esp_reset_reason_t reason, bool *abnormal)
+{
+    const char *name = "UNKNOWN";
+    *abnormal = false;
+    switch (reason) {
+        case ESP_RST_PANIC:    name = "PANIC";    *abnormal = true; break;
+        case ESP_RST_INT_WDT:  name = "INT_WDT";  *abnormal = true; break;
+        case ESP_RST_TASK_WDT: name = "TASK_WDT"; *abnormal = true; break;
+        case ESP_RST_WDT:      name = "WDT";      *abnormal = true; break;
+        case ESP_RST_BROWNOUT: name = "BROWNOUT"; *abnormal = true; break;
+        case ESP_RST_SW:       name = "SW_RESET";  break;
+        case ESP_RST_POWERON:  name = "POWER_ON";  break;
+        default: break;
+    }
+    return name;
+}
+
+/**
+ * @brief Log SD card type and capacity (no-op if the card info query fails).
+ * @version 1
+ * @req REQ-SD-001
+ */
+static void log_sdcard_info(void)
+{
+    sdcard_info_t info;
+    if (sdcard_get_info(&info) == ESP_OK) {
+        ESP_LOGI(TAG, "[BOOT] SD: %s, %.2f GB total, %.2f GB used (%.0f%%)",
+                 info.card_type,
+                 info.total_bytes / (1024.0 * 1024.0 * 1024.0),
+                 info.used_bytes  / (1024.0 * 1024.0 * 1024.0),
+                 (info.used_bytes * 100.0) / info.total_bytes);
+    }
+}
+
+/**
+ * @brief Dump the previous boot's RTC crash context (always logs the raw magic).
+ * @version 1
+ * @req REQ-BOOT-003
+ */
+static void log_previous_crash(const crash_ctx_t *ctx)
+{
+    // Dump RTC crash context from previous boot (survives hardware WDT resets).
+    // Panic handler writes to RTC memory only (no SD I/O) — this is where it lands.
+    // Values were snapshotted at function entry before set_boot_stage() clobbered them.
+    // Always log the raw magic so we can confirm the mechanism is working.
+    ESP_LOGI(TAG, "[BOOT] RTC crash magic: 0x%08lx (%s)",
+             (unsigned long)ctx->magic,
+             ctx->magic == CRASH_MAGIC ? "VALID — crash context follows" : "clean");
+    if (ctx->magic != CRASH_MAGIC) {
+        return;
+    }
+    ESP_LOGE(TAG, "===== PREVIOUS CRASH (RTC memory) =====");
+    ESP_LOGE(TAG, "  Stage : %s",
+             ctx->stage[0] ? ctx->stage : "(unknown)");
+    ESP_LOGE(TAG, "  Reason: %s",
+             ctx->reason[0] ? ctx->reason : "(hardware WDT — panic handler did not run)");
+    ESP_LOGE(TAG, "  PC=0x%08lx  RA=0x%08lx  SP=0x%08lx",
+             (unsigned long)ctx->pc,
+             (unsigned long)ctx->ra,
+             (unsigned long)ctx->sp);
+    if (ctx->details[0]) {
+        ESP_LOGE(TAG, "  Details: %s", ctx->details);
+    }
+    ESP_LOGE(TAG, "========================================");
+}
+
+/**
+ * @brief Boot stage: log the reset reason, mount the SD card, open the debug log, and dump any previous crash context.
+ * @version 2
+ * @req REQ-BOOT-001
+ * @req REQ-BOOT-003
+ * @req REQ-SD-001
+ * @req REQ-LOG-001
  */
 static void boot_sdcard_init(const crash_ctx_t *ctx)
 {
@@ -518,18 +610,8 @@ static void boot_sdcard_init(const crash_ctx_t *ctx)
     // Annotate this log session with the reset reason.  Called before SD init
     // so the reason reaches serial even if SD is absent.
     esp_reset_reason_t reset_reason = esp_reset_reason();
-    const char* reset_name = "UNKNOWN";
     bool is_abnormal_reset = false;
-    switch (reset_reason) {
-        case ESP_RST_PANIC:    reset_name = "PANIC";    is_abnormal_reset = true; break;
-        case ESP_RST_INT_WDT:  reset_name = "INT_WDT";  is_abnormal_reset = true; break;
-        case ESP_RST_TASK_WDT: reset_name = "TASK_WDT"; is_abnormal_reset = true; break;
-        case ESP_RST_WDT:      reset_name = "WDT";      is_abnormal_reset = true; break;
-        case ESP_RST_BROWNOUT: reset_name = "BROWNOUT"; is_abnormal_reset = true; break;
-        case ESP_RST_SW:       reset_name = "SW_RESET";  break;
-        case ESP_RST_POWERON:  reset_name = "POWER_ON";  break;
-        default: break;
-    }
+    const char *reset_name = reset_reason_name(reset_reason, &is_abnormal_reset);
     ESP_LOGI(TAG, "[BOOT] Reset reason: %s (%d)", reset_name, (int)reset_reason);
 
     sdcard_init();
@@ -543,52 +625,21 @@ static void boot_sdcard_init(const crash_ctx_t *ctx)
         return;
     }
 
-    sdcard_info_t info;
-    if (sdcard_get_info(&info) == ESP_OK) {
-        ESP_LOGI(TAG, "[BOOT] SD: %s, %.2f GB total, %.2f GB used (%.0f%%)",
-                 info.card_type,
-                 info.total_bytes / (1024.0 * 1024.0 * 1024.0),
-                 info.used_bytes  / (1024.0 * 1024.0 * 1024.0),
-                 (info.used_bytes * 100.0) / info.total_bytes);
-    }
-
+    log_sdcard_info();
     sdcard_create_directories();
 
     err = debug_log_init();
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG, "[BOOT] Debug log: %s", debug_log_get_path());
-        ESP_LOGI(TAG, "[BOOT] Reset reason (SD): %s (%d)", reset_name, (int)reset_reason);
-        if (is_abnormal_reset) {
-            ESP_LOGE(TAG, "===== ABNORMAL RESET: reason=%s ===== (see previous log slot)",
-                     reset_name);
-        }
-
-        // Dump RTC crash context from previous boot (survives hardware WDT resets).
-        // Panic handler writes to RTC memory only (no SD I/O) — this is where it lands.
-        // Values were snapshotted at function entry before set_boot_stage() clobbered them.
-        // Always log the raw magic so we can confirm the mechanism is working.
-        ESP_LOGI(TAG, "[BOOT] RTC crash magic: 0x%08lx (%s)",
-                 (unsigned long)ctx->magic,
-                 ctx->magic == CRASH_MAGIC ? "VALID — crash context follows" : "clean");
-        if (ctx->magic == CRASH_MAGIC) {
-            ESP_LOGE(TAG, "===== PREVIOUS CRASH (RTC memory) =====");
-            ESP_LOGE(TAG, "  Stage : %s",
-                     ctx->stage[0] ? ctx->stage : "(unknown)");
-            ESP_LOGE(TAG, "  Reason: %s",
-                     ctx->reason[0] ? ctx->reason : "(hardware WDT — panic handler did not run)");
-            ESP_LOGE(TAG, "  PC=0x%08lx  RA=0x%08lx  SP=0x%08lx",
-                     (unsigned long)ctx->pc,
-                     (unsigned long)ctx->ra,
-                     (unsigned long)ctx->sp);
-            if (ctx->details[0]) {
-                ESP_LOGE(TAG, "  Details: %s", ctx->details);
-            }
-            ESP_LOGE(TAG, "========================================");
-        }
-    } else {
+    if (err != ESP_OK) {
         ESP_LOGW(TAG, "[BOOT] Debug log init failed: %s", esp_err_to_name(err));
+        return;
     }
-
+    ESP_LOGI(TAG, "[BOOT] Debug log: %s", debug_log_get_path());
+    ESP_LOGI(TAG, "[BOOT] Reset reason (SD): %s (%d)", reset_name, (int)reset_reason);
+    if (is_abnormal_reset) {
+        ESP_LOGE(TAG, "===== ABNORMAL RESET: reason=%s ===== (see previous log slot)",
+                 reset_name);
+    }
+    log_previous_crash(ctx);
 }
 
 // =============================================================================
@@ -608,7 +659,7 @@ static int64_t s_ota_verify_start_us = 0;
  *        has not yet obtained an IP. A WiFi-breaking build must stay unconfirmed so that it
  *        rolls back; marking it valid before connectivity is proven loses remote recovery.
  * @version 1
- * @dg_internal
+ * @req REQ-OTA-002
  */
 static void boot_ota_verify_start(bool wifi_configured)
 {
@@ -633,7 +684,7 @@ static void boot_ota_verify_start(bool wifi_configured)
 /**
  * @brief Health-loop hook: confirm a pending image on first IP, or reboot into rollback at the deadline.
  * @version 1
- * @dg_internal
+ * @req REQ-OTA-002
  */
 static void boot_ota_verify_poll(void)
 {
@@ -654,8 +705,10 @@ static void boot_ota_verify_poll(void)
 /**
  * @brief Boot stage: start Wi-Fi (or scan-only infrastructure), then init OTA and confirm the
  *        image once networking is proven (rollback boundary; see boot_ota_verify_start).
- * @dg_internal
  * @version 2
+ * @req REQ-BOOT-001
+ * @req REQ-NET-001
+ * @req REQ-OTA-002
  */
 static void boot_network_early(const clock_settings_t *cfg)
 {
@@ -685,8 +738,9 @@ static void boot_network_early(const clock_settings_t *cfg)
 
 /**
  * @brief Boot stage: block for SNTP time sync when Wi-Fi is configured, otherwise skip.
- * @dg_internal
  * @version 1
+ * @req REQ-BOOT-001
+ * @req REQ-TIME-001
  */
 static void boot_sntp_wait(const clock_settings_t *cfg)
 {
@@ -702,8 +756,9 @@ static void boot_sntp_wait(const clock_settings_t *cfg)
 
 /**
  * @brief Boot stage: apply the configured POSIX TZ string.
- * @dg_internal
  * @version 1
+ * @req REQ-BOOT-001
+ * @req REQ-TIME-002
  */
 static void boot_timezone(const clock_settings_t *cfg)
 {
@@ -714,8 +769,10 @@ static void boot_timezone(const clock_settings_t *cfg)
 
 /**
  * @brief Boot stage: log local time, start mDNS advertisement and the HTTP API server.
- * @dg_internal
  * @version 1
+ * @req REQ-BOOT-001
+ * @req REQ-NET-003
+ * @req REQ-API-001
  */
 static void boot_services(const clock_settings_t *cfg)
 {
@@ -769,6 +826,7 @@ static SemaphoreHandle_t s_launch_sem;
  * @brief esp_timer callback that signals the launch semaphore when the 60 s OTA window expires.
  * @callback
  * @version 1
+ * @req REQ-BOOT-002
  */
 static void autolaunch_timer_cb(void* arg)
 {
@@ -780,8 +838,8 @@ static void autolaunch_timer_cb(void* arg)
  * @brief OTA safety window: block until 60 s elapse or POST /debug/launch signals launch.
  *
  * See the OTA SAFETY WINDOW contract above — nothing processing external data may run before this returns.
- * @dg_internal
  * @version 1
+ * @req REQ-BOOT-002
  */
 static void boot_await_launch(void)
 {
@@ -832,9 +890,9 @@ static void boot_await_launch(void)
  * sees a wedged bus, esp_lcd_touch_new_i2c_gt911() fails, and the BSP's
  * ESP_ERROR_CHECK aborts — bricking every warm boot in a loop. A cold power cycle
  * clears the slave, which is why cold boots work and warm reboots don't.
- * @dg_internal
  * @version 1
  * @return true if SDA is released (bus idle) afterward.
+ * @req REQ-DISP-003
  */
 static bool touch_i2c_unstick(void)
 {
@@ -890,8 +948,8 @@ static bool touch_i2c_unstick(void)
  * controller now ACKs (0x5D primary, 0x14 backup). Non-fatal here by design: we only
  * observe; the BSP remains the authority on touch init. See touch_i2c_unstick() for
  * the warm-reboot root cause.
- * @dg_internal
  * @version 1
+ * @req REQ-DISP-003
  */
 static void boot_touch_i2c_recover(void)
 {
@@ -917,8 +975,9 @@ static void boot_touch_i2c_recover(void)
 
 /**
  * @brief Boot stage: start the BSP display/LVGL, heartbeat + display watchdog, brightness, A: drive and touch.
- * @dg_internal
  * @version 1
+ * @req REQ-BOOT-001
+ * @req REQ-BOOT-004
  */
 static void boot_display_init(const clock_settings_t *cfg)
 {
@@ -1009,8 +1068,9 @@ static void boot_display_init(const clock_settings_t *cfg)
 
 /**
  * @brief Never-returning loop that logs heap, internal-DRAM low-water, chip temperature and LVGL tick every 60 s.
- * @dg_internal
  * @version 2
+ * @req REQ-BOOT-004
+ * @req REQ-OTA-002
  */
 static void boot_health_loop(void)
 {
@@ -1086,6 +1146,7 @@ static void boot_health_loop(void)
  * @brief ESP-IDF entry point: snapshot RTC crash context, run the boot stages, then hand off to the display FSM and health loop.
  * @callback
  * @version 1
+ * @req REQ-BOOT-001
  */
 extern "C" void app_main()
 {

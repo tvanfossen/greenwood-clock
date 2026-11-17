@@ -3,13 +3,13 @@ exclude: ^components/espressif__
 
 repos:
   - repo: https://github.com/brandon-arrendondo/knots
-    rev: v1.8.3
+    rev: v2.2.0
     hooks:
       - id: knots
         args:
           - --cognitive-threshold=15
         # Vendored / external code only — we hold our own source to the standard.
-        exclude: ^(managed_components/|components/lvgl/|components/cjson/|components/display_fsm/src/stb_image\.h$)
+        exclude: ^(managed_components/|components/lvgl/|components/cjson/|components/fonts/|components/images/|components/display_fsm/src/stb_image\.h$)
 
   # Doxygen presence + @version gate. Config is the `guard:` section of .clew.yaml.
   # Checks staged files only, so legacy undocumented code is documented as it is touched.
