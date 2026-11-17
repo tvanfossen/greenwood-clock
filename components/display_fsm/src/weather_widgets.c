@@ -1,9 +1,10 @@
 /**
  * @file weather_widgets.c
- * @version 1
+ * v2: forecast icons resolved off-lock into a cache (forecast_icons_rescan).
+ * @version 2
  * @brief Layer 1: WeatherCard + ForecastStrip widgets.
  *
- * Caller must hold LVGL lock for all functions.
+ * Caller must hold LVGL lock for all functions, EXCEPT forecast_icons_rescan() (SD I/O: off-lock).
  */
 
 #include "display_widgets.h"
@@ -45,44 +46,55 @@ LV_FONT_DECLARE(nunito_128);
 // ============================================================================
 
 
+/** NWS keyword table (case-insensitive, most specific first). The LAST entry is the fallback. */
+static const struct {
+    const char *base;
+    const char *keys[3];
+} WX_CONDITIONS[] = {
+    {"thunderstorm",  {"Thunderstorm", "Thunder", NULL}},
+    {"snow",          {"Snow", "Flurries", "Blizzard"}},
+    {"ice",           {"Freezing", "Ice", "Sleet"}},
+    {"fog",           {"Fog", "Mist", NULL}},
+    {"haze",          {"Haze", NULL, NULL}},
+    {"drizzle",       {"Drizzle", "Light Rain", NULL}},
+    {"rain",          {"Rain", "Showers", NULL}},
+    {"windy",         {"Wind", NULL, NULL}},
+    {"clear",         {"Sunny", "Clear", NULL}},
+    {"partly_cloudy", {"Partly", NULL, NULL}},
+    {"overcast",      {"Overcast", NULL, NULL}},
+    {"mostly_cloudy", {"Cloudy", NULL, NULL}},
+};
+#define WX_CONDITION_COUNT ((int)(sizeof(WX_CONDITIONS) / sizeof(WX_CONDITIONS[0])))
+
+/**
+ * @brief Index into WX_CONDITIONS of the first entry whose keyword occurs in @p desc.
+ * @version 1
+ * @dg_internal
+ * @return Matching index, or the last (mostly_cloudy) when @p desc is NULL or nothing matches.
+ */
+static int condition_index(const char *desc)
+{
+    int found = WX_CONDITION_COUNT - 1;
+    for (int i = 0; desc && found == WX_CONDITION_COUNT - 1 && i < WX_CONDITION_COUNT - 1; i++) {
+        for (int k = 0; k < 3 && found != i; k++) {
+            if (WX_CONDITIONS[i].keys[k] && strcasestr(desc, WX_CONDITIONS[i].keys[k])) found = i;
+        }
+    }
+    return found;
+}
+
 /**
  * @brief Map NWS description keywords (case-insensitive, most specific first) to a
  *        condition asset basename.
- * @version 1
+ * v2: the keyword table moved to file scope (WX_CONDITIONS) so the icon cache can walk it.
+ * @version 2
  * @dg_internal
  * @return Condition basename used to build the POSIX path (for stat), not an LVGL path;
  *         "mostly_cloudy" when @p desc is NULL or nothing matches.
  */
 static const char *condition_to_lottie_basename(const char *desc)
 {
-    if (!desc) return "mostly_cloudy";
-
-    // Order matters: more specific matches first. "haze"/"windy" are day-only;
-    // the caller handles the night fallback.
-    static const struct {
-        const char *base;
-        const char *keys[3];
-    } table[] = {
-        {"thunderstorm",  {"Thunderstorm", "Thunder", NULL}},
-        {"snow",          {"Snow", "Flurries", "Blizzard"}},
-        {"ice",           {"Freezing", "Ice", "Sleet"}},
-        {"fog",           {"Fog", "Mist", NULL}},
-        {"haze",          {"Haze", NULL, NULL}},
-        {"drizzle",       {"Drizzle", "Light Rain", NULL}},
-        {"rain",          {"Rain", "Showers", NULL}},
-        {"windy",         {"Wind", NULL, NULL}},
-        {"clear",         {"Sunny", "Clear", NULL}},
-        {"partly_cloudy", {"Partly", NULL, NULL}},
-        {"overcast",      {"Overcast", NULL, NULL}},
-        {"mostly_cloudy", {"Cloudy", NULL, NULL}},
-    };
-    for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++) {
-        for (int k = 0; k < 3; k++) {
-            if (table[i].keys[k] && strcasestr(desc, table[i].keys[k]))
-                return table[i].base;
-        }
-    }
-    return "mostly_cloudy";     // fallback — file exists in both day/ and night/
+    return WX_CONDITIONS[condition_index(desc)].base;
 }
 
 /** One family of per-condition assets: <subdir>/{day,night}/<condition><ext> on the SD card. */
@@ -109,27 +121,65 @@ static bool asset_candidate(const condition_asset_t *a, const char *tod, const c
 }
 
 /**
- * @brief Resolve the asset for a condition: requested time of day, then day/ (haze and
- *        windy are day-only), then day/mostly_cloudy.
+ * @brief Resolve the asset for a condition basename: requested time of day, then day/ (haze
+ *        and windy are day-only), then day/mostly_cloudy. Does file I/O (stat): off-lock only.
  * @version 1
  * @req REQ-WX-005
  * @req REQ-WX-006
+ * @return true with @p posix_out / @p lvgl_out filled; false when none exists (not logged).
+ */
+static bool resolve_base_asset(const condition_asset_t *a, const char *base, bool is_daytime,
+                               char *posix_out, size_t posix_sz, char *lvgl_out, size_t lvgl_sz)
+{
+    bool found = asset_candidate(a, is_daytime ? "day" : "night", base, posix_out, posix_sz) ||
+                 asset_candidate(a, "day", base, posix_out, posix_sz) ||
+                 asset_candidate(a, "day", "mostly_cloudy", posix_out, posix_sz);
+    if (found) snprintf(lvgl_out, lvgl_sz, "A:%s", posix_out + strlen("/sdcard"));
+    return found;
+}
+
+/**
+ * @brief Resolve the asset for an NWS description (see resolve_base_asset for the chain).
+ * v2: the chain moved to resolve_base_asset so the icon cache can resolve by basename.
+ * @version 2
+ * @req REQ-WX-005
  * @return true with @p posix_out / @p lvgl_out filled; false (logged) when none exists.
  */
 static bool resolve_condition_asset(const condition_asset_t *a, const char *desc, bool is_daytime,
                                     char *posix_out, size_t posix_sz, char *lvgl_out, size_t lvgl_sz)
 {
     const char *base = condition_to_lottie_basename(desc);
-    bool found = asset_candidate(a, is_daytime ? "day" : "night", base, posix_out, posix_sz) ||
-                 asset_candidate(a, "day", base, posix_out, posix_sz) ||
-                 asset_candidate(a, "day", "mostly_cloudy", posix_out, posix_sz);
-    if (found) {
-        snprintf(lvgl_out, lvgl_sz, "A:%s", posix_out + strlen("/sdcard"));
-    } else {
+    bool found = resolve_base_asset(a, base, is_daytime, posix_out, posix_sz, lvgl_out, lvgl_sz);
+    if (!found) {
         ESP_LOGW(TAG, "no %s asset for '%s' (%s) under /sdcard/%s", a->ext, desc ? desc : "(null)",
                  base, a->subdir);
     }
     return found;
+}
+
+/** Resolved forecast-icon LVGL path per [condition][is_daytime]; "" = no icon (text fallback). */
+static char s_icon_lvgl[WX_CONDITION_COUNT][2][64];
+
+/**
+ * @brief Re-resolve every condition's forecast icon into s_icon_lvgl. Does SD stat() calls:
+ *        call OFF the LVGL lock (FSM task, before dispatch); readers run on the same task.
+ * @version 1
+ * @req REQ-WX-006
+ */
+void forecast_icons_rescan(void)
+{
+    char posix[128], lvgl[128];
+    int found = 0;
+    for (int c = 0; c < WX_CONDITION_COUNT; c++) {
+        for (int day = 0; day < 2; day++) {
+            bool ok = resolve_base_asset(&WX_ASSET_ICON, WX_CONDITIONS[c].base, day != 0, posix,
+                                         sizeof(posix), lvgl, sizeof(lvgl));
+            strlcpy(s_icon_lvgl[c][day], ok ? lvgl : "", sizeof(s_icon_lvgl[c][day]));
+            found += ok ? 1 : 0;
+        }
+    }
+    ESP_LOGI(TAG, "forecast icons rescanned: %d/%d condition slots have an icon", found,
+             WX_CONDITION_COUNT * 2);
 }
 
 // ============================================================================
@@ -600,14 +650,15 @@ void forecast_strip_set_contrast(forecast_strip_t *s, lv_color_t base)
 
 /**
  * @brief Show the static condition icon for a day, or the text if no icon asset exists.
- * @version 1
+ * v2: looks the icon up in the off-lock cache (forecast_icons_rescan) instead of stat()ing the
+ *     SD card here, under the LVGL lock.
+ * @version 2
  * @req REQ-WX-006
  */
 static void strip_set_condition(forecast_strip_t *s, int day, const char *desc, bool is_daytime)
 {
-    char posix[128], lvgl[128];
-    bool icon = resolve_condition_asset(&WX_ASSET_ICON, desc, is_daytime, posix, sizeof(posix),
-                                        lvgl, sizeof(lvgl));
+    const char *lvgl = s_icon_lvgl[condition_index(desc)][is_daytime ? 1 : 0];
+    bool icon = lvgl[0] != '\0';
     if (icon) {
         lv_image_set_src(s->days[day].img_icon, lvgl);
         lv_obj_clear_flag(s->days[day].img_icon, LV_OBJ_FLAG_HIDDEN);

@@ -1,6 +1,7 @@
 /**
  * @file display_fsm_task.cpp
- * @version 1
+ * v2: forecast icons rescanned off-lock; Lottie loaded while hidden is left paused.
+ * @version 2
  * @brief Display FSM task: owns the event queue, background loading/contrast, timers and the Lottie loader, and dispatches to TinyFSM.
  */
 // FreeRTOS task that owns the event queue and dispatches to TinyFSM.
@@ -99,8 +100,10 @@ static uint8_t *read_lottie_file(const char *path, size_t *size_out)
  * tvg_animation_get_total_frame on a freed widget (this=0x1f8 crash).
  * ThorVG copies the buffer (copy=true), so the caller frees it afterwards.
  *
+ * v2: a widget hidden while its file was loading (clock minimised, animation switched) is left
+ *     paused; its owner resumes it on show, so it never renders hidden.
  * @dg_internal
- * @version 1
+ * @version 2
  */
 static void apply_lottie_src(const lottie_load_job_t *job, const uint8_t *data, size_t size)
 {
@@ -126,6 +129,10 @@ static void apply_lottie_src(const lottie_load_job_t *job, const uint8_t *data, 
             anim->act_time = 0;
             lv_anim_start(anim);
         }
+    }
+    if (lv_obj_has_flag(job->widget, LV_OBJ_FLAG_HIDDEN)) {
+        lv_lottie_pause(job->widget);  // hidden meanwhile: don't render off-screen until resumed
+        ESP_LOGI(TAG, "lottie_load: '%s' loaded while hidden — left paused", job->path);
     }
     lvgl_port_unlock();
 }
@@ -798,8 +805,9 @@ static void start_periodic_timers(void)
  * — i.e. how long the display could not render. Useful for catching regressions
  * where a heavy entry() builds too much under the lock.
  *
+ * v2: a forecast update rescans the forecast icons off-lock before dispatch.
  * @dg_internal
- * @version 1
+ * @version 2
  */
 static void process_event(const display_event_t *evt)
 {
@@ -807,6 +815,9 @@ static void process_event(const display_event_t *evt)
         size_t rlen = 0;
         const uint8_t *rpng = nws_get_radar_png(&rlen);
         if (rpng && rlen > 0) radar_view_predecode(rpng, rlen);
+    }
+    if (evt->type == DISPLAY_EVT_FORECAST_UPDATE) {
+        forecast_icons_rescan();   // SD stat()s off-lock; the strip update below only reads the cache
     }
     if (evt->type == DISPLAY_EVT_REFRESH_BG) {
         reload_background_from_settings();
@@ -855,8 +866,9 @@ static void fsm_run_event_loop(void)
 /**
  * @brief FSM task entry: build the screen, background, animation and scheduler, start the FSM and timers, then run the event loop.
  *
+ * v2: resolves the forecast icons off-lock before the first weather screen can be built.
  * @dg_internal
- * @version 1
+ * @version 2
  */
 static void fsm_task(void *arg)
 {
@@ -876,6 +888,7 @@ static void fsm_task(void *arg)
     // Preload the radar basemap off-lock so the first radar transition doesn't
     // stall on a ~2.4 MB SD read while holding the LVGL lock.
     radar_view_preload_map();
+    forecast_icons_rescan();   // SD stat()s off-lock; the forecast strip only reads the cache
 
     display_scheduler_get()->init();
 
@@ -1046,6 +1059,22 @@ extern "C" bool display_fsm_load_lottie(const lottie_load_job_t *job)
     (void)job;
     return false;
 #endif
+}
+
+/**
+ * @brief Apply backlight brightness live; no-op until the display (and its backlight PWM) is up.
+ * @version 1
+ * @req REQ-API-002
+ * @req REQ-UI-001
+ */
+extern "C" void display_fsm_refresh_brightness(uint8_t percent)
+{
+    if (!DisplayFsm::get_clock()) {   // display not initialised yet (launch window)
+        ESP_LOGI(TAG, "brightness %u%% saved; applies at display init", percent);
+        return;
+    }
+    esp_err_t err = bsp_display_brightness_set(percent);
+    if (err != ESP_OK) ESP_LOGW(TAG, "brightness set %u%% failed: %s", percent, esp_err_to_name(err));
 }
 
 /**

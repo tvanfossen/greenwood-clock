@@ -194,10 +194,58 @@ static void test_gentle_crossing_time(void)
 }
 
 /**
+ * @brief Count sway reversals of one swaying flake over @p seconds, starting at field time @p t0_s.
+ * @version 1
+ * @dg_internal
+ * @return Number of sign changes of the per-frame horizontal displacement (|dx| > 0.01 px).
+ */
+static int sway_reversals_from(double t0_s, float seconds)
+{
+    snow_params_t p;
+    snow_params_default(&p, 1024, 600);
+    p.wind_mps = 0.0f;
+    p.screen_h_px = 1000000;  /* never respawn: respawning re-randomises the sway period */
+    snow_field_init(&s_field, &p, 1, 5u);
+    snow_flake_t *fl = &s_field.flakes[0];
+    fl->x_px = 512.0f;
+    fl->y_px = 0.0f;
+    fl->sway_amp_mps = 0.08f;
+    fl->sway_omega = 6.28318530718f / 4.0f;  /* 4 s sway period */
+    s_field.t_s = t0_s;
+    const float dt = 1.0f / 30.0f;
+    int reversals = 0, prev_sign = 0;
+    for (int k = 0; k < (int)(seconds / dt); k++) {
+        float x_before = fl->x_px;
+        snow_field_step(&s_field, dt);
+        float dx = fl->x_px - x_before;
+        int sign = dx > 0.01f ? 1 : (dx < -0.01f ? -1 : 0);
+        if (sign != 0 && prev_sign != 0 && sign != prev_sign) reversals++;
+        if (sign != 0) prev_sign = sign;
+    }
+    return reversals;
+}
+
+/**
+ * @brief Sway keeps its rate after days of runtime: 40 s of a 4 s sway has ~20 reversals at any
+ *        elapsed time. A float time accumulator doubles the rate past 2^19 s and freezes past 2^20 s.
+ * @version 1
+ * @req REQ-ANIM-002
+ */
+static void test_sway_survives_long_runtime(void)
+{
+    const double starts[] = {0.0, 524288.0 /* 2^19 s, ~6 days */, 1048576.0 /* 2^20 s, ~12 days */};
+    for (int i = 0; i < 3; i++) {
+        int n = sway_reversals_from(starts[i], 40.0f);
+        CHECK(n >= 18 && n <= 22, "t0=%.0f s: %d sway reversals in 40 s, expected ~20", starts[i], n);
+    }
+}
+
+/**
  * @brief Run all tests and report.
+ * v2: adds the long-runtime sway test.
  * @req REQ-ANIM-002
  * @req REQ-TOOL-004
- * @version 1
+ * @version 2
  * @return 0 when every check passed, 1 otherwise.
  */
 int main(void)
@@ -210,6 +258,7 @@ int main(void)
     test_parallax();
     test_recycling();
     test_gentle_crossing_time();
+    test_sway_survives_long_runtime();
     printf("%d/%d checks passed\n", s_checks - s_failures, s_checks);
     return s_failures == 0 ? 0 : 1;
 }

@@ -104,9 +104,13 @@ requirements:
     name: Robust SDIO transport to coprocessor
     subsystem: NET
     description: >-
-      The host SDIO RX path rejects absurd lengths (> 32 KB) and drops instead of
-      asserting on buffer allocation failure (vendored esp_hosted patch).
-    acceptance_criteria: No panic on garbage SDIO lengths; TLS fetches succeed under streaming RX.
+      The host SDIO RX path rejects absurd lengths (> 32 KB) and drops, rather than
+      asserting, when an RX buffer cannot be allocated. Implemented in the vendored
+      esp_hosted copy (patches/esp_hosted-2.12.0-sdio-rx-bound.patch); vendored code is
+      not gated, so this requirement has no @req-tagged implementer.
+    acceptance_criteria: >-
+      Under internal-DRAM pressure or a garbage length from the coprocessor the device drops the
+      affected packets and keeps running (no panic); TLS weather fetches succeed in normal operation.
 
   # ---------------------------------------------------------------- TIME
   REQ-TIME-001:
@@ -241,13 +245,27 @@ requirements:
   REQ-WX-005:
     name: Weather screen with animated condition
     subsystem: WX
-    description: The weather state shows current conditions with a day/night Lottie for the condition, falling back day -> mostly-cloudy.
-    acceptance_criteria: Every NWS condition shows an animation.
+    description: >-
+      The weather state shows current conditions with a Lottie for the condition. Lookup
+      order: the condition's file for the current time of day (day/ or night/), then the
+      condition's day/ file (haze and windy are day-only), then day/mostly_cloudy; with none
+      of those on the SD card the card shows no animation.
+    acceptance_criteria: >-
+      Every NWS condition shows an animation; at night a day-only condition (haze, windy)
+      shows its day animation; with the condition's files removed the card shows the
+      mostly-cloudy animation.
   REQ-WX-006:
     name: Forecast strip icons
     subsystem: WX
-    description: Forecast days show static icons rendered offline from the Lottie set, with text as the fallback.
-    acceptance_criteria: Icons appear for each day; removing an icon shows the condition text.
+    description: >-
+      Forecast days show static icons rendered offline from the Lottie set, resolved off
+      the LVGL lock at display start and on every forecast update. Lookup order: the
+      condition's icon for the period's time of day, then its day/ icon, then
+      day/mostly_cloudy; only when none exist does the day show the condition text.
+    acceptance_criteria: >-
+      Each forecast day shows an icon; with a night icon removed the day icon appears;
+      with the condition's icons and day/mostly_cloudy.png removed, the condition text
+      appears after the next forecast update.
 
   # ---------------------------------------------------------------- RADAR
   REQ-RADAR-001:
@@ -322,15 +340,20 @@ requirements:
     subsystem: ANIM
     description: >-
       The clock screen shows one user-selected animation (Hummingbird, Snowfall, Falling
-      Leaves, None), chosen in Settings or via the API and persisted.
-    acceptance_criteria: Each choice shows on the clock screen and survives reboot.
+      Leaves, None), chosen in Settings or via the API and persisted. A choice made while the
+      clock screen is showing replaces the visible animation at once.
+    acceptance_criteria: >-
+      Each choice shows on the clock screen and survives reboot; selecting one via the API
+      while the clock is showing swaps the animation without leaving the clock screen.
   REQ-ANIM-002:
     name: Physically based snowfall
     subsystem: ANIM
     description: >-
       Screen-wide gentle snowfall with fall speed from Locatelli & Hobbs (1974), spiral
       drift from Kajikawa, exponential sizes and 1/z perspective (CITATIONS.md).
-    acceptance_criteria: Host tests (inv test-host) pass; flakes fall slowly with depth.
+    acceptance_criteria: >-
+      Host tests (inv test-host) pass; flakes fall slowly with depth, and their sway keeps
+      the same rate after days of continuous display.
   REQ-ANIM-003:
     name: Physically based falling leaves
     subsystem: ANIM
@@ -341,7 +364,10 @@ requirements:
   REQ-ANIM-004:
     name: Efficient particle rendering
     subsystem: ANIM
-    description: Particle effects invalidate only per-particle dirty rectangles, never the full screen, each frame.
+    description: >-
+      Particle effects invalidate only per-particle dirty rectangles each frame: a particle's
+      old and new boxes are merged only when they overlap, so a respawn or horizontal wrap
+      dirties two small boxes, never the span between them.
     acceptance_criteria: Particle animations do not force full-screen redraws.
 
   # ---------------------------------------------------------------- BG

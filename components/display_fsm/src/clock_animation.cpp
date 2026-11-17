@@ -1,6 +1,7 @@
 /**
  * @file clock_animation.cpp
- * @version 1
+ * v2: select() shows the new animation in place when the old one was visible.
+ * @version 2
  * @brief ClockAnimation base (lifecycle, locking, logging) + hummingbird / snowfall.
  */
 #include "clock_animation.h"
@@ -69,10 +70,21 @@ public:
      */
     const char *name() const { return name_; }
 
+    /**
+     * @brief Whether the animation is currently shown.
+     * @version 1
+     * @utility
+     * @return true between show() and hide().
+     */
+    bool is_visible() const { return visible_; }
+
 protected:
     /**
-     * @brief Off-lock preparation (allocation, I/O). Default: nothing to prepare.
-     * @version 1
+     * @brief Pre-create preparation (allocation). Runs with the LVGL lock HELD: every caller
+     *        (clock_animation_show) takes it first, so never do file or network I/O here.
+     *        Default: nothing to prepare.
+     * v2: comment corrected — this was documented as off-lock, it is not.
+     * @version 2
      * @utility
      * @return true to continue with on_create().
      */
@@ -96,7 +108,8 @@ protected:
 
 private:
     /**
-     * @brief Run the prepare → locked create → created sequence with heap logging.
+     * @brief Run the prepare → create → created sequence with heap logging. The caller already
+     *        holds the LVGL lock; the inner lock here is a recursive re-take.
      * @version 1
      * @dg_internal
      * @return true when the animation was created.
@@ -369,8 +382,11 @@ extern "C" void clock_animation_init(lv_obj_t *scr)
 }
 
 /**
- * @brief Switch the active animation, hiding the previous one.
- * @version 2
+ * @brief Switch the active animation, hiding the previous one; if the previous one was on
+ *        screen (clock showing), the new one is shown in its place under the same lock.
+ * v3: show the new animation when the old one was visible — an API select while the clock
+ *     was up used to leave the clock with no animation until the next ClockFull entry.
+ * @version 3
  * @req REQ-ANIM-001
  */
 extern "C" void clock_animation_select(clock_anim_t anim)
@@ -384,10 +400,12 @@ extern "C" void clock_animation_select(clock_anim_t anim)
     }
     lvgl_port_lock(0);  // also called from httpd; serialises s_active with the FSM task
     ClockAnimation *next = instance_for(anim);
+    bool was_visible = s_active && s_active->is_visible();
     if (s_active && s_active != next) s_active->hide();
     s_active = next;
+    if (was_visible && next) next->show(s_scr);
     lvgl_port_unlock();
-    ESP_LOGI(TAG, "selected: %s", clock_anim_name(anim));
+    ESP_LOGI(TAG, "selected: %s (%s)", clock_anim_name(anim), was_visible ? "shown now" : "shown on next clock");
 }
 
 /**

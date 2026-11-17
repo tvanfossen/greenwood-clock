@@ -13,6 +13,7 @@
 extern "C" {
 #endif
 
+#include <stdint.h>
 #include "display_events.h"
 
 /**
@@ -86,6 +87,14 @@ void display_fsm_refresh_background(void);
  * Safe to call from LVGL callbacks (handles its own locking).
  */
 void display_fsm_refresh_text_color(void);
+
+/**
+ * @brief Apply a backlight brightness (0-100 %) live, once the display is up.
+ *
+ * No-op before display init (the backlight PWM is not configured during the boot
+ * launch window). No LVGL lock needed.
+ */
+void display_fsm_refresh_brightness(uint8_t percent);
 
 /**
  * @brief Submit a Lottie file for async loading on the shared loader task.

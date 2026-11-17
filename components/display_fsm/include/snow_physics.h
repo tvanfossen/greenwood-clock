@@ -1,6 +1,7 @@
 /**
  * @file snow_physics.h
- * @version 1
+ * v2: sway/jitter driven by per-flake wrapped phases (no float-time precision cliff).
+ * @version 2
  * @brief Platform-independent physics for the snowfall clock animation.
  *
  * Pure C, no LVGL / ESP-IDF dependency, so it builds and is unit-tested on
@@ -59,8 +60,9 @@ typedef struct {
     float v_mps;          /**< Terminal fall speed from snow_fall_speed_mps(). */
     float sway_amp_mps;   /**< Peak horizontal sway velocity (0 = steady faller). */
     float sway_omega;     /**< Sway angular frequency, rad/s. */
-    float sway_phase;     /**< Sway phase, rad. */
+    float sway_phase;     /**< Sway phase, rad, advanced by sway_omega * dt each step, kept in [0, 2pi). */
     float vjit_omega;     /**< Vertical-jitter angular frequency, rad/s. */
+    float vjit_phase;     /**< Vertical-jitter phase, rad, kept in [0, 2pi). */
     float radius_px;      /**< Drawn radius. */
     uint8_t opa;          /**< Drawn opacity 0..255 (depth fade). */
 } snow_flake_t;
@@ -69,7 +71,7 @@ typedef struct {
 typedef struct {
     snow_params_t p;
     uint32_t      rng;
-    float         t_s;
+    double        t_s;   /**< Elapsed simulated time, s (informational; motion uses per-flake phases). */
     int           count;
     snow_flake_t  flakes[SNOW_MAX_FLAKES];
 } snow_field_t;

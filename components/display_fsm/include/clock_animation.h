@@ -27,7 +27,8 @@ extern "C" {
 void clock_animation_init(lv_obj_t *scr);
 
 /**
- * @brief Make @p anim the active animation; the previous one is hidden.
+ * @brief Make @p anim the active animation; the previous one is hidden, and if it was on
+ *        screen the new one is shown in its place.
  * @version 1
  * @req REQ-ANIM-001
  */
