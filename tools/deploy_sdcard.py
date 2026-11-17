@@ -21,6 +21,7 @@ DIR_MAPPINGS = [
     ("sdcard/backgrounds", "backgrounds"),
     ("sdcard/www", "www"),
     ("sdcard/maps", "maps"),
+    ("sdcard/icons", "icons"),
     ("tools/lottie_gen/output/weather", "lottie/weather"),
     ("tools/lottie_gen/output/astro", "lottie/astro"),
     ("tools/lottie_gen/output/surprise", "lottie/surprise"),
@@ -34,6 +35,9 @@ FILE_MAPPINGS = [
 ]
 
 
+## @brief Yield (local_abs_path, remote_path) for every file to deploy.
+## @utility
+## @version 1
 def collect_files():
     """Yield (local_abs_path, remote_path) for every file to deploy."""
     for local_dir_rel, remote_prefix in DIR_MAPPINGS:
@@ -55,6 +59,10 @@ def collect_files():
             print(f"  WARN: source file missing: {local_rel}", file=sys.stderr)
 
 
+## @brief Upload a single file.
+## @utility
+## @version 1
+## @return (bytes_sent, http_status).
 def push_file(host, local_path, remote_path):
     """Upload a single file. Returns (bytes_sent, http_status)."""
     url = f"http://{host}/files/{remote_path}"
@@ -70,6 +78,9 @@ def push_file(host, local_path, remote_path):
         return len(data), resp.status
 
 
+## @brief Push every mapped local directory to the device SD card.
+## @utility
+## @version 1
 def main():
     ap = argparse.ArgumentParser(description="Sync all SD card content to device")
     ap.add_argument(

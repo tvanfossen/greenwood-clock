@@ -20,8 +20,12 @@ static const char *TAG = "weather_widgets";
 #define WX_CARD_PANEL   0x0a0a1e
 #define WX_STRIP_PANEL  0x1a1a2e
 
-// Derive a legible primary + a dimmed secondary text colour for `base` over the
-// given (opaque-equivalent) panel colour. Secondary leans ~43% toward the panel.
+/**
+ * @brief Derive a legible primary + a dimmed secondary text colour for @p base over the
+ *        given (opaque-equivalent) panel colour. Secondary leans ~43% toward the panel.
+ * @version 1
+ * @dg_internal
+ */
 static void derive_panel_colors(lv_color_t base, uint32_t panel_hex,
                                 lv_color_t *primary, lv_color_t *secondary)
 {
@@ -37,10 +41,15 @@ LV_FONT_DECLARE(nunito_128);
 // Condition → Lottie path mapping
 // ============================================================================
 
-#define LOTTIE_WEATHER_DIR "/sdcard/lottie/weather"
 
-// Map NWS description keywords to Lottie file basenames.
-// Returns POSIX path (for stat), not LVGL path.
+/**
+ * @brief Map NWS description keywords (case-insensitive, most specific first) to a
+ *        condition asset basename.
+ * @version 1
+ * @dg_internal
+ * @return Condition basename used to build the POSIX path (for stat), not an LVGL path;
+ *         "mostly_cloudy" when @p desc is NULL or nothing matches.
+ */
 static const char *condition_to_lottie_basename(const char *desc)
 {
     if (!desc) return "mostly_cloudy";
@@ -73,16 +82,50 @@ static const char *condition_to_lottie_basename(const char *desc)
     return "mostly_cloudy";     // fallback — file exists in both day/ and night/
 }
 
-// Build the full POSIX path for a weather condition Lottie.
-// is_daytime selects day/ vs night/ subdirectory.
-static void build_condition_lottie_path(const char *desc, bool is_daytime,
-                                         char *posix_out, size_t posix_sz,
-                                         char *lvgl_out, size_t lvgl_sz)
+/** One family of per-condition assets: <subdir>/{day,night}/<condition><ext> on the SD card. */
+typedef struct {
+    const char *subdir;   /**< Relative to the SD root, e.g. "lottie/weather". */
+    const char *ext;      /**< ".json" / ".png". */
+} condition_asset_t;
+
+static const condition_asset_t WX_ASSET_LOTTIE = {"lottie/weather", ".json"};
+static const condition_asset_t WX_ASSET_ICON   = {"icons/weather", ".png"};
+
+/**
+ * @brief Format the POSIX path for one asset candidate and report whether it exists.
+ * @version 1
+ * @dg_internal
+ * @return true when the file exists.
+ */
+static bool asset_candidate(const condition_asset_t *a, const char *tod, const char *base,
+                            char *posix_out, size_t posix_sz)
+{
+    struct stat st;
+    snprintf(posix_out, posix_sz, "/sdcard/%s/%s/%s%s", a->subdir, tod, base, a->ext);
+    return stat(posix_out, &st) == 0;
+}
+
+/**
+ * @brief Resolve the asset for a condition: requested time of day, then day/ (haze and
+ *        windy are day-only), then day/mostly_cloudy.
+ * @version 1
+ * @req REQ-WX-001
+ * @return true with @p posix_out / @p lvgl_out filled; false (logged) when none exists.
+ */
+static bool resolve_condition_asset(const condition_asset_t *a, const char *desc, bool is_daytime,
+                                    char *posix_out, size_t posix_sz, char *lvgl_out, size_t lvgl_sz)
 {
     const char *base = condition_to_lottie_basename(desc);
-    const char *tod = is_daytime ? "day" : "night";
-    snprintf(posix_out, posix_sz, "%s/%s/%s.json", LOTTIE_WEATHER_DIR, tod, base);
-    snprintf(lvgl_out, lvgl_sz, "A:/lottie/weather/%s/%s.json", tod, base);
+    bool found = asset_candidate(a, is_daytime ? "day" : "night", base, posix_out, posix_sz) ||
+                 asset_candidate(a, "day", base, posix_out, posix_sz) ||
+                 asset_candidate(a, "day", "mostly_cloudy", posix_out, posix_sz);
+    if (found) {
+        snprintf(lvgl_out, lvgl_sz, "A:%s", posix_out + strlen("/sdcard"));
+    } else {
+        ESP_LOGW(TAG, "no %s asset for '%s' (%s) under /sdcard/%s", a->ext, desc ? desc : "(null)",
+                 base, a->subdir);
+    }
+    return found;
 }
 
 // ============================================================================
@@ -115,9 +158,27 @@ struct weather_card_t {
 #endif
 };
 
+/**
+ * @brief Convert degrees Celsius to Fahrenheit.
+ * @version 1
+ * @dg_internal
+ * @return Temperature in Fahrenheit.
+ */
 static float c_to_f(float c) { return c * 9.0f / 5.0f + 32.0f; }
+/**
+ * @brief Convert km/h to mph.
+ * @version 1
+ * @dg_internal
+ * @return Speed in mph.
+ */
 static float kmh_to_mph(float k) { return k * 0.621371f; }
 
+/**
+ * @brief Create the current-conditions card (temp, unit, description, feels-like, wind,
+ *        humidity labels) on a dark rounded panel at the top-left of @p parent.
+ * @version 1
+ * @return New card, or NULL on allocation failure (logged).
+ */
 weather_card_t *weather_card_create(lv_obj_t *parent)
 {
     weather_card_t *w = lv_malloc(sizeof(weather_card_t));
@@ -187,6 +248,11 @@ weather_card_t *weather_card_create(lv_obj_t *parent)
     return w;
 }
 
+/**
+ * @brief Free the Lottie SPIRAM buffer, delete the card's LVGL tree and animations, and
+ *        free the card. NULL-safe.
+ * @version 1
+ */
 void weather_card_destroy(weather_card_t *w)
 {
     if (!w) return;
@@ -203,11 +269,21 @@ void weather_card_destroy(weather_card_t *w)
     ESP_LOGI(TAG, "WeatherCard destroyed");
 }
 
+/**
+ * @brief Get the card's root LVGL container.
+ * @version 1
+ * @return Container object, or NULL when @p w is NULL.
+ */
 lv_obj_t *weather_card_container(const weather_card_t *w)
 {
     return w ? w->container : NULL;
 }
 
+/**
+ * @brief Apply @p primary to the temperature and @p secondary to the description,
+ *        feels-like, wind and humidity labels. NULL-safe.
+ * @version 1
+ */
 void weather_card_set_color(weather_card_t *w, lv_color_t primary, lv_color_t secondary)
 {
     if (!w) return;
@@ -218,6 +294,11 @@ void weather_card_set_color(weather_card_t *w, lv_color_t primary, lv_color_t se
     lv_obj_set_style_text_color(w->lbl_humidity, secondary, 0);
 }
 
+/**
+ * @brief Derive panel-legible colours from @p base: primary for temperature and
+ *        description, dimmed secondary for unit, feels-like, wind and humidity. NULL-safe.
+ * @version 1
+ */
 void weather_card_set_contrast(weather_card_t *w, lv_color_t base)
 {
     if (!w) return;
@@ -231,6 +312,11 @@ void weather_card_set_contrast(weather_card_t *w, lv_color_t base)
     lv_obj_set_style_text_color(w->lbl_humidity, secondary, 0);
 }
 
+/**
+ * @brief Refresh the card labels from current conditions (F / mph; dash for missing
+ *        temperatures) and re-align them. Ignores NULL or invalid input.
+ * @version 1
+ */
 void weather_card_update(weather_card_t *w, const nws_conditions_t *cond)
 {
     if (!w || !cond || !cond->valid) return;
@@ -276,28 +362,22 @@ void weather_card_update(weather_card_t *w, const nws_conditions_t *cond)
     lv_obj_align_to(w->lbl_humidity, w->lbl_wind, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
 }
 
+/**
+ * @brief Resolve the condition's Lottie file, allocate its SPIRAM render buffer, create
+ *        the background widget and queue it on the shared Lottie loader task.
+ *        No-op when LV_USE_LOTTIE is off; failures are logged and cleaned up.
+ * @version 1
+ */
 void weather_card_load_condition_lottie(weather_card_t *w, const char *condition_desc,
                                          bool is_daytime)
 {
 #if LV_USE_LOTTIE
     if (!w || !condition_desc) return;
 
-    // Build paths
     char posix_path[128], lvgl_path[128];
-    build_condition_lottie_path(condition_desc, is_daytime,
-                                posix_path, sizeof(posix_path),
-                                lvgl_path, sizeof(lvgl_path));
-
-    // Check if file exists before creating Lottie widget
-    struct stat st;
-    if (stat(posix_path, &st) != 0) {
-        // Try fallback: day/mostly_cloudy.json (cloudy.json doesn't exist)
-        snprintf(posix_path, sizeof(posix_path), "%s/day/mostly_cloudy.json", LOTTIE_WEATHER_DIR);
-        snprintf(lvgl_path, sizeof(lvgl_path), "A:/lottie/weather/day/mostly_cloudy.json");
-        if (stat(posix_path, &st) != 0) {
-            ESP_LOGW(TAG, "No weather Lottie files found (tried %s)", posix_path);
-            return;
-        }
+    if (!resolve_condition_asset(&WX_ASSET_LOTTIE, condition_desc, is_daytime, posix_path,
+                                 sizeof(posix_path), lvgl_path, sizeof(lvgl_path))) {
+        return;
     }
 
     // Allocate SPIRAM render buffer
@@ -360,11 +440,64 @@ struct forecast_strip_t {
     struct {
         lv_obj_t *col;
         lv_obj_t *lbl_name;
-        lv_obj_t *lbl_condition;
+        lv_obj_t *lbl_condition;   /* fallback when no icon asset exists */
+        lv_obj_t *img_icon;        /* static condition icon (sdcard/icons/weather) */
         lv_obj_t *lbl_temps;
     } days[FORECAST_DAYS];
 };
 
+/**
+ * @brief Create one label in a forecast column.
+ * @version 1
+ * @dg_internal
+ * @return The label.
+ */
+static lv_obj_t *strip_label(lv_obj_t *col, const lv_font_t *font, lv_align_t align, int32_t y,
+                             const char *text)
+{
+    lv_obj_t *lbl = lv_label_create(col);
+    lv_obj_set_style_text_font(lbl, font, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_align(lbl, align, 0, y);
+    lv_label_set_text(lbl, text);
+    return lbl;
+}
+
+/**
+ * @brief Create day column @p i: name, condition icon (text fallback), hi/lo.
+ * @version 1
+ * @dg_internal
+ */
+static void strip_create_column(forecast_strip_t *s, int i)
+{
+    lv_obj_t *col = lv_obj_create(s->container);
+    lv_obj_set_size(col, 130, 140);
+    lv_obj_set_style_bg_opa(col, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(col, 0, 0);
+    lv_obj_set_style_pad_all(col, 4, 0);
+    lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE);
+    s->days[i].col = col;
+
+    s->days[i].lbl_name = strip_label(col, &lv_font_montserrat_20, LV_ALIGN_TOP_MID, 0, "---");
+
+    s->days[i].img_icon = lv_image_create(col);
+    lv_obj_align(s->days[i].img_icon, LV_ALIGN_CENTER, 0, 2);
+    lv_obj_add_flag(s->days[i].img_icon, LV_OBJ_FLAG_HIDDEN);
+
+    s->days[i].lbl_condition = strip_label(col, &lv_font_montserrat_14, LV_ALIGN_CENTER, 4, "");
+    lv_obj_set_width(s->days[i].lbl_condition, 120);
+    lv_label_set_long_mode(s->days[i].lbl_condition, LV_LABEL_LONG_DOT);
+    lv_obj_add_flag(s->days[i].lbl_condition, LV_OBJ_FLAG_HIDDEN);
+
+    s->days[i].lbl_temps = strip_label(col, &lv_font_montserrat_24, LV_ALIGN_BOTTOM_MID, 0, "--/--");
+}
+
+/**
+ * @brief Create the 7-day forecast strip along the bottom of @p parent.
+ * @version 2
+ * @req REQ-WX-001
+ * @return New strip, or NULL on allocation failure (logged).
+ */
 forecast_strip_t *forecast_strip_create(lv_obj_t *parent)
 {
     forecast_strip_t *s = lv_malloc(sizeof(forecast_strip_t));
@@ -374,13 +507,10 @@ forecast_strip_t *forecast_strip_create(lv_obj_t *parent)
     }
     memset(s, 0, sizeof(*s));
 
-    // Horizontal container at bottom. Height 160 (was 130) so verbose NWS
-    // condition descriptions like "Chance Showers And Thunderstorms" wrap
-    // to 3–4 lines without overlapping the temp label below.
     s->container = lv_obj_create(parent);
     lv_obj_set_size(s->container, 992, 160);
     lv_obj_align(s->container, LV_ALIGN_BOTTOM_MID, 0, -8);
-    lv_obj_set_style_bg_color(s->container, lv_color_hex(0x1a1a2e), 0);
+    lv_obj_set_style_bg_color(s->container, lv_color_hex(WX_STRIP_PANEL), 0);
     lv_obj_set_style_bg_opa(s->container, LV_OPA_80, 0);
     lv_obj_set_style_border_width(s->container, 0, 0);
     lv_obj_set_style_pad_all(s->container, 4, 0);
@@ -389,43 +519,16 @@ forecast_strip_t *forecast_strip_create(lv_obj_t *parent)
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(s->container, LV_OBJ_FLAG_SCROLLABLE);
 
-    for (int i = 0; i < FORECAST_DAYS; i++) {
-        lv_obj_t *col = lv_obj_create(s->container);
-        lv_obj_set_size(col, 130, 140);
-        lv_obj_set_style_bg_opa(col, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(col, 0, 0);
-        lv_obj_set_style_pad_all(col, 4, 0);
-        lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE);
-        s->days[i].col = col;
-
-        // Day name
-        s->days[i].lbl_name = lv_label_create(col);
-        lv_obj_set_style_text_font(s->days[i].lbl_name, &lv_font_montserrat_20, 0);
-        lv_obj_set_style_text_color(s->days[i].lbl_name, lv_color_white(), 0);
-        lv_obj_align(s->days[i].lbl_name, LV_ALIGN_TOP_MID, 0, 0);
-        lv_label_set_text(s->days[i].lbl_name, "---");
-
-        // Condition text (replaces icon until Lottie assets exist)
-        s->days[i].lbl_condition = lv_label_create(col);
-        lv_obj_set_style_text_font(s->days[i].lbl_condition, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(s->days[i].lbl_condition, lv_color_hex(0xc8c8d8), 0);
-        lv_obj_set_width(s->days[i].lbl_condition, 120);
-        lv_label_set_long_mode(s->days[i].lbl_condition, LV_LABEL_LONG_DOT);
-        lv_obj_align(s->days[i].lbl_condition, LV_ALIGN_CENTER, 0, 4);
-        lv_label_set_text(s->days[i].lbl_condition, "");
-
-        // Hi/Lo temps — high contrast white, larger font for readability
-        s->days[i].lbl_temps = lv_label_create(col);
-        lv_obj_set_style_text_font(s->days[i].lbl_temps, &lv_font_montserrat_24, 0);
-        lv_obj_set_style_text_color(s->days[i].lbl_temps, lv_color_white(), 0);
-        lv_obj_align(s->days[i].lbl_temps, LV_ALIGN_BOTTOM_MID, 0, 0);
-        lv_label_set_text(s->days[i].lbl_temps, "--/--");
-    }
+    for (int i = 0; i < FORECAST_DAYS; i++) strip_create_column(s, i);
 
     ESP_LOGI(TAG, "ForecastStrip created");
     return s;
 }
 
+/**
+ * @brief Delete the strip's LVGL tree and animations and free the strip. NULL-safe.
+ * @version 1
+ */
 void forecast_strip_destroy(forecast_strip_t *s)
 {
     if (!s) return;
@@ -437,11 +540,21 @@ void forecast_strip_destroy(forecast_strip_t *s)
     ESP_LOGI(TAG, "ForecastStrip destroyed");
 }
 
+/**
+ * @brief Get the strip's root LVGL container.
+ * @version 1
+ * @return Container object, or NULL when @p s is NULL.
+ */
 lv_obj_t *forecast_strip_container(const forecast_strip_t *s)
 {
     return s ? s->container : NULL;
 }
 
+/**
+ * @brief Apply @p primary to every day's name and hi/lo labels and @p secondary to the
+ *        condition text label. NULL-safe.
+ * @version 1
+ */
 void forecast_strip_set_color(forecast_strip_t *s, lv_color_t primary, lv_color_t secondary)
 {
     if (!s) return;
@@ -452,6 +565,11 @@ void forecast_strip_set_color(forecast_strip_t *s, lv_color_t primary, lv_color_
     }
 }
 
+/**
+ * @brief Derive a panel-legible primary from @p base and apply it uniformly to every
+ *        day-column label (no dimmed tier).
+ * @version 1
+ */
 void forecast_strip_set_contrast(forecast_strip_t *s, lv_color_t base)
 {
     lv_color_t primary, secondary;
@@ -462,60 +580,81 @@ void forecast_strip_set_contrast(forecast_strip_t *s, lv_color_t base)
     forecast_strip_set_color(s, primary, primary);
 }
 
+/**
+ * @brief Show the static condition icon for a day, or the text if no icon asset exists.
+ * @version 1
+ * @req REQ-WX-001
+ */
+static void strip_set_condition(forecast_strip_t *s, int day, const char *desc, bool is_daytime)
+{
+    char posix[128], lvgl[128];
+    bool icon = resolve_condition_asset(&WX_ASSET_ICON, desc, is_daytime, posix, sizeof(posix),
+                                        lvgl, sizeof(lvgl));
+    if (icon) {
+        lv_image_set_src(s->days[day].img_icon, lvgl);
+        lv_obj_clear_flag(s->days[day].img_icon, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s->days[day].lbl_condition, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_label_set_text(s->days[day].lbl_condition, desc ? desc : "");
+        lv_obj_clear_flag(s->days[day].lbl_condition, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s->days[day].img_icon, LV_OBJ_FLAG_HIDDEN);
+    }
+    ESP_LOGI(TAG, "ForecastStrip day %d: '%s' -> %s", day, desc ? desc : "", icon ? lvgl : "text");
+}
+
+/**
+ * @brief Weekday abbreviation for today + @p day_idx (NWS period names vary: holidays,
+ *        "This Afternoon"), derived from the clock so it is right in every case.
+ * @version 1
+ * @dg_internal
+ */
+static void strip_day_name(int day_idx, char *out, size_t out_sz)
+{
+    time_t now;
+    time(&now);
+    time_t day_t = now + (time_t)day_idx * 86400;
+    struct tm ti;
+    localtime_r(&day_t, &ti);
+    strftime(out, out_sz, "%a", &ti);
+}
+
+/**
+ * @brief Fill one column from a forecast period (night period @p p only for "Tonight").
+ * @version 1
+ * @dg_internal
+ */
+static void strip_fill_day(forecast_strip_t *s, int day, const nws_forecast_t *fc, int i)
+{
+    const nws_forecast_period_t *p = &fc->periods[i];
+    char buf[32];
+    if (p->is_daytime) {
+        strip_day_name(day, buf, sizeof(buf));
+        lv_label_set_text(s->days[day].lbl_name, buf);
+        bool has_night = i + 1 < fc->period_count && !fc->periods[i + 1].is_daytime;
+        int lo = has_night ? fc->periods[i + 1].temperature : p->temperature;
+        snprintf(buf, sizeof(buf), "%d/%d", p->temperature, lo);
+    } else {
+        lv_label_set_text(s->days[day].lbl_name, "Tonight");
+        snprintf(buf, sizeof(buf), "--/%d", p->temperature);
+    }
+    lv_label_set_text(s->days[day].lbl_temps, buf);
+    strip_set_condition(s, day, p->short_forecast, p->is_daytime);
+}
+
+/**
+ * @brief Populate the strip: NWS gives day/night pairs; one column per day, with a
+ *        leading night period shown as "Tonight".
+ * @version 2
+ * @req REQ-WX-001
+ */
 void forecast_strip_update(forecast_strip_t *s, const nws_forecast_t *fc)
 {
     if (!s || !fc || !fc->valid) return;
-
-    int day_idx = 0;
-    char buf[32];
-
-    // NWS returns 14 periods (day+night pairs). Pair them into 7 days.
-    for (int i = 0; i < fc->period_count && day_idx < FORECAST_DAYS; i++) {
-        const nws_forecast_period_t *p = &fc->periods[i];
-
-        // Use daytime period as the anchor for each day
-        if (!p->is_daytime && day_idx == 0 && i == 0) {
-            // First period is "Tonight" — show it as day 0
-            lv_label_set_text(s->days[day_idx].lbl_name, "Tonight");
-            lv_label_set_text(s->days[day_idx].lbl_condition, p->short_forecast);
-            snprintf(buf, sizeof(buf), "--/%d", p->temperature);
-            lv_label_set_text(s->days[day_idx].lbl_temps, buf);
-            day_idx++;
-            continue;
-        }
-
-        if (!p->is_daytime) continue;  // skip standalone night periods
-
-        // Day name — always derive from the system clock + day_idx offset.
-        // NWS labels vary: weekday ("Friday"), context ("This Afternoon"),
-        // and holiday names ("Memorial Day", "Independence Day"). First 3
-        // chars of the latter two render as "Thi"/"Mem" etc. — computing
-        // from the date is correct in every case.
-        char name[4];
-        {
-            time_t now;
-            time(&now);
-            time_t day_t = now + (time_t)day_idx * 86400;
-            struct tm ti;
-            localtime_r(&day_t, &ti);
-            strftime(name, sizeof(name), "%a", &ti);  // "Thu", "Fri", ...
-        }
-        lv_label_set_text(s->days[day_idx].lbl_name, name);
-
-        // Short forecast as text
-        lv_label_set_text(s->days[day_idx].lbl_condition, p->short_forecast);
-
-        // Hi/Lo: day temp is hi, next period (night) is lo
-        int hi = p->temperature;
-        int lo = hi;  // fallback
-        if (i + 1 < fc->period_count && !fc->periods[i + 1].is_daytime) {
-            lo = fc->periods[i + 1].temperature;
-        }
-        snprintf(buf, sizeof(buf), "%d/%d", hi, lo);
-        lv_label_set_text(s->days[day_idx].lbl_temps, buf);
-
-        day_idx++;
+    int day = 0;
+    for (int i = 0; i < fc->period_count && day < FORECAST_DAYS; i++) {
+        bool leading_night = (i == 0 && !fc->periods[0].is_daytime);
+        if (!fc->periods[i].is_daytime && !leading_night) continue;
+        strip_fill_day(s, day++, fc, i);
     }
-
-    ESP_LOGI(TAG, "ForecastStrip updated: %d days", day_idx);
+    ESP_LOGI(TAG, "ForecastStrip updated: %d days", day);
 }

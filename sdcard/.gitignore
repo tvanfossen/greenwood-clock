@@ -17,3 +17,6 @@ lottie/ambient/
 # Photo slideshow (user content)
 photos/*
 !photos/.gitkeep
+
+# Forecast-strip icons (generated via `inv forecast-icons`)
+icons/
