@@ -1,0 +1,25 @@
+dependencies:
+  esp_codec_dev:
+    public: true
+    version: 1.2.*
+  esp_lcd_ek79007: 1.*
+  esp_lcd_ili9881c: 1.*
+  esp_lcd_touch_gt911: ^1
+  espressif/esp_lcd_lt8912b:
+    version: '>=0.1.1,<1.0.0'
+  espressif/esp_lvgl_port:
+    public: true
+    version: ^2
+  idf: '>=5.3'
+  lvgl/lvgl: '>=8,<10'
+description: Board Support Package (BSP) for ESP32-P4 Function EV Board (preview)
+repository: git://github.com/espressif/esp-bsp.git
+repository_info:
+  commit_sha: 342492186688ddb9469387528912d5312ab075d4
+  path: bsp/esp32_p4_function_ev_board
+tags:
+- bsp
+targets:
+- esp32p4
+url: https://github.com/espressif/esp-bsp/tree/master/bsp/esp32_p4_function_ev_board
+version: 5.0.0~1

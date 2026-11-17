@@ -1,6 +1,10 @@
-# BSP patch: espressif/esp32_p4_function_ev_board 5.0.0~1 (NOT APPLIED)
+# BSP patch: espressif/esp32_p4_function_ev_board 5.0.0~1 (APPLIED, vendored)
 
-`esp32_p4_function_ev_board-5.0.0-backlight-i2c.patch` fixes two boot warnings:
+The BSP is vendored in `components/espressif__esp32_p4_function_ev_board/`: the
+pristine registry copy with `esp32_p4_function_ev_board-5.0.0-backlight-i2c.patch` applied.
+A `components/` directory with the managed name overrides the registry package.
+
+The patch fixes two boot warnings:
 
 1. `bsp_display_brightness_init()` is made idempotent. Upstream calls it from both
    `bsp_display_start_with_config()` and `bsp_display_new_with_handles()`. The second
@@ -8,18 +12,15 @@
 2. The touch I2C bus sets `flags.enable_internal_pullup = true`. This silences
    `i2c.master: Please check pull-up resistances`. The board already has external pull-ups.
 
-## Why it is not applied
+## History
 
-Applying it means vendoring the BSP, as `components/` or via `override_path`, and any
-such dependency change forces a component-manager re-solve. On this ESP-IDF
-(`v5.5-beta1`), every re-solve fails with `MissingKconfigError: LV_USE_FREETYPE`:
+Vendoring was blocked until 2026-11-17. ESP-IDF `v5.5-beta1` never passed `sdkconfig.json`
+to the component-manager solver. Registry `lvgl/lvgl >= 9.6.0` has
+`$CONFIG{LV_USE_FREETYPE}` rules, so every re-solve died with `MissingKconfigError`. The
+project now builds with released ESP-IDF v5.5.6 (`tasks.py` `IDF_PATH`), which fixes this.
 
-- The solver evaluates the optional deps of **every** registry version matching a spec.
-  It does this for `esp_lvgl_port`'s `lvgl/lvgl >=8,<10`, even though our fork in
-  `components/lvgl` is what gets built.
-- `lvgl/lvgl >= 9.6.0` declares `if: idf_version >=5.5 && $CONFIG{LV_USE_FREETYPE} == True`.
-- The beta's `tools/cmake/build.cmake` does not pass `--sdkconfig_json_file` to the
-  solver, so no Kconfig key resolves. Released v5.5.1+ passes it.
+## Updating
 
-Fix path: move to a released ESP-IDF 5.5.x, then vendor the BSP and apply this patch.
-Both changes are also worth reporting upstream (github.com/espressif/esp-bsp).
+Download the new upstream version from the registry, re-apply this patch, regenerate the
+patch if it changed, and update this file. Both changes are worth reporting upstream
+(github.com/espressif/esp-bsp).
