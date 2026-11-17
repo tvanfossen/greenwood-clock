@@ -62,6 +62,11 @@ static RTC_NOINIT_ATTR char     s_crash_details[128]; // abort() details (file:l
 static RTC_NOINIT_ATTR char     s_boot_stage[32];  // last stage reached before crash
 static RTC_NOINIT_ATTR bool     s_panic_restart;   // skip SD I/O in shutdown handler
 
+/**
+ * @brief Record the current boot stage name in RTC no-init memory for crash reports.
+ * @dg_internal
+ * @version 1
+ */
 static inline void set_boot_stage(const char *stage)
 {
     strncpy(s_boot_stage, stage, sizeof(s_boot_stage) - 1);
@@ -89,11 +94,22 @@ static float s_tsens_min_c =  1000.0f;  // sentinel: any real read updates
 static float s_tsens_max_c = -1000.0f;
 static float s_tsens_last_c = 0.0f;
 
+/**
+ * @brief Install and enable the internal chip-temperature sensor; disables telemetry on failure.
+ * @dg_internal
+ * @version 1
+ */
 static void tsens_init(void)
 {
-    temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 90);
-    if (temperature_sensor_install(&cfg, &s_tsens_handle) != ESP_OK) {
-        ESP_LOGW(TAG, "[BOOT] tsens install failed — chip-temp telemetry disabled");
+    // The P4 sensor only supports fixed bands ([50,125], [20,100], [-10,80], [-30,50],
+    // [-40,20] in soc/esp32p4/temperature_sensor_periph.c); the requested range must sit
+    // inside ONE band. The old -10..90 fit none, so install always failed. A powered clock
+    // runs warm: [20,100] (+/-2 C) covers idle through hot.
+    temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(20, 100);
+    esp_err_t err = temperature_sensor_install(&cfg, &s_tsens_handle);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "[BOOT] tsens install failed (%s) — chip-temp telemetry disabled",
+                 esp_err_to_name(err));
         s_tsens_handle = NULL;
         return;
     }
@@ -103,10 +119,15 @@ static void tsens_init(void)
         s_tsens_handle = NULL;
         return;
     }
-    ESP_LOGI(TAG, "[BOOT] tsens installed (range -10..90 °C)");
+    ESP_LOGI(TAG, "[BOOT] tsens installed (range 20..100 °C)");
 }
 
-// Read once and update min/max trackers. Returns true on success.
+/**
+ * @brief Read the chip temperature once and update the last/min/max trackers.
+ * @dg_internal
+ * @version 1
+ * @return true on a successful read, false if the sensor is unavailable or the read failed.
+ */
 static bool tsens_sample(float *out_c)
 {
     if (!s_tsens_handle) return false;
@@ -119,7 +140,11 @@ static bool tsens_sample(float *out_c)
     return true;
 }
 
-// Public accessors for /api/status (extern "C" linkage matches http_api caller).
+/**
+ * @brief Public accessor for /api/status: copy last/min/max chip temperatures (extern "C" linkage matches http_api caller).
+ * @version 1
+ * @return true if the sensor is installed and outputs were filled, false otherwise.
+ */
 extern "C" bool main_tsens_get_last(float *out_last, float *out_min, float *out_max)
 {
     if (!s_tsens_handle) return false;
@@ -145,6 +170,11 @@ struct boot_hist_entry_t {
 };
 static_assert(sizeof(boot_hist_entry_t) == 8, "boot_hist_entry_t must be 8 bytes");
 
+/**
+ * @brief Append this boot's reset reason and timestamp to the NVS boot-history ring buffer.
+ * @dg_internal
+ * @version 1
+ */
 static void boot_history_record(void)
 {
     nvs_handle_t h;
@@ -176,10 +206,15 @@ static void boot_history_record(void)
     nvs_close(h);
 }
 
-// Public read API used by /api/boot_history. Returns oldest-first chronological
-// order in @p out_entries (caller-provided buffer of capacity @p capacity).
-// @p out_count is set to the number of valid entries written. Entries whose
-// blob is missing in NVS are skipped (sparse buffer after fresh erase).
+/**
+ * @brief Public read API used by /api/boot_history: copy boot-history entries oldest-first.
+ *
+ * Fills @p out_entries (caller-provided buffer of capacity @p capacity) in
+ * chronological order. Entries whose blob is missing in NVS are skipped
+ * (sparse buffer after fresh erase).
+ * @version 1
+ * @return Number of valid entries written to @p out_entries (0 on bad args or NVS open failure).
+ */
 extern "C" size_t main_boot_history_get(struct boot_hist_entry_t *out_entries, size_t capacity)
 {
     if (!out_entries || capacity == 0) return 0;
@@ -205,6 +240,11 @@ extern "C" size_t main_boot_history_get(struct boot_hist_entry_t *out_entries, s
     return written;
 }
 
+/**
+ * @brief LVGL timer callback that stamps the heartbeat tick watched by display_watchdog_task.
+ * @callback
+ * @version 1
+ */
 static void heartbeat_cb(lv_timer_t *timer)
 {
     (void)timer;
@@ -215,6 +255,11 @@ static void heartbeat_cb(lv_timer_t *timer)
 // is alive. At 5s check interval, every 12 cycles = once per minute.
 #define LVGL_WATCHDOG_SELF_LOG_EVERY  12
 
+/**
+ * @brief FreeRTOS task that restarts the device when the LVGL heartbeat goes silent past the timeout.
+ * @callback
+ * @version 1
+ */
 static void display_watchdog_task(void *arg)
 {
     (void)arg;
@@ -265,8 +310,12 @@ static void display_watchdog_task(void *arg)
     }
 }
 
-// LVGL log callback — routes LVGL ERROR/WARN/INFO through ESP_LOG so they
-// reach the SD card debug log and UDP stream.
+/**
+ * @brief LVGL log callback — routes LVGL ERROR/WARN/INFO through ESP_LOG so they
+ *        reach the SD card debug log and UDP stream.
+ * @callback
+ * @version 1
+ */
 static void lvgl_log_cb(lv_log_level_t level, const char* buf)
 {
     switch (level) {
@@ -276,7 +325,11 @@ static void lvgl_log_cb(lv_log_level_t level, const char* buf)
     }
 }
 
-// LVGL assert handler - reset instead of hanging
+/**
+ * @brief LVGL assert handler — record crash context, flush the log and reset instead of hanging.
+ * @callback
+ * @version 1
+ */
 extern "C" void lv_assert_handler(void) {
     set_boot_stage("lvgl_assert");
     s_crash_magic = CRASH_MAGIC;
@@ -296,19 +349,23 @@ extern "C" void lv_assert_handler(void) {
     esp_restart();
 }
 
-// Panic handler wrapper — intercepts esp_panic_handler via --wrap linker flag.
-//
-// CRITICAL: Do NOT attempt SD file I/O here. Panic context (especially INT WDT)
-// runs at high interrupt priority. The SD bus mutex is almost certainly held by
-// whichever task was interrupted, so any fflush/fsync call will deadlock, the
-// RTC watchdog fires as backstop, and no crash info reaches the log at all.
-//
-// Instead: write crash context to RTC memory (plain struct assignments, zero I/O).
-// RTC memory survives WDT and software resets. boot_sdcard_init() reads and logs
-// it on the next boot after the SD log is open and all mutexes are clean.
-//
-// The real handler prints the full register dump + backtrace to serial (UART, safe
-// in any context), then calls esp_restart().
+/**
+ * @brief Panic handler wrapper — intercepts esp_panic_handler via --wrap linker flag.
+ *
+ * CRITICAL: Do NOT attempt SD file I/O here. Panic context (especially INT WDT)
+ * runs at high interrupt priority. The SD bus mutex is almost certainly held by
+ * whichever task was interrupted, so any fflush/fsync call will deadlock, the
+ * RTC watchdog fires as backstop, and no crash info reaches the log at all.
+ *
+ * Instead: write crash context to RTC memory (plain struct assignments, zero I/O).
+ * RTC memory survives WDT and software resets. boot_sdcard_init() reads and logs
+ * it on the next boot after the SD log is open and all mutexes are clean.
+ *
+ * The real handler prints the full register dump + backtrace to serial (UART, safe
+ * in any context), then calls esp_restart().
+ * @callback
+ * @version 1
+ */
 extern "C" void __wrap_esp_panic_handler(panic_info_t *info)
 {
     // --- RTC memory write: zero file I/O, safe in interrupt context ---
@@ -349,10 +406,15 @@ extern "C" void __wrap_esp_panic_handler(panic_info_t *info)
     __real_esp_panic_handler(info);
 }
 
-// Stack overflow hook — called by FreeRTOS when a task overflows its stack.
-// Runs in an undefined/corrupt context so we keep it minimal: log the task
-// name via ESP_LOGE (which goes through our vprintf hook to SD), flush, restart.
-// General panics still output backtrace via esp_rom_printf (serial only).
+/**
+ * @brief Stack overflow hook — called by FreeRTOS when a task overflows its stack.
+ *
+ * Runs in an undefined/corrupt context so we keep it minimal: log the task
+ * name via ESP_LOGE (which goes through our vprintf hook to SD), flush, restart.
+ * General panics still output backtrace via esp_rom_printf (serial only).
+ * @callback
+ * @version 1
+ */
 extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 {
     (void)xTask;
@@ -366,8 +428,14 @@ extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskNa
     esp_restart();
 }
 
-// Shutdown handler — fires for ALL esp_restart() calls (OTA, assert, panic).
-// Actual panic detection uses esp_reset_reason() at boot_sdcard_init() on the next boot.
+/**
+ * @brief Shutdown handler — fires for ALL esp_restart() calls (OTA, assert, panic);
+ *        flushes the log and dumps heap/task state unless restarting from a panic.
+ *
+ * Actual panic detection uses esp_reset_reason() at boot_sdcard_init() on the next boot.
+ * @callback
+ * @version 1
+ */
 static void panic_handler_hook(void) {
     // After a panic, the SD bus mutex may be held by the interrupted task.
     // Attempting file I/O here deadlocks and prevents the restart from completing.
@@ -396,6 +464,11 @@ static void panic_handler_hook(void) {
 // Boot stage functions
 // =============================================================================
 
+/**
+ * @brief Boot stage: hold the panel in reset, register the shutdown handler, and load NVS settings.
+ * @dg_internal
+ * @version 1
+ */
 static void boot_settings_init(clock_settings_t *cfg)
 {
     set_boot_stage("settings_init");
@@ -432,6 +505,11 @@ typedef struct {
     char     details[128];  // abort() message: file:line, assert expr, ESP_ERROR_CHECK msg
 } crash_ctx_t;
 
+/**
+ * @brief Boot stage: log the reset reason, mount the SD card, open the debug log, and dump any previous crash context.
+ * @dg_internal
+ * @version 1
+ */
 static void boot_sdcard_init(const crash_ctx_t *ctx)
 {
     // ctx was snapshotted at the top of app_main() before boot_settings_init()
@@ -513,6 +591,72 @@ static void boot_sdcard_init(const crash_ctx_t *ctx)
 
 }
 
+// =============================================================================
+// OTA image verification — confirm a freshly OTA'd image only once WiFi works
+// =============================================================================
+
+/** Wait this long at boot for the first IP before deferring confirmation to the health loop. */
+#define OTA_VERIFY_BOOT_WAIT_MS  20000
+/** An unconfirmed image with no IP by this deadline reboots, and the bootloader rolls back. */
+#define OTA_VERIFY_DEADLINE_US   (15LL * 60 * 1000 * 1000)
+
+static bool    s_ota_verify_pending = false;
+static int64_t s_ota_verify_start_us = 0;
+
+/**
+ * @brief Confirm the running image unless it is a fresh OTA on a WiFi-configured device that
+ *        has not yet obtained an IP. A WiFi-breaking build must stay unconfirmed so that it
+ *        rolls back; marking it valid before connectivity is proven loses remote recovery.
+ * @version 1
+ * @dg_internal
+ */
+static void boot_ota_verify_start(bool wifi_configured)
+{
+    if (!wifi_configured || !ota_is_unconfirmed()) {
+        ota_mark_app_valid();  // normal boot or nothing to verify: unchanged behaviour
+        return;
+    }
+    for (int waited = 0; waited < OTA_VERIFY_BOOT_WAIT_MS && !network_is_connected(); waited += 250) {
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
+    if (network_is_connected()) {
+        ESP_LOGI(TAG, "[BOOT] OTA: new image has an IP — confirming");
+        ota_mark_app_valid();
+        return;
+    }
+    s_ota_verify_pending = true;
+    s_ota_verify_start_us = esp_timer_get_time();
+    ESP_LOGW(TAG, "[BOOT] OTA: no IP within %d s — image stays unconfirmed; health loop will confirm "
+                  "on first IP or reboot (rollback) after 15 min", OTA_VERIFY_BOOT_WAIT_MS / 1000);
+}
+
+/**
+ * @brief Health-loop hook: confirm a pending image on first IP, or reboot into rollback at the deadline.
+ * @version 1
+ * @dg_internal
+ */
+static void boot_ota_verify_poll(void)
+{
+    if (!s_ota_verify_pending) return;
+    if (network_is_connected()) {
+        ESP_LOGI(TAG, "[OTA] first IP after boot — confirming image");
+        s_ota_verify_pending = ota_mark_app_valid() != ESP_OK;
+        return;
+    }
+    if (esp_timer_get_time() - s_ota_verify_start_us > OTA_VERIFY_DEADLINE_US) {
+        ESP_LOGE(TAG, "[OTA] unconfirmed image never reached the network in 15 min — rebooting so "
+                      "the bootloader rolls back to the previous firmware");
+        vTaskDelay(pdMS_TO_TICKS(500));  // let the log reach SD / UDP
+        esp_restart();
+    }
+}
+
+/**
+ * @brief Boot stage: start Wi-Fi (or scan-only infrastructure), then init OTA and confirm the
+ *        image once networking is proven (rollback boundary; see boot_ota_verify_start).
+ * @dg_internal
+ * @version 2
+ */
 static void boot_network_early(const clock_settings_t *cfg)
 {
     set_boot_stage("network_early");
@@ -533,12 +677,17 @@ static void boot_network_early(const clock_settings_t *cfg)
     // a fix over OTA even if the display later crashes.
     ESP_LOGI(TAG, "[BOOT] OTA init...");
     ota_init();
-    ota_mark_app_valid();
-    ESP_LOGI(TAG, "[BOOT] OTA valid: slot=%s, version=%s",
-             ota_get_running_partition(),
-             ota_get_current_version());
+    boot_ota_verify_start(cfg->wifi_configured && cfg->wifi_ssid[0] != '\0');
+    ESP_LOGI(TAG, "[BOOT] OTA: slot=%s, version=%s, %s",
+             ota_get_running_partition(), ota_get_current_version(),
+             s_ota_verify_pending ? "UNCONFIRMED (awaiting first IP)" : "valid");
 }
 
+/**
+ * @brief Boot stage: block for SNTP time sync when Wi-Fi is configured, otherwise skip.
+ * @dg_internal
+ * @version 1
+ */
 static void boot_sntp_wait(const clock_settings_t *cfg)
 {
     set_boot_stage("sntp_wait");
@@ -551,6 +700,11 @@ static void boot_sntp_wait(const clock_settings_t *cfg)
     }
 }
 
+/**
+ * @brief Boot stage: apply the configured POSIX TZ string.
+ * @dg_internal
+ * @version 1
+ */
 static void boot_timezone(const clock_settings_t *cfg)
 {
     set_boot_stage("timezone");
@@ -558,6 +712,11 @@ static void boot_timezone(const clock_settings_t *cfg)
     time_sync_setup(cfg->timezone);
 }
 
+/**
+ * @brief Boot stage: log local time, start mDNS advertisement and the HTTP API server.
+ * @dg_internal
+ * @version 1
+ */
 static void boot_services(const clock_settings_t *cfg)
 {
     set_boot_stage("services");
@@ -606,12 +765,24 @@ static void boot_services(const clock_settings_t *cfg)
 
 static SemaphoreHandle_t s_launch_sem;
 
+/**
+ * @brief esp_timer callback that signals the launch semaphore when the 60 s OTA window expires.
+ * @callback
+ * @version 1
+ */
 static void autolaunch_timer_cb(void* arg)
 {
     (void)arg;
     xSemaphoreGive(s_launch_sem);
 }
 
+/**
+ * @brief OTA safety window: block until 60 s elapse or POST /debug/launch signals launch.
+ *
+ * See the OTA SAFETY WINDOW contract above — nothing processing external data may run before this returns.
+ * @dg_internal
+ * @version 1
+ */
 static void boot_await_launch(void)
 {
     set_boot_stage("await_launch");
@@ -652,14 +823,19 @@ static void boot_await_launch(void)
     s_launch_sem = NULL;
 }
 
-// Bit-bang the shared touch I2C bus (SCL=GPIO8, SDA=GPIO7) to clear a slave that
-// is holding SDA low. Returns true if SDA is released (bus idle) afterward.
-//
-// Root cause this addresses: on a warm reboot mid-GT911-read, the GT911 keeps
-// driving SDA low to finish the interrupted byte. The next I2C master init then
-// sees a wedged bus, esp_lcd_touch_new_i2c_gt911() fails, and the BSP's
-// ESP_ERROR_CHECK aborts — bricking every warm boot in a loop. A cold power cycle
-// clears the slave, which is why cold boots work and warm reboots don't.
+/**
+ * @brief Bit-bang the shared touch I2C bus (SCL=GPIO8, SDA=GPIO7) to clear a slave that
+ *        is holding SDA low.
+ *
+ * Root cause this addresses: on a warm reboot mid-GT911-read, the GT911 keeps
+ * driving SDA low to finish the interrupted byte. The next I2C master init then
+ * sees a wedged bus, esp_lcd_touch_new_i2c_gt911() fails, and the BSP's
+ * ESP_ERROR_CHECK aborts — bricking every warm boot in a loop. A cold power cycle
+ * clears the slave, which is why cold boots work and warm reboots don't.
+ * @dg_internal
+ * @version 1
+ * @return true if SDA is released (bus idle) afterward.
+ */
 static bool touch_i2c_unstick(void)
 {
     const gpio_num_t scl = BSP_I2C_SCL, sda = BSP_I2C_SDA;
@@ -706,11 +882,17 @@ static bool touch_i2c_unstick(void)
     return sda_after != 0;
 }
 
-// Recover and confirm the GT911 touch bus before bsp_display_start(), whose
-// bsp_touch_new() aborts fatally on I2C failure. Unsticks the bus (retrying), then
-// probes the GT911 so the log shows whether the controller now ACKs (0x5D primary,
-// 0x14 backup). Non-fatal here by design: we only observe; the BSP remains the
-// authority on touch init. See touch_i2c_unstick() for the warm-reboot root cause.
+/**
+ * @brief Recover and confirm the GT911 touch bus before bsp_display_start(), whose
+ *        bsp_touch_new() aborts fatally on I2C failure.
+ *
+ * Unsticks the bus (retrying), then probes the GT911 so the log shows whether the
+ * controller now ACKs (0x5D primary, 0x14 backup). Non-fatal here by design: we only
+ * observe; the BSP remains the authority on touch init. See touch_i2c_unstick() for
+ * the warm-reboot root cause.
+ * @dg_internal
+ * @version 1
+ */
 static void boot_touch_i2c_recover(void)
 {
     for (int round = 0; round < 3; round++) {
@@ -733,6 +915,11 @@ static void boot_touch_i2c_recover(void)
     }
 }
 
+/**
+ * @brief Boot stage: start the BSP display/LVGL, heartbeat + display watchdog, brightness, A: drive and touch.
+ * @dg_internal
+ * @version 1
+ */
 static void boot_display_init(const clock_settings_t *cfg)
 {
     set_boot_stage("display_init");
@@ -820,6 +1007,11 @@ static void boot_display_init(const clock_settings_t *cfg)
     ESP_LOGI(TAG, "[BOOT] Display ready");
 }
 
+/**
+ * @brief Never-returning loop that logs heap, internal-DRAM low-water, chip temperature and LVGL tick every 60 s.
+ * @dg_internal
+ * @version 2
+ */
 static void boot_health_loop(void)
 {
     size_t last_free_heap = esp_get_free_heap_size();
@@ -829,6 +1021,7 @@ static void boot_health_loop(void)
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(60000));
         loop_count++;
+        boot_ota_verify_poll();
 
         size_t free_heap     = esp_get_free_heap_size();
         size_t min_heap      = esp_get_minimum_free_heap_size();
@@ -889,6 +1082,11 @@ static void boot_health_loop(void)
 // app_main
 // =============================================================================
 
+/**
+ * @brief ESP-IDF entry point: snapshot RTC crash context, run the boot stages, then hand off to the display FSM and health loop.
+ * @callback
+ * @version 1
+ */
 extern "C" void app_main()
 {
     // Snapshot RTC crash context HERE — before boot_settings_init() calls

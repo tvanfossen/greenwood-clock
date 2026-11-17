@@ -28,7 +28,11 @@ static ota_status_t           s_status            = { .state = OTA_STATE_IDLE };
 // Private: error reporting
 // =============================================================================
 
-/** @brief Format and store an error message; also emit it at ESP_LOGE level. */
+/**
+ * @brief Format and store an error message; also emit it at ESP_LOGE level.
+ * @version 1
+ * @dg_internal
+ */
 static void set_error(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -45,6 +49,8 @@ static void set_error(const char* fmt, ...) {
  * @brief Log the current firmware version and compilation date.
  *
  * @param err Return code from esp_ota_get_partition_description().
+ * @version 1
+ * @dg_internal
  */
 static void ota_log_app_description(esp_err_t err) {
     if (err != ESP_OK) {
@@ -60,6 +66,8 @@ static void ota_log_app_description(esp_err_t err) {
  *
  * Emits a warning if the image is pending verification so the operator is
  * reminded to call ota_mark_app_valid().
+ * @version 1
+ * @dg_internal
  */
 static void ota_log_partition_state(void) {
     esp_ota_img_states_t ota_state;
@@ -79,6 +87,11 @@ static void ota_log_partition_state(void) {
 // Public: init / info
 // =============================================================================
 
+/**
+ * @brief Identify the running partition and log its firmware version and OTA state.
+ * @version 1
+ * @return ESP_OK on success; ESP_FAIL if the running partition cannot be found.
+ */
 esp_err_t ota_init(void) {
     s_running_partition = esp_ota_get_running_partition();
     if (s_running_partition == NULL) {
@@ -97,18 +110,38 @@ esp_err_t ota_init(void) {
     return ESP_OK;
 }
 
+/**
+ * @brief Get the running firmware's version string from the app descriptor.
+ * @version 1
+ * @return Version string (static storage; empty if ota_init() has not run).
+ */
 const char* ota_get_current_version(void) {
     return s_running_app_info.version;
 }
 
+/**
+ * @brief Get the running partition's label.
+ * @version 1
+ * @return Partition label, or "unknown" before ota_init().
+ */
 const char* ota_get_running_partition(void) {
     return s_running_partition ? s_running_partition->label : "unknown";
 }
 
+/**
+ * @brief Get the last OTA error message.
+ * @version 1
+ * @return Static error buffer (do not free); empty if no error has occurred.
+ */
 const char* ota_get_last_error(void) {
     return s_last_error;
 }
 
+/**
+ * @brief Get a snapshot of the push-OTA status.
+ * @version 1
+ * @return Copy of the current ota_status_t.
+ */
 ota_status_t ota_get_status(void) {
     return s_status;
 }
@@ -121,6 +154,8 @@ ota_status_t ota_get_status(void) {
  * @brief Select the next OTA update partition.
  *
  * @return ESP_OK on success; ESP_FAIL if no OTA partition is available.
+ * @version 1
+ * @dg_internal
  */
 static esp_err_t ota_push_get_partition(void) {
     s_update_partition = esp_ota_get_next_update_partition(NULL);
@@ -136,6 +171,8 @@ static esp_err_t ota_push_get_partition(void) {
  *
  * @param image_size Expected image size (OTA_SIZE_UNKNOWN to skip pre-erase).
  * @return ESP_OK on success.
+ * @version 1
+ * @dg_internal
  */
 static esp_err_t ota_push_open_handle(size_t image_size) {
     esp_err_t err = esp_ota_begin(s_update_partition, image_size, &s_ota_handle);
@@ -147,6 +184,8 @@ static esp_err_t ota_push_open_handle(size_t image_size) {
  * @brief Initialise the in-progress status fields for a new session.
  *
  * @param image_size Total firmware size in bytes.
+ * @version 1
+ * @dg_internal
  */
 static void ota_push_init_status(size_t image_size) {
     s_status.state         = OTA_STATE_RECEIVING;
@@ -159,6 +198,8 @@ static void ota_push_init_status(size_t image_size) {
  * @brief Finalise the write handle via esp_ota_end() and clear it.
  *
  * @return ESP_OK on success.
+ * @version 1
+ * @dg_internal
  */
 static esp_err_t ota_push_end_handle(void) {
     esp_err_t err = esp_ota_end(s_ota_handle);
@@ -171,6 +212,8 @@ static esp_err_t ota_push_end_handle(void) {
  * @brief Set the update partition as next boot target.
  *
  * @return ESP_OK on success.
+ * @version 1
+ * @dg_internal
  */
 static esp_err_t ota_push_set_boot(void) {
     esp_err_t err = esp_ota_set_boot_partition(s_update_partition);
@@ -183,6 +226,8 @@ static esp_err_t ota_push_set_boot(void) {
  *
  * Does not return.  Called from both ota_push_finish() (private path) and
  * ota_push_commit() (public path after HTTP response is sent).
+ * @version 1
+ * @dg_internal
  */
 static void ota_push_reboot_internal(void) {
     ESP_LOGI(TAG, "OTA complete — rebooting in 1 s...");
@@ -193,6 +238,8 @@ static void ota_push_reboot_internal(void) {
 
 /**
  * @brief Abort the active OTA write handle and clear it.
+ * @version 1
+ * @dg_internal
  */
 static void ota_push_clear_handle(void) {
     if (s_ota_handle) {
@@ -204,6 +251,8 @@ static void ota_push_clear_handle(void) {
 
 /**
  * @brief Reset all push-OTA state back to IDLE.
+ * @version 1
+ * @dg_internal
  */
 static void ota_push_reset_to_idle(void) {
     s_status.state         = OTA_STATE_IDLE;
@@ -220,6 +269,8 @@ static void ota_push_reset_to_idle(void) {
  *
  * @param image_size Expected image size passed to esp_ota_begin().
  * @return ESP_OK on success.
+ * @version 1
+ * @dg_internal
  */
 static esp_err_t ota_push_prepare(size_t image_size) {
     esp_err_t err = ota_push_get_partition();
@@ -233,6 +284,8 @@ static esp_err_t ota_push_prepare(size_t image_size) {
  * Extracted so that ota_push_finish() stays within the return-count threshold.
  *
  * @return ESP_OK on success.
+ * @version 1
+ * @dg_internal
  */
 static esp_err_t ota_push_verify_and_set_boot(void) {
     esp_err_t err = ota_push_end_handle();
@@ -244,6 +297,12 @@ static esp_err_t ota_push_verify_and_set_boot(void) {
 // Public: push OTA
 // =============================================================================
 
+/**
+ * @brief Begin a push OTA session: select the next partition and open a write handle.
+ * @version 1
+ * @param image_size Expected firmware image size in bytes (OTA_SIZE_UNKNOWN to skip).
+ * @return ESP_OK on success; ESP_ERR_INVALID_STATE if not IDLE; esp_ota error otherwise.
+ */
 esp_err_t ota_push_begin(size_t image_size) {
     if (s_status.state != OTA_STATE_IDLE) {
         set_error("OTA already in progress (state=%d)", (int)s_status.state);
@@ -257,6 +316,13 @@ esp_err_t ota_push_begin(size_t image_size) {
     return ESP_OK;
 }
 
+/**
+ * @brief Write a firmware chunk to the update partition and advance bytes_written.
+ * @version 1
+ * @param data Pointer to firmware bytes.
+ * @param len  Number of bytes to write.
+ * @return ESP_OK on success; ESP_ERR_INVALID_STATE if not RECEIVING; esp_ota_write error otherwise.
+ */
 esp_err_t ota_push_write(const void* data, size_t len) {
     if (s_status.state != OTA_STATE_RECEIVING) {
         set_error("ota_push_write in wrong state: %d", (int)s_status.state);
@@ -272,6 +338,12 @@ esp_err_t ota_push_write(const void* data, size_t len) {
     return ESP_OK;
 }
 
+/**
+ * @brief Verify the written image and set it as the boot partition (no reboot).
+ * @version 1
+ * @return ESP_OK on success (state VALIDATING); ESP_ERR_INVALID_STATE if not RECEIVING;
+ *         esp_ota error otherwise (state ERROR).
+ */
 esp_err_t ota_push_finish(void) {
     if (s_status.state != OTA_STATE_RECEIVING) {
         set_error("ota_push_finish in wrong state: %d", (int)s_status.state);
@@ -285,6 +357,10 @@ esp_err_t ota_push_finish(void) {
     return ESP_OK;
 }
 
+/**
+ * @brief Reboot into the validated image; ignored unless state is VALIDATING.
+ * @version 1
+ */
 void ota_push_commit(void) {
     if (s_status.state != OTA_STATE_VALIDATING) {
         ESP_LOGW(TAG, "ota_push_commit called in wrong state %d — ignoring",
@@ -294,6 +370,10 @@ void ota_push_commit(void) {
     ota_push_reboot_internal();  // does not return
 }
 
+/**
+ * @brief Abort an in-progress push session and reset to IDLE; no-op if IDLE, VALIDATING or REBOOTING.
+ * @version 1
+ */
 void ota_push_abort(void) {
     if (s_status.state == OTA_STATE_IDLE) return;
     if (s_status.state == OTA_STATE_VALIDATING ||
@@ -315,6 +395,8 @@ void ota_push_abort(void) {
  * @brief Mark the running OTA image as valid and cancel automatic rollback.
  *
  * @return ESP_OK on success.
+ * @version 1
+ * @dg_internal
  */
 static esp_err_t ota_confirm_pending(void) {
     esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
@@ -327,9 +409,33 @@ static esp_err_t ota_confirm_pending(void) {
 }
 
 // =============================================================================
+// Public: ota_is_unconfirmed
+// =============================================================================
+
+/**
+ * @brief True when the running image is NEW or PENDING_VERIFY (rollback still armed).
+ * @version 1
+ * @req REQ-OTA-001
+ * @return true for an unconfirmed image.
+ */
+bool ota_is_unconfirmed(void) {
+    esp_ota_img_states_t st;
+    if (!s_running_partition || esp_ota_get_state_partition(s_running_partition, &st) != ESP_OK) {
+        return false;  // factory image or no otadata: nothing to roll back
+    }
+    return st == ESP_OTA_IMG_NEW || st == ESP_OTA_IMG_PENDING_VERIFY;
+}
+
+// =============================================================================
 // Public: ota_mark_app_valid
 // =============================================================================
 
+/**
+ * @brief Confirm the running image (NEW or PENDING_VERIFY) and cancel rollback.
+ * @version 1
+ * @return ESP_OK if confirmed or already VALID; state-query/confirm error, or ESP_FAIL
+ *         for any other OTA state.
+ */
 esp_err_t ota_mark_app_valid(void) {
     esp_ota_img_states_t ota_state;
     esp_err_t err = esp_ota_get_state_partition(s_running_partition, &ota_state);
@@ -366,6 +472,8 @@ esp_err_t ota_mark_app_valid(void) {
  *
  * @param partition Target partition for rollback.
  * @return Error code on failure.
+ * @version 1
+ * @dg_internal
  */
 static esp_err_t ota_set_boot_and_reboot(const esp_partition_t* partition) {
     ESP_LOGI(TAG, "Rolling back to partition: %s", partition->label);
@@ -384,6 +492,12 @@ static esp_err_t ota_set_boot_and_reboot(const esp_partition_t* partition) {
 // Public: ota_rollback
 // =============================================================================
 
+/**
+ * @brief Roll back to the last invalid partition and reboot.
+ * @version 1
+ * @return ESP_FAIL if no previous partition exists, else the set-boot error; does not
+ *         return on success.
+ */
 esp_err_t ota_rollback(void) {
     ESP_LOGW(TAG, "Manual rollback requested");
     const esp_partition_t* partition = esp_ota_get_last_invalid_partition();
