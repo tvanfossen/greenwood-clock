@@ -117,8 +117,11 @@ static void shadow_sync(lv_obj_t *lbl)
 // ---------------------------------------------------------------------------
 
 /**
- * @brief Format @p ti as 12-hour "HH:MM", "AM"/"PM" and a "Weekday, Month, DD" date string.
- * @version 1
+ * @brief Format @p ti as 12-hour "H:MM", "AM"/"PM" and a "Weekday, Month, DD" date string.
+ * v2: no leading zero on the hour ("9:05", not "09:05"). The time label is auto-width and
+ *     centre-aligned, and the morph and AM/PM placement are centre/edge relative, so the
+ *     narrower text stays centred.
+ * @version 2
  * @req REQ-CLOCK-001
  */
 static void format_time(const struct tm *ti, char *buf_time, size_t time_sz,
@@ -127,7 +130,7 @@ static void format_time(const struct tm *ti, char *buf_time, size_t time_sz,
 {
     int h12 = ti->tm_hour % 12;
     if (!h12) h12 = 12;
-    snprintf(buf_time, time_sz, "%02d:%02d", h12, ti->tm_min);
+    snprintf(buf_time, time_sz, "%d:%02d", h12, ti->tm_min);
     snprintf(buf_ampm, ampm_sz, "%s", ti->tm_hour < 12 ? "AM" : "PM");
     strftime(buf_date, date_sz, "%A, %B, %d", ti);
 }
