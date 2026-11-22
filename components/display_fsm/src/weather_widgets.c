@@ -699,9 +699,11 @@ static void strip_set_condition(forecast_strip_t *s, int day, const char *desc, 
 }
 
 /**
- * @brief Weekday abbreviation for today + @p day_idx (NWS period names vary: holidays,
- *        "This Afternoon"), derived from the clock so it is right in every case.
- * @version 1
+ * @brief Weekday abbreviation and month/day for today + @p day_idx, e.g. "Sun 11/22" (NWS
+ *        period names vary: holidays, "This Afternoon"), derived from the clock so it is
+ *        right in every case.
+ * v2: adds the month/day after the weekday.
+ * @version 2
  * @dg_internal
  */
 static void strip_day_name(int day_idx, char *out, size_t out_sz)
@@ -711,7 +713,9 @@ static void strip_day_name(int day_idx, char *out, size_t out_sz)
     time_t day_t = now + (time_t)day_idx * 86400;
     struct tm ti;
     localtime_r(&day_t, &ti);
-    strftime(out, out_sz, "%a", &ti);
+    char wday[8];
+    strftime(wday, sizeof(wday), "%a", &ti);
+    snprintf(out, out_sz, "%s %d/%d", wday, ti.tm_mon + 1, ti.tm_mday);
 }
 
 /**
