@@ -36,6 +36,8 @@ static void pulse_opa_cb(void *obj, int32_t v)
 #define SCREEN_H  600
 #define RADAR_BBOX_DEG 2.0f  // +/- degrees from center (matches nws_radar.c)
 #define HOME_MARKER_SIZE 10
+#define RADAR_OPA        LV_OPA_40   // overlay opacity over the basemap
+#define PROGRESS_MAX     1000        // progress bar range (permille of the loop's time span)
 
 // Cached map background — decoded once, reused across radar view lifecycle.
 static uint8_t        *s_map_pixels;  // ARGB8888 pixel data in SPIRAM
@@ -61,6 +63,9 @@ struct radar_view_t {
     lv_obj_t       *container;
     lv_obj_t       *img_map;         // static map background from SD card
     lv_obj_t       *img_radar;       // transparent radar overlay
+    lv_obj_t       *img_radar_b;     // second overlay for loop crossfades
+    lv_obj_t       *img_front;       // overlay currently shown (img_radar or img_radar_b)
+    lv_obj_t       *bar_progress;    // radar-loop position in its time span (hidden until it plays)
     lv_obj_t       *home_marker;     // crosshair/dot at home lat/lon
     lv_obj_t       *lbl_updated;     // "Last updated: HH:MM"
     float           center_lat;
@@ -259,7 +264,8 @@ void radar_view_preload_map(void)
  * @brief Build the full-screen radar view: preloaded basemap (skipped if not yet
  *        loaded), 40 %-opacity radar overlay, pulsing home marker at the centre
  *        and a "Last updated" chip.
- * @version 1
+ * v2: a second overlay for loop crossfades and a (hidden) loop progress bar.
+ * @version 2
  * @req REQ-RADAR-001
  * @return The new view, or NULL if allocation failed.
  */
@@ -302,7 +308,12 @@ radar_view_t *radar_view_create(lv_obj_t *parent, float lat, float lon)
     // Radar overlay image (initially empty — set via radar_view_apply_radar)
     rv->img_radar = lv_image_create(rv->container);
     lv_obj_align(rv->img_radar, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_image_opa(rv->img_radar, LV_OPA_40, 0);
+    lv_obj_set_style_image_opa(rv->img_radar, RADAR_OPA, 0);
+    // Second overlay: the radar loop crossfades between the two (fully transparent until used).
+    rv->img_radar_b = lv_image_create(rv->container);
+    lv_obj_align(rv->img_radar_b, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_image_opa(rv->img_radar_b, LV_OPA_TRANSP, 0);
+    rv->img_front = rv->img_radar;
 
     // Home marker — pulsing red dot at lat/lon position
     rv->home_marker = lv_obj_create(rv->container);
@@ -343,8 +354,18 @@ radar_view_t *radar_view_create(lv_obj_t *parent, float lat, float lon)
     lv_obj_set_style_pad_hor(rv->lbl_updated, 8, 0);
     lv_obj_set_style_pad_ver(rv->lbl_updated, 4, 0);
     lv_obj_set_style_radius(rv->lbl_updated, 6, 0);
-    lv_obj_align(rv->lbl_updated, LV_ALIGN_BOTTOM_LEFT, 16, -12);
+    lv_obj_align(rv->lbl_updated, LV_ALIGN_BOTTOM_LEFT, 16, -22);
     lv_label_set_text(rv->lbl_updated, "Radar loading...");
+
+    // Radar-loop progress: a thin bar along the bottom edge, sliding with the frame times.
+    rv->bar_progress = lv_bar_create(rv->container);
+    lv_obj_set_size(rv->bar_progress, SCREEN_W - 32, 6);
+    lv_obj_align(rv->bar_progress, LV_ALIGN_BOTTOM_MID, 0, -8);
+    lv_bar_set_range(rv->bar_progress, 0, PROGRESS_MAX);
+    lv_obj_set_style_bg_color(rv->bar_progress, lv_color_hex(0x0a0a1e), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(rv->bar_progress, LV_OPA_60, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(rv->bar_progress, lv_color_hex(0xe0e0e0), LV_PART_INDICATOR);
+    lv_obj_add_flag(rv->bar_progress, LV_OBJ_FLAG_HIDDEN);
 
     ESP_LOGI(TAG, "RadarView created (center=%.3f,%.3f)", lat, lon);
     return rv;
@@ -353,13 +374,15 @@ radar_view_t *radar_view_create(lv_obj_t *parent, float lat, float lon)
 /**
  * @brief Stop the view's animations, delete its LVGL objects and free it; the
  *        module-level map and radar caches are kept. NULL-safe.
- * @version 1
+ * v2: also stops a running loop crossfade.
+ * @version 2
  * @req REQ-RADAR-001
  */
 void radar_view_destroy(radar_view_t *rv)
 {
     if (!rv) return;
     if (rv->home_marker) lv_anim_delete(rv->home_marker, NULL);
+    lv_anim_delete(rv, NULL);   // loop crossfade (its var is the view)
     if (rv->container) {
         lv_anim_delete(rv->container, NULL);
         lv_obj_delete(rv->container);
@@ -434,15 +457,85 @@ static void set_time_label(radar_view_t *rv, const char *prefix, time_t ts)
 }
 
 /**
- * @brief Under the LVGL lock: show one radar-loop frame and its time on the chip.
+ * @brief The overlay not currently shown (the crossfade target).
+ * @version 1
+ * @dg_internal
+ * @return The back overlay image.
+ */
+static lv_obj_t *overlay_back(const radar_view_t *rv)
+{
+    return (rv->img_front == rv->img_radar) ? rv->img_radar_b : rv->img_radar;
+}
+
+/**
+ * @brief Detach @p dsc from whichever overlay still shows it (before it is freed).
+ * @version 1
+ * @dg_internal
+ */
+static void overlay_detach(radar_view_t *rv, const lv_image_dsc_t *dsc)
+{
+    if (lv_image_get_src(rv->img_radar) == dsc)   lv_image_set_src(rv->img_radar, NULL);
+    if (lv_image_get_src(rv->img_radar_b) == dsc) lv_image_set_src(rv->img_radar_b, NULL);
+}
+
+/**
+ * @brief Crossfade step: the back overlay rises to RADAR_OPA as the front one falls to 0.
+ * @version 1
+ * @callback
+ */
+static void crossfade_exec_cb(void *var, int32_t t)   // t: 0 .. 256
+{
+    radar_view_t *rv = (radar_view_t *)var;
+    lv_obj_set_style_image_opa(overlay_back(rv), (lv_opa_t)(RADAR_OPA * t / 256), 0);
+    lv_obj_set_style_image_opa(rv->img_front, (lv_opa_t)(RADAR_OPA * (256 - t) / 256), 0);
+}
+
+/**
+ * @brief Crossfade finished: the back overlay becomes the front one.
+ * @version 1
+ * @callback
+ */
+static void crossfade_done_cb(lv_anim_t *a)
+{
+    radar_view_t *rv = (radar_view_t *)lv_anim_get_user_data(a);
+    rv->img_front = overlay_back(rv);
+}
+
+/**
+ * @brief Under the LVGL lock: crossfade the overlay to one radar-loop frame over @p fade_ms,
+ *        show its time on the chip, and slide the progress bar to @p progress (0..1000 of
+ *        the loop's time span) over the same time. A crossfade still running is finished
+ *        first, so the frames never mix three-way.
  * @version 1
  * @req REQ-RADAR-003
  */
-void radar_view_show_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, time_t ts)
+void radar_view_crossfade_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, time_t ts,
+                                uint32_t fade_ms, int32_t progress)
 {
     if (!rv || !dsc) return;
-    lv_image_set_src(rv->img_radar, dsc);
+    lv_anim_t *running = lv_anim_get(rv, crossfade_exec_cb);
+    if (running) {
+        crossfade_exec_cb(rv, 256);
+        lv_anim_delete(rv, crossfade_exec_cb);   // no completed_cb on delete: swap here
+        rv->img_front = overlay_back(rv);
+    }
+    lv_obj_t *back = overlay_back(rv);
+    lv_image_set_src(back, dsc);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, rv);
+    lv_anim_set_values(&a, 0, 256);
+    lv_anim_set_duration(&a, fade_ms);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+    lv_anim_set_exec_cb(&a, crossfade_exec_cb);
+    lv_anim_set_user_data(&a, rv);
+    lv_anim_set_completed_cb(&a, crossfade_done_cb);
+    lv_anim_start(&a);
+
     set_time_label(rv, "Radar", ts);
+    lv_obj_remove_flag(rv->bar_progress, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_anim_duration(rv->bar_progress, fade_ms, LV_PART_MAIN);
+    lv_bar_set_value(rv->bar_progress, LV_CLAMP(0, progress, PROGRESS_MAX), LV_ANIM_ON);
 }
 
 /**
@@ -450,7 +543,8 @@ void radar_view_show_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, time_t t
  *        old one), then show it with a "Last updated h:mm AM/PM (Nm ago)" label,
  *        or discard it and show "Radar data expired" if older than 30 min.
  * v2: label via set_time_label (shared with the radar loop).
- * @version 2
+ * v3: sets the front overlay (the loop crossfades between two).
+ * @version 3
  * @req REQ-RADAR-001
  */
 void radar_view_apply_radar(radar_view_t *rv)
@@ -459,10 +553,8 @@ void radar_view_apply_radar(radar_view_t *rv)
 
     // Swap pending → active under LVGL lock (safe: render thread won't read freed memory)
     if (s_pending_radar_dsc) {
-        // Detach old active from LVGL before freeing
-        if (s_active_radar_dsc) {
-            lv_image_set_src(rv->img_radar, NULL);
-        }
+        // Detach old active from LVGL before freeing (either overlay may hold it)
+        if (s_active_radar_dsc) overlay_detach(rv, s_active_radar_dsc);
         if (s_active_radar_pixels) heap_caps_free(s_active_radar_pixels);
         if (s_active_radar_dsc)    heap_caps_free(s_active_radar_dsc);
 
@@ -481,14 +573,14 @@ void radar_view_apply_radar(radar_view_t *rv)
     long age = (long)(now - s_active_radar_ts);
     if (age > RADAR_MAX_AGE_S) {
         ESP_LOGW(TAG, "Radar expired: age=%ld s (max %d s) — discarding", age, RADAR_MAX_AGE_S);
-        lv_image_set_src(rv->img_radar, NULL);
+        overlay_detach(rv, s_active_radar_dsc);
         heap_caps_free(s_active_radar_pixels); s_active_radar_pixels = NULL;
         heap_caps_free(s_active_radar_dsc);    s_active_radar_dsc = NULL;
         lv_label_set_text(rv->lbl_updated, "Radar data expired");
         return;
     }
 
-    lv_image_set_src(rv->img_radar, s_active_radar_dsc);
+    lv_image_set_src(rv->img_front, s_active_radar_dsc);
 
     set_time_label(rv, "Last updated:", s_active_radar_ts);
 

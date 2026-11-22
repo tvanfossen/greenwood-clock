@@ -15,7 +15,8 @@
 
 static const char *TAG = "radar_loop";
 
-#define LOOP_FRAME_MS      500          /* time per frame */
+#define LOOP_FRAME_MS      600          /* time per frame */
+#define LOOP_FADE_MS       450          /* crossfade into each frame (within LOOP_FRAME_MS) */
 #define LOOP_HOLD_TICKS    4            /* extra ticks on the newest frame (2 s) */
 #define LOOP_MIN_FREE_B    (8u << 20)   /* keep this much SPIRAM free when decoding */
 
@@ -97,8 +98,21 @@ bool radar_loop_load_next(void)
 }
 
 /**
- * @brief Playback timer (LVGL task): show the next published frame, holding the newest.
+ * @brief Position of frame @p i in the loop's time span, 0..1000 (oldest .. newest).
  * @version 1
+ * @dg_internal
+ * @return Progress in permille.
+ */
+static int32_t frame_progress(int i)
+{
+    time_t span = s_frames[s_ready - 1].ts - s_frames[0].ts;
+    return span > 0 ? (int32_t)((s_frames[i].ts - s_frames[0].ts) * 1000 / span) : 1000;
+}
+
+/**
+ * @brief Playback timer (LVGL task): crossfade to the next published frame, holding the newest.
+ * v2: crossfades between frames and moves the progress bar (was a hard frame swap).
+ * @version 2
  * @callback
  */
 static void loop_timer_cb(lv_timer_t *t)
@@ -111,7 +125,8 @@ static void loop_timer_cb(lv_timer_t *t)
     }
     s_hold = 0;
     s_idx = (s_idx + 1) % s_ready;
-    radar_view_show_frame(s_rv, s_frames[s_idx].dsc, s_frames[s_idx].ts);
+    radar_view_crossfade_frame(s_rv, s_frames[s_idx].dsc, s_frames[s_idx].ts, LOOP_FADE_MS,
+                               frame_progress(s_idx));
 }
 
 /**
