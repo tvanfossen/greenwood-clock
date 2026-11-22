@@ -271,6 +271,21 @@ lv_image_dsc_t *image_decode_png_file(const char *path)
 }
 
 /**
+ * @brief Read an opaque PNG file and decode it into a persistent SPIRAM XRGB8888 descriptor.
+ *        XRGB8888 takes the PPA hardware blit (the RGB565 PPA copy path is unusable), so a
+ *        large background area redraws on the PPA instead of a CPU copy from PSRAM.
+ * @version 1
+ * @req REQ-BG-001
+ * @return New descriptor, or NULL on failure.
+ */
+lv_image_dsc_t *image_decode_png_file_xrgb8888(const char *path)
+{
+    lv_image_dsc_t *dsc = image_decode_png_file(path);
+    if (dsc) dsc->header.cf = LV_COLOR_FORMAT_XRGB8888;   // opaque: alpha ignored
+    return dsc;
+}
+
+/**
  * @brief Read a PNG file and decode it into a persistent SPIRAM RGB565 descriptor (opaque, framebuffer format).
  * @version 1
  * @req REQ-BG-001

@@ -315,7 +315,7 @@ static lv_obj_t *s_bg_img = NULL;
 static lv_image_dsc_t *s_bg_dsc = NULL;   // persistent decoded background (non-GIF)
 
 /**
- * @brief Predecode a non-GIF background PNG once into a persistent, top-down RGB565 SPIRAM descriptor.
+ * @brief Predecode a non-GIF background PNG once into a persistent, top-down XRGB8888 SPIRAM descriptor.
  *
  * Predecode a non-GIF background PNG ONCE (outside the LVGL lock — SD I/O + a
  * ~2.5MB alloc) into a persistent SPIRAM descriptor. Handing LVGL a static
@@ -325,19 +325,19 @@ static lv_image_dsc_t *s_bg_dsc = NULL;   // persistent decoded background (non-
  * MUST run in a deep-stack task (fsm_task): stb_image inflate needs ~8KB stack.
  * v2: no vertical flip. Decode is pinned top-down; the old flip only undid stb's
  *     accidental bottom-up decode on the IDF beta, and on v5.5.6 it inverted the bg.
+ * v3: XRGB8888 instead of RGB565, so large background redraws blit on the PPA.
  *
  * @dg_internal
- * @version 2
+ * @version 3
  * @return Decoded descriptor, or NULL on failure (caller then skips the background).
  */
 static lv_image_dsc_t *predecode_bg(const char *path)
 {
     char fs_path[160];
     bg_lvgl_to_fs_path(path, fs_path, sizeof(fs_path));
-    // RGB565 (opaque): matches the framebuffer so the full-screen background
-    // redraws as a straight copy during animations — no per-frame ARGB->RGB565
-    // conversion.
-    lv_image_dsc_t *dsc = image_decode_png_file_rgb565(fs_path);
+    // XRGB8888 (opaque): large redraws (the clock morph, screen fades) blit on the PPA.
+    // As RGB565 they were a CPU copy from PSRAM (~22 Mpx/s, ~10-23 ms per morph frame).
+    lv_image_dsc_t *dsc = image_decode_png_file_xrgb8888(fs_path);
     if (!dsc) {
         ESP_LOGW(TAG, "bg: predecode failed for '%s' (%s) — on-demand fallback",
                  path, fs_path);
