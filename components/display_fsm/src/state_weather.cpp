@@ -48,10 +48,11 @@ static void deferred_lottie_cb(lv_timer_t *t)
 /**
  * @brief Enter the weather state: minimize the clock, build and fill the weather
  *        card and forecast strip, apply text contrast, fade them in, and schedule
- *        the condition Lottie 1.1 s after the fade starts (day = 06:00-19:59 local).
+ *        the condition Lottie 1.1 s later, after the fade (day = 06:00-19:59 local).
  * v2: clock uses the user's exact colour; no background sampling before minimizing.
- * v3: the Lottie delay counts from the end of the clock morph, as the fades now do.
- * @version 3
+ * v3: the Lottie delay counted from the end of the clock morph.
+ * v4: back to a fixed 1.1 s: the fades run alongside the morph again.
+ * @version 4
  * @req REQ-WX-002
  * @req REQ-WX-003
  * @req REQ-WX-005
@@ -82,9 +83,7 @@ void WeatherOverlay::entry()
             localtime_r(&now, &ti);
             s_lottie_is_day = (ti.tm_hour >= 6 && ti.tm_hour < 20);
             s_lottie_card   = s_card;
-            s_lottie_timer  = lv_timer_create(deferred_lottie_cb,
-                                              1100 + clock_widget_morph_remaining_ms(get_clock()),
-                                              nullptr);
+            s_lottie_timer  = lv_timer_create(deferred_lottie_cb, 1100, nullptr);
             lv_timer_set_repeat_count(s_lottie_timer, 1);
         }
     }

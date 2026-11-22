@@ -361,11 +361,14 @@ static void fade_anim_opa_cb(void *obj, int32_t v)
 }
 
 /**
- * @brief Fade @p obj from transparent to opaque over 900 ms (ease-in-out), starting once the
- *        clock morph has finished; caller holds the LVGL lock.
- * v2: delayed until the clock morph ends. Overlapped, the screen fade and the morph shared
- *     every frame (minimise measured ~10 Hz vs ~14-28 Hz for a morph alone).
- * @version 2
+ * @brief Fade @p obj in from transparent alongside the clock morph (CLOCK_MORPH_MS,
+ *        ease-in-out); caller holds the LVGL lock.
+ * v2: delayed until the clock morph ended.
+ * v3: runs with the morph again, same duration and easing, so the two stay in sync (delayed,
+ *     the fade felt detached from the morph). A snapshot-image fade was measured slower
+ *     (minimise 8.3-8.8 Hz vs ~10.5) and added ~70 ms to the transition stall, so the live
+ *     object is faded.
+ * @version 3
  * @req REQ-DISP-004
  */
 void DisplayFsm::fade_in(lv_obj_t *obj)
@@ -376,8 +379,7 @@ void DisplayFsm::fade_in(lv_obj_t *obj)
     lv_anim_init(&a);
     lv_anim_set_var(&a, obj);
     lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
-    lv_anim_set_duration(&a, 900);
-    lv_anim_set_delay(&a, clock_widget_morph_remaining_ms(s_clock));
+    lv_anim_set_duration(&a, CLOCK_MORPH_MS);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
     lv_anim_set_exec_cb(&a, fade_anim_opa_cb);
     lv_anim_start(&a);

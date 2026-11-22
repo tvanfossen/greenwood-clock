@@ -53,6 +53,8 @@ struct clock_widget_t {
 
 // Run once the clock is at rest (morph finished or none running); see clock_widget_when_settled.
 static void (*s_settled_cb)(void);
+static clock_widget_t *s_morph_w;      // widget being morphed (NULL when no morph runs)
+static clock_mode_t    s_morph_from;   // layout on screen during the morph (the source)
 
 #define SHADOW_OPA  LV_OPA_60   // shadow text opacity (on top of the label's own opa)
 
@@ -140,13 +142,35 @@ static void format_time(const struct tm *ti, char *buf_time, size_t time_sz,
     strftime(buf_date, date_sz, "%A, %B, %d", ti);
 }
 
+/**
+ * @brief Place AM/PM beside the time for layout @p mode (baseline-aligned in FULL/MINIMIZED).
+ * @version 1
+ * @dg_internal
+ */
+static void align_ampm(clock_widget_t *w, clock_mode_t mode)
+{
+    switch (mode) {
+        case CLOCK_MODE_FULL:
+            lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_BOTTOM, 8, -43);
+            break;
+        case CLOCK_MODE_TOPBAR:
+            lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
+            break;
+        case CLOCK_MODE_MINIMIZED:
+        default:
+            lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_BOTTOM, 8, -17);
+            break;
+    }
+}
+
 // Apply fonts and inner label alignment for full mode.
 // Does NOT touch container position/size — that's handled by animation or snap_to().
 /**
  * @brief Full-mode layout: 256pt time, 48pt AM/PM baseline-aligned to it, 48pt date at the bottom; does not move the container.
  * v2: time uses the 8 bpp static-bitmap digit font (same metrics).
  * v3: AM/PM and date use the 8 bpp static-bitmap 48 pt font (same metrics).
- * @version 3
+ * v4: AM/PM placed by align_ampm.
+ * @version 4
  * @req REQ-CLOCK-001
  */
 static void apply_full_layout(clock_widget_t *w)
@@ -161,7 +185,7 @@ static void apply_full_layout(clock_widget_t *w)
     //   time baseline  = 265 - 53 = 212
     //   ampm baseline  = 172 + 50 - 10 = 212  (same pixel row)
     lv_obj_set_style_text_font(w->lbl_ampm, &nunito_clock_48, 0);
-    lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_BOTTOM, 8, -43);
+    align_ampm(w, CLOCK_MODE_FULL);
 
     // Date: 48pt, bottom center
     lv_obj_set_style_text_font(w->lbl_date, &nunito_clock_48, 0);
@@ -176,7 +200,8 @@ static void apply_full_layout(clock_widget_t *w)
  * @brief Minimized-mode layout: 128pt time shifted left so time + 48pt AM/PM are centred, 24pt date below; does not move the container.
  * v2: time uses the 8 bpp static-bitmap digit font (same metrics).
  * v3: AM/PM uses the 8 bpp static-bitmap 48 pt font (same metrics).
- * @version 3
+ * v4: AM/PM placed by align_ampm.
+ * @version 4
  * @req REQ-CLOCK-002
  */
 static void apply_minimized_layout(clock_widget_t *w)
@@ -193,7 +218,7 @@ static void apply_minimized_layout(clock_widget_t *w)
     //   time baseline  = 133 - 27 = 106
     //   ampm baseline  = 66 + 50 - 10 = 106  (same pixel row)
     lv_obj_set_style_text_font(w->lbl_ampm, &nunito_clock_48, 0);
-    lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_BOTTOM, 8, -17);
+    align_ampm(w, CLOCK_MODE_MINIMIZED);
 
     // Date: 24pt, below time
     lv_obj_set_style_text_font(w->lbl_date, &lv_font_montserrat_24, 0);
@@ -206,7 +231,8 @@ static void apply_minimized_layout(clock_widget_t *w)
 // Does NOT touch container position/size — that's handled by animation or snap_to().
 /**
  * @brief Topbar-mode layout: 48pt time left, 24pt AM/PM beside it, 24pt date right-aligned; does not move the container.
- * @version 1
+ * v2: AM/PM placed by align_ampm.
+ * @version 2
  * @req REQ-CLOCK-002
  */
 static void apply_topbar_layout(clock_widget_t *w)
@@ -217,7 +243,7 @@ static void apply_topbar_layout(clock_widget_t *w)
 
     // AM/PM: 24pt, right of time
     lv_obj_set_style_text_font(w->lbl_ampm, &lv_font_montserrat_24, 0);
-    lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
+    align_ampm(w, CLOCK_MODE_TOPBAR);
 
     // Date: 24pt, right-aligned
     lv_obj_set_style_text_font(w->lbl_date, &lv_font_montserrat_24, 0);
@@ -367,7 +393,9 @@ void clock_widget_destroy(clock_widget_t *w)
 /**
  * @brief Set the time, AM/PM and date labels from @p ti and re-align AM/PM for the current mode.
  * v2: re-syncs the label shadows after the text changes.
- * @version 2
+ * v3: during a morph, aligns AM/PM for the layout on screen (the morph's source), not the
+ *     target mode: a tick mid-morph moved AM/PM by the target's offset (flicker).
+ * @version 3
  * @req REQ-CLOCK-001
  */
 void clock_widget_update(clock_widget_t *w, const struct tm *ti)
@@ -383,18 +411,9 @@ void clock_widget_update(clock_widget_t *w, const struct tm *ti)
     lv_label_set_text(w->lbl_ampm, buf_ampm);
     lv_label_set_text(w->lbl_date, buf_date);
 
-    // Re-align AM/PM after time text change (width varies by digit glyphs)
-    switch (w->mode) {
-        case CLOCK_MODE_FULL:
-            lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_BOTTOM, 8, -43);
-            break;
-        case CLOCK_MODE_MINIMIZED:
-            lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_BOTTOM, 8, -17);
-            break;
-        case CLOCK_MODE_TOPBAR:
-            lv_obj_align_to(w->lbl_ampm, w->lbl_time, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
-            break;
-    }
+    // Re-align AM/PM after time text change (width varies by digit glyphs), for the layout
+    // actually on screen: mid-morph that is still the source mode's.
+    align_ampm(w, s_morph_w ? s_morph_from : w->mode);
     shadows_sync(w);
 }
 
@@ -405,7 +424,6 @@ void clock_widget_update(clock_widget_t *w, const struct tm *ti)
 // re-raster. Crisp (high-res snapshot, only ever downscaled) AND smooth.
 static lv_obj_t      *s_morph_img;     // temporary scaled image of the snapshot
 static lv_draw_buf_t *s_morph_snap;    // the snapshot buffer (freed at completion)
-static clock_widget_t *s_morph_w;
 static clock_mode_t    s_morph_target;
 static int32_t s_mx0, s_my0, s_msc0;   // source pos + scale (256 = 1.0x)
 static int32_t s_mx1, s_my1, s_msc1;   // target pos + scale
@@ -858,7 +876,8 @@ static lv_draw_buf_t *morph_snapshot_get(clock_widget_t *w, lv_color_t color)
  *     colour change to the target happens in the end crossfade.
  * v6: drops a pending settled callback: it belonged to the mode being left.
  * v7: places the cropped snapshot by its crop origin.
- * @version 7
+ * v8: CLOCK_MORPH_MS duration; AM/PM + date fade out over half of it; records the source mode.
+ * @version 8
  * @req REQ-CLOCK-002
  * @req REQ-DISP-004
  */
@@ -917,7 +936,7 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
     lv_obj_set_style_opa(w->lbl_date, LV_OPA_COVER, 0);
     lv_anim_t lf;
     lv_anim_init(&lf);
-    lv_anim_set_duration(&lf, 180);
+    lv_anim_set_duration(&lf, CLOCK_MORPH_MS / 2);
     lv_anim_set_values(&lf, LV_OPA_COVER, LV_OPA_TRANSP);
     lv_anim_set_exec_cb(&lf, fade_opa_cb);
     lv_anim_set_var(&lf, w->lbl_ampm); lv_anim_start(&lf);
@@ -934,12 +953,13 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
     morph_appearance(mode,     s_morph_origin.x, s_morph_origin.y, &s_mx1, &s_my1, &s_msc1);
     s_morph_w      = w;
     s_morph_target = mode;
+    s_morph_from   = old_mode;
     morph_exec_cb(s_morph_img, 0);   // source appearance immediately (no flash)
 
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, s_morph_img);
-    lv_anim_set_duration(&a, 500);
+    lv_anim_set_duration(&a, CLOCK_MORPH_MS);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
     lv_anim_set_values(&a, 0, 256);
     lv_anim_set_exec_cb(&a, morph_exec_cb);
@@ -1065,21 +1085,4 @@ void clock_widget_when_settled(clock_widget_t *w, void (*cb)(void))
     if (!w || !cb) return;
     if (s_morph_w) s_settled_cb = cb;
     else cb();
-}
-
-/**
- * @brief Milliseconds until the running morph finishes (0 when none is running). Lets a
- *        screen start its own fade after the morph instead of competing with it per frame.
- * @version 1
- * @req REQ-DISP-004
- * @return Remaining morph time in ms.
- */
-uint32_t clock_widget_morph_remaining_ms(const clock_widget_t *w)
-{
-    uint32_t left = 0;
-    lv_anim_t *a = (w && s_morph_img) ? lv_anim_get(s_morph_img, morph_exec_cb) : NULL;
-    if (a && a->act_time < (int32_t)a->duration) {
-        left = (uint32_t)((int32_t)a->duration - LV_MAX(a->act_time, 0));
-    }
-    return left;
 }

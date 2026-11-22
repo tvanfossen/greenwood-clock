@@ -31,6 +31,9 @@ typedef enum {
     CLOCK_MODE_TOPBAR,      // 48pt time, full-width thin bar at top
 } clock_mode_t;
 
+/** Clock morph duration (ms). Screen fade-ins run alongside it with the same timing. */
+#define CLOCK_MORPH_MS 500
+
 typedef struct clock_widget_t clock_widget_t;
 
 /**
@@ -63,12 +66,6 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode);
  * Caller must hold LVGL lock.
  */
 void clock_widget_when_settled(clock_widget_t *w, void (*cb)(void));
-
-/**
- * @brief Milliseconds until the running morph finishes (0 when none is running).
- * Caller must hold LVGL lock.
- */
-uint32_t clock_widget_morph_remaining_ms(const clock_widget_t *w);
 
 /**
  * @brief Apply a text color to all clock labels.
