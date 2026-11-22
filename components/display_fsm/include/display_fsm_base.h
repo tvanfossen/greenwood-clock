@@ -71,13 +71,19 @@ protected:
     }
     /**
      * @brief Restore the clock widget to full mode and show the clock animation.
-     * @version 1
+     * v2: starts the animation once the restore morph has finished. Started together, the
+     *     snowfall's ~127 dirty areas per frame each re-drew the scaling morph snapshot.
+     * @version 2
      * @req REQ-CLOCK-001
      * @req REQ-ANIM-001
      */
     void restore_clock() {
-        if (s_clock) clock_widget_set_mode(s_clock, CLOCK_MODE_FULL);
-        display_fsm_show_clock_lottie();
+        if (!s_clock) {
+            display_fsm_show_clock_lottie();
+            return;
+        }
+        clock_widget_set_mode(s_clock, CLOCK_MODE_FULL);
+        clock_widget_when_settled(s_clock, display_fsm_show_clock_lottie);
     }
     /**
      * @brief Switch the clock widget to topbar mode and hide the clock animation.

@@ -11,6 +11,7 @@
 #include "display_widgets.h"
 #include "ui_contrast.h"
 #include "refresh_probe.h"
+#include "src/misc/lv_area_private.h"  /* lv_area_intersect / lv_area_join (private API) */
 #include "esp_log.h"
 #include "esp_timer.h"
 #include <stdio.h>
@@ -49,6 +50,9 @@ struct clock_widget_t {
     lv_color_t   min_base;    // default MINIMIZED colour (legible over the bg image,
                               // used by states that show the clock bg behind the clock)
 };
+
+// Run once the clock is at rest (morph finished or none running); see clock_widget_when_settled.
+static void (*s_settled_cb)(void);
 
 #define SHADOW_OPA  LV_OPA_60   // shadow text opacity (on top of the label's own opa)
 
@@ -341,12 +345,14 @@ clock_widget_t *clock_widget_create(lv_obj_t *parent)
 /**
  * @brief Cancel any in-flight crossfade, delete the widget's LVGL objects and free it (no-op if NULL).
  * v2: also settles any morph and frees the snapshot cache.
- * @version 2
+ * v3: drops a pending settled callback first (it must not run during teardown).
+ * @version 3
  * @req REQ-CLOCK-001
  */
 void clock_widget_destroy(clock_widget_t *w)
 {
     if (!w) return;
+    s_settled_cb = NULL;
     kill_fade();   // drop any in-flight crossfade snapshot before teardown
     finalize_morph(false);
     snap_cache_release();
@@ -405,6 +411,7 @@ static int32_t s_mx0, s_my0, s_msc0;   // source pos + scale (256 = 1.0x)
 static int32_t s_mx1, s_my1, s_msc1;   // target pos + scale
 static lv_color_t s_mc0;               // source text colour (the snapshot is rendered in it)
 static lv_area_t  s_morph_time_rel;    // time label's area inside this morph's snapshot
+static lv_point_t s_morph_origin;      // this morph's snapshot crop origin in the container
 // Snapshot cache: a FULL-layout time snapshot depends only on the time text and its colour,
 // so it is reused across morphs until the minute changes (rendering it is the bulk of a
 // morph's LVGL-lock time). Two slots: a minimise and the following restore start from
@@ -416,6 +423,7 @@ typedef struct {
     char           text[8];
     lv_color_t     color;
     lv_area_t      time_rel;   // time label's area inside the snapshot
+    lv_point_t     origin;     // snapshot (crop) origin in the container
 } snap_slot_t;
 static snap_slot_t s_snap_cache[SNAP_SLOTS];
 static int         s_snap_last;   // slot used most recently (the other one is evicted)
@@ -465,14 +473,16 @@ static void morph_exec_cb(void *var, int32_t prog)   // prog: 0 (source) .. 256 
 // hides that peripheral difference.)
 /**
  * @brief Compute where to place and how far to scale the full-clock snapshot so its time text lands on the real clock of @p mode.
- * @version 1
+ * v2: the snapshot is cropped; (@p ox, @p oy) is the crop's origin in the container.
+ * @version 2
  * @req REQ-DISP-004
  */
-static void morph_appearance(clock_mode_t mode, int32_t *x, int32_t *y, int32_t *scale)
+static void morph_appearance(clock_mode_t mode, int32_t ox, int32_t oy,
+                             int32_t *x, int32_t *y, int32_t *scale)
 {
     const int32_t pad = 8;
-    const int32_t snap_tcx  = pad + (FULL_W - 2 * pad) / 2;  // time centre-x in snapshot
-    const int32_t snap_ttop = pad + 24;                      // time top-y in snapshot
+    const int32_t snap_tcx  = pad + (FULL_W - 2 * pad) / 2 - ox;  // time centre-x in snapshot
+    const int32_t snap_ttop = pad + 24 - oy;                      // time top-y in snapshot
 
     if (mode == CLOCK_MODE_MINIMIZED) {
         const int32_t tcx  = MIN_X + pad + (MIN_W - 2 * pad) / 2 - 40;  // -40: layout shift
@@ -483,9 +493,11 @@ static void morph_appearance(clock_mode_t mode, int32_t *x, int32_t *y, int32_t 
     } else if (mode == CLOCK_MODE_TOPBAR) {
         int32_t gx, gy, gw, gh;
         mode_geometry(CLOCK_MODE_TOPBAR, &gx, &gy, &gw, &gh);
-        *x = gx; *y = gy; *scale = (FULL_W > 0) ? 256 * gw / FULL_W : 256;
+        *scale = (FULL_W > 0) ? 256 * gw / FULL_W : 256;
+        *x = gx + ox * *scale / 256;
+        *y = gy + oy * *scale / 256;
     } else {  // FULL — snapshot's native geometry
-        *x = FULL_X; *y = FULL_Y; *scale = 256;
+        *x = FULL_X + ox; *y = FULL_Y + oy; *scale = 256;
     }
 }
 
@@ -559,7 +571,8 @@ static void fade_done_cb(lv_anim_t *a)
  * @brief Log one finished morph: refresh count, rate, longest refresh and gap, and how far the
  *        snapshot's final time rect lands from the real label it hands off to (px; 0 = seamless).
  * v2: reads this morph's snapshot time rect (s_morph_time_rel; the cache has two slots).
- * @version 2
+ * v3: also logs dirty areas per refresh.
+ * @version 3
  * @req REQ-DISP-004
  */
 static void morph_report(clock_widget_t *w, bool natural)
@@ -576,12 +589,12 @@ static void morph_report(clock_widget_t *w, bool natural)
     int32_t px2 = s_mx1 + (rel->x2 + 1) * sc / 256 - 1;
     int32_t py2 = s_my1 + (rel->y2 + 1) * sc / 256 - 1;
     ESP_LOGI(TAG, "[MORPH] -> %d %s in %lld ms: %lu refreshes (%.1f Hz), render avg %lld us, "
-             "refresh avg %lld us max %lld us, max gap %lld us; handoff snapshot "
+             "refresh avg %lld us max %lld us, max gap %lld us, %lu dirty areas/refresh; handoff snapshot "
              "(%ld,%ld)-(%ld,%ld) real (%ld,%ld)-(%ld,%ld)",
              (int)s_morph_target, natural ? "done" : "interrupted", (long long)(dur / 1000),
              (unsigned long)p->refrs, dur > 0 ? (double)p->refrs * 1e6 / (double)dur : 0.0,
              p->render_us / refrs, p->refr_us / refrs, p->refr_max_us, p->gap_max_us,
-             (long)px1, (long)py1, (long)px2, (long)py2,
+             (unsigned long)(p->areas / refrs), (long)px1, (long)py1, (long)px2, (long)py2,
              (long)real.x1, (long)real.y1, (long)real.x2, (long)real.y2);
     refresh_probe_reset(&s_morph_probe, false);
 }
@@ -595,7 +608,8 @@ static void morph_report(clock_widget_t *w, bool natural)
  * v2: re-syncs the label shadows at the target layout.
  * v3: logs the morph's frame rate and handoff error (morph_report).
  * v4: checks every snapshot cache slot (snap_is_cached).
- * @version 4
+ * v5: runs the pending settled callback (clock_widget_when_settled) last.
+ * @version 5
  * @req REQ-DISP-004
  */
 static void finalize_morph(bool crossfade)
@@ -651,6 +665,9 @@ static void finalize_morph(bool crossfade)
     s_morph_snap = NULL;
     s_morph_w    = NULL;
     shadows_sync(w);
+    void (*settled)(void) = s_settled_cb;
+    s_settled_cb = NULL;
+    if (settled) settled();
 }
 
 /**
@@ -726,10 +743,47 @@ static void snap_cache_release(void)
     for (int i = 0; i < SNAP_SLOTS; i++) snap_slot_release(&s_snap_cache[i]);
 }
 
+/** Transparent margin kept around the cropped snapshot, and the crop width alignment. Without
+ *  them the PPA's scaled edge column/row showed as a striped line along the snapshot's edges. */
+#define SNAP_CROP_MARGIN 16
+#define SNAP_CROP_ALIGN  16
+
 /**
- * @brief Render the FULL-layout time, with its drop shadow, in @p color into @p slot.
- *        Leaves the labels in FULL layout and colour @p color, AM/PM and date hidden.
- * @version 1
+ * @brief Copy the part of the container snapshot @p full covered by the time label and its
+ *        shadow, plus a transparent margin, into a new buffer; write the crop's
+ *        container-relative area to @p crop.
+ * v2: SNAP_CROP_MARGIN margin and SNAP_CROP_ALIGN width: a tight crop put the PPA scaled-edge
+ *     artifacts on visible pixels (striped column and line along the edges, seen on device).
+ * @version 2
+ * @dg_internal
+ * @return The cropped buffer, or NULL on allocation failure.
+ */
+static lv_draw_buf_t *snap_crop(clock_widget_t *w, const lv_draw_buf_t *full, lv_area_t *crop)
+{
+    lv_area_t tc, sc, cc, whole;
+    lv_obj_get_coords(w->lbl_time, &tc);
+    lv_obj_get_coords(w->sh_time, &sc);
+    lv_obj_get_coords(w->container, &cc);
+    lv_area_join(crop, &tc, &sc);
+    lv_area_move(crop, -cc.x1, -cc.y1);
+    lv_area_increase(crop, SNAP_CROP_MARGIN, SNAP_CROP_MARGIN);
+    int32_t grow = (SNAP_CROP_ALIGN - lv_area_get_width(crop) % SNAP_CROP_ALIGN) % SNAP_CROP_ALIGN;
+    crop->x2 += grow;
+    lv_area_set(&whole, 0, 0, full->header.w - 1, full->header.h - 1);
+    if (!lv_area_intersect(crop, crop, &whole)) return NULL;
+    lv_draw_buf_t *out = lv_draw_buf_create(lv_area_get_width(crop), lv_area_get_height(crop),
+                                            LV_COLOR_FORMAT_ARGB8888, LV_STRIDE_AUTO);
+    if (out) lv_draw_buf_copy(out, NULL, full, crop);
+    return out;
+}
+
+/**
+ * @brief Render the FULL-layout time, with its drop shadow, in @p color into @p slot, cropped
+ *        to the time and its shadow. Leaves the labels in FULL layout and colour @p color,
+ *        AM/PM and date hidden.
+ * v2: cropped (snap_crop): the full 1008x350 container snapshot made the PPA scale ~2.5x the
+ *     pixels every frame and redrew the background under its transparent margins.
+ * @version 2
  * @req REQ-DISP-004
  * @return The snapshot, or NULL if rendering failed (OOM).
  */
@@ -742,7 +796,11 @@ static lv_draw_buf_t *snap_render(clock_widget_t *w, lv_color_t color, snap_slot
     lv_obj_add_flag(w->lbl_ampm, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(w->lbl_date, LV_OBJ_FLAG_HIDDEN);
     shadows_sync(w);   // the time's shadow is in the snapshot, AM/PM's and the date's are not
-    lv_draw_buf_t *snap = lv_snapshot_take(w->container, LV_COLOR_FORMAT_ARGB8888);
+    lv_draw_buf_t *full = lv_snapshot_take(w->container, LV_COLOR_FORMAT_ARGB8888);
+    if (!full) return NULL;
+    lv_area_t crop;
+    lv_draw_buf_t *snap = snap_crop(w, full, &crop);
+    lv_draw_buf_destroy(full);
     if (!snap) return NULL;
     lv_area_t tc, cc;
     lv_obj_get_coords(w->lbl_time, &tc);
@@ -750,8 +808,10 @@ static lv_draw_buf_t *snap_render(clock_widget_t *w, lv_color_t color, snap_slot
     snap_slot_release(slot);
     slot->buf = snap;
     slot->color = color;
+    slot->origin = (lv_point_t){ crop.x1, crop.y1 };
     strlcpy(slot->text, lv_label_get_text(w->lbl_time), sizeof(slot->text));
     lv_area_set(&slot->time_rel, tc.x1 - cc.x1, tc.y1 - cc.y1, tc.x2 - cc.x1, tc.y2 - cc.y1);
+    lv_area_move(&slot->time_rel, -crop.x1, -crop.y1);
     return snap;
 }
 
@@ -761,7 +821,8 @@ static lv_draw_buf_t *snap_render(clock_widget_t *w, lv_color_t color, snap_slot
  *        Sets s_morph_time_rel. On a render, leaves the labels as snap_render does.
  * v2: includes the time's drop shadow; rendered in the morph's source colour (no recolour),
  *     two colour-keyed cache slots; records the time label's area in the snapshot.
- * @version 3
+ * v4: also hands over the snapshot's crop origin (s_morph_origin).
+ * @version 4
  * @req REQ-DISP-004
  * @return Snapshot buffer (owned by the cache), or NULL if rendering failed (OOM).
  */
@@ -784,6 +845,7 @@ static lv_draw_buf_t *morph_snapshot_get(clock_widget_t *w, lv_color_t color)
     }
     s_snap_last = slot;
     s_morph_time_rel = s_snap_cache[slot].time_rel;
+    s_morph_origin   = s_snap_cache[slot].origin;
     return s_snap_cache[slot].buf;
 }
 
@@ -794,13 +856,16 @@ static lv_draw_buf_t *morph_snapshot_get(clock_widget_t *w, lv_color_t color)
  * v4: arms the morph refresh probe (frame rate measured per morph, see morph_report).
  * v5: snapshot rendered in the source colour (no per-frame recolour, so PPA scales it); the
  *     colour change to the target happens in the end crossfade.
- * @version 5
+ * v6: drops a pending settled callback: it belonged to the mode being left.
+ * v7: places the cropped snapshot by its crop origin.
+ * @version 7
  * @req REQ-CLOCK-002
  * @req REQ-DISP-004
  */
 void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
 {
     if (!w) return;
+    s_settled_cb = NULL;     // a pending callback belonged to the mode being left
     finalize_morph(false);   // settle any in-flight morph instantly — morphs are serial
     kill_fade();             // and drop any still-dissolving previous snapshot
     if (w->mode == mode) {
@@ -865,8 +930,8 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
     lv_obj_remove_flag(s_morph_img, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
     // Endpoints aligned so the TIME text matches the real clock at each mode.
-    morph_appearance(old_mode, &s_mx0, &s_my0, &s_msc0);
-    morph_appearance(mode,     &s_mx1, &s_my1, &s_msc1);
+    morph_appearance(old_mode, s_morph_origin.x, s_morph_origin.y, &s_mx0, &s_my0, &s_msc0);
+    morph_appearance(mode,     s_morph_origin.x, s_morph_origin.y, &s_mx1, &s_my1, &s_msc1);
     s_morph_w      = w;
     s_morph_target = mode;
     morph_exec_cb(s_morph_img, 0);   // source appearance immediately (no flash)
@@ -986,4 +1051,35 @@ void clock_widget_set_jitter(clock_widget_t *w, int8_t dx, int8_t dy)
     if (dy < -4) dy = -4;
     lv_obj_set_style_translate_x(w->container, (int32_t)dx, 0);
     lv_obj_set_style_translate_y(w->container, (int32_t)dy, 0);
+}
+
+/**
+ * @brief Run @p cb once the clock is at rest: now if no morph is running, else when the morph
+ *        finishes. A later mode change drops it. Lets the clock screen start its animation
+ *        after the restore morph instead of competing with it for every frame.
+ * @version 1
+ * @req REQ-DISP-004
+ */
+void clock_widget_when_settled(clock_widget_t *w, void (*cb)(void))
+{
+    if (!w || !cb) return;
+    if (s_morph_w) s_settled_cb = cb;
+    else cb();
+}
+
+/**
+ * @brief Milliseconds until the running morph finishes (0 when none is running). Lets a
+ *        screen start its own fade after the morph instead of competing with it per frame.
+ * @version 1
+ * @req REQ-DISP-004
+ * @return Remaining morph time in ms.
+ */
+uint32_t clock_widget_morph_remaining_ms(const clock_widget_t *w)
+{
+    uint32_t left = 0;
+    lv_anim_t *a = (w && s_morph_img) ? lv_anim_get(s_morph_img, morph_exec_cb) : NULL;
+    if (a && a->act_time < (int32_t)a->duration) {
+        left = (uint32_t)((int32_t)a->duration - LV_MAX(a->act_time, 0));
+    }
+    return left;
 }

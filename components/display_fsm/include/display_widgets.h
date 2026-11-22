@@ -58,6 +58,19 @@ void clock_widget_update(clock_widget_t *w, const struct tm *ti);
 void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode);
 
 /**
+ * @brief Run @p cb once the clock is at rest: immediately if no morph is running, else when
+ *        the running morph finishes. A later mode change drops it.
+ * Caller must hold LVGL lock.
+ */
+void clock_widget_when_settled(clock_widget_t *w, void (*cb)(void));
+
+/**
+ * @brief Milliseconds until the running morph finishes (0 when none is running).
+ * Caller must hold LVGL lock.
+ */
+uint32_t clock_widget_morph_remaining_ms(const clock_widget_t *w);
+
+/**
  * @brief Apply a text color to all clock labels.
  * Caller must hold LVGL lock.
  */
