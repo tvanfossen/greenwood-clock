@@ -5,6 +5,7 @@
  */
 // components/http_api/http_api.c
 
+#include "http_bg_schedule.h"
 #include "http_api.h"
 #include "ota.h"
 #include "secrets.h"
@@ -1064,11 +1065,13 @@ static void http_api_register_display_handlers(httpd_handle_t srv)
  * @brief Register all URI handlers with the running server.
  *
  * @param srv  Running httpd server handle.
- * @version 1
+ * v2: also the background schedule endpoints.
+ * @version 2
  * @req REQ-API-001
  */
 static void http_api_register_handlers(httpd_handle_t srv)
 {
+    http_bg_schedule_register(srv);   // before the display handlers' www catch-all
     http_api_register_file_handlers(srv);
     http_api_register_ota_handlers(srv);
     http_api_register_debug_handlers(srv);

@@ -8,6 +8,7 @@
 // All LVGL operations happen under lvgl_port_lock in this task.
 
 #include "display_fsm.h"
+#include "bg_schedule.h"
 #include "display_fsm_base.h"
 #include "display_states.h"
 #include "display_widgets.h"
@@ -494,43 +495,107 @@ static void apply_clock_user_color(const clock_settings_t *cfg)
 }
 
 /**
- * @brief Delete the current background (object + persistent descriptor) and reload it from settings.
+ * @brief Replace the current background with @p cfg's without a blank frame: the new image
+ *        is decoded and placed behind the old one, then the old one is deleted. If the new
+ *        one fails to load, the old one stays.
  *
- * Delete the current background (object + persistent descriptor) and reload from
- * settings. MUST run in fsm_task — load_background() decodes with a deep stack
- * outside the LVGL lock.
+ * MUST run in fsm_task — load_background() decodes with a deep stack outside the LVGL lock.
  *
  * @dg_internal
  * v2: clock text uses the user's exact colour (legibility via label shadows), no bg sampling.
- * @version 2
+ * v3: takes the (effective) settings to apply instead of loading them.
+ * v4: swaps after decoding the new image (it deleted the old one first: ~1.3 s of black
+ *     screen at every background change, seen on device with the schedule).
+ * @version 4
  */
-static void reload_background_from_settings(void)
+static void reload_background(const clock_settings_t *cfg)
 {
     lv_obj_t *scr = DisplayFsm::get_screen();
     if (!scr) {
         ESP_LOGW(TAG, "reload_bg: screen not initialized");
         return;
     }
+    // Take ownership of the current background so load_background() neither frees its
+    // descriptor nor reports it as the result.
+    lv_obj_t *old_img = s_bg_img;
+    lv_image_dsc_t *old_dsc = s_bg_dsc;
+    s_bg_img = NULL;
+    s_bg_dsc = NULL;
 
-    lvgl_port_lock(0);
-    if (s_bg_img) {
-        lv_anim_delete(s_bg_img, NULL);
-        lv_obj_delete(s_bg_img);
-        s_bg_img = NULL;
+    load_background(scr, cfg);   // new image behind the old one (move_background)
+
+    if (!s_bg_img) {   // failed or nothing configured: keep what was showing
+        s_bg_img = old_img;
+        s_bg_dsc = old_dsc;
+        ESP_LOGW(TAG, "reload_bg: new background not loaded, keeping the current one");
+    } else {
+        lvgl_port_lock(0);
+        if (old_img) {
+            lv_anim_delete(old_img, NULL);
+            lv_obj_delete(old_img);
+        }
+        lvgl_port_unlock();
+        if (old_dsc) image_decode_free(old_dsc);   // its object is gone
     }
-    lvgl_port_unlock();
+    apply_clock_user_color(cfg);
+}
 
-    // Object is gone; safe to free its descriptor (nothing references it now).
-    if (s_bg_dsc) {
-        image_decode_free(s_bg_dsc);
-        s_bg_dsc = NULL;
-    }
+static int          s_bg_profile = -1;   // schedule profile last applied (-1: none yet)
+static clock_anim_t s_bg_anim = CLOCK_ANIM_COUNT;   // animation last applied by a profile
 
+/**
+ * @brief Effective settings: the global settings with the active schedule profile's
+ *        overrides (image, text colour, brightness) applied.
+ * @version 1
+ * @req REQ-BG-004
+ * @return Active profile index; the profile is copied to @p prof when non-NULL.
+ */
+static int effective_settings(clock_settings_t *cfg, bg_profile_t *prof)
+{
+    settings_load(cfg);
+    time_t now = time(NULL);
+    struct tm ti;
+    localtime_r(&now, &ti);
+    bg_profile_t p;
+    int idx = bg_schedule_active(&ti, &p);
+    if (p.image[0]) strlcpy(cfg->background_image, p.image, sizeof(cfg->background_image));
+    if (p.text_color != BG_INHERIT_COLOR) cfg->text_color = p.text_color;
+    if (p.brightness != BG_INHERIT) cfg->brightness = (uint8_t)p.brightness;
+    if (prof) *prof = p;
+    return idx;
+}
+
+/**
+ * @brief Select the profile's animation (or the stored preference) if it changed.
+ * @version 1
+ * @dg_internal
+ */
+static void apply_profile_anim(const bg_profile_t *p)
+{
+    clock_anim_t anim = (p->anim != BG_INHERIT) ? (clock_anim_t)p->anim : clock_anim_pref_get();
+    if (anim == s_bg_anim) return;
+    s_bg_anim = anim;
+    clock_animation_select(anim);
+}
+
+/**
+ * @brief Apply the active schedule profile when it changed (or always when @p force):
+ *        background, text colour, brightness and clock animation. fsm_task only (decodes).
+ * @version 1
+ * @req REQ-BG-004
+ */
+static void apply_bg_profile(bool force)
+{
     clock_settings_t cfg;
-    if (settings_load(&cfg) == ESP_OK) {
-        load_background(scr, &cfg);
-        apply_clock_user_color(&cfg);
-    }
+    bg_profile_t p;
+    int idx = effective_settings(&cfg, &p);
+    if (!force && idx == s_bg_profile) return;
+    ESP_LOGI(TAG, "bg profile %d -> %d '%s' (image '%s', brightness %u%%)", s_bg_profile, idx,
+             p.name, cfg.background_image, cfg.brightness);
+    s_bg_profile = idx;
+    reload_background(&cfg);
+    display_fsm_refresh_brightness(cfg.brightness);
+    apply_profile_anim(&p);
 }
 
 // ---------------------------------------------------------------------------
@@ -740,7 +805,8 @@ static void start_periodic_timers(void)
  * @dg_internal
  * v3: clock text uses the user's exact colour (legibility via label shadows), no bg sampling.
  * v4: radar-loop frames decode off-lock, one per event (RadarOverlay::loop_step).
- * @version 4
+ * v5: background schedule: the minute tick and REFRESH_BG apply the active profile.
+ * @version 5
  */
 static void process_event(const display_event_t *evt)
 {
@@ -757,8 +823,11 @@ static void process_event(const display_event_t *evt)
         forecast_icons_rescan();   // SD stat()s off-lock; the strip update below only reads the cache
     }
     if (evt->type == DISPLAY_EVT_REFRESH_BG) {
-        reload_background_from_settings();
+        apply_bg_profile(true);   // settings or schedule changed: re-apply the effective profile
         return;   // not a state event — no FSM dispatch
+    }
+    if (evt->type == DISPLAY_EVT_CLOCK_UPDATE) {
+        apply_bg_profile(false);  // minute tick: switch profile at a slot boundary
     }
     if (evt->type == DISPLAY_EVT_PHOTO_ADVANCE) {
         // Decode the next photo OFF the LVGL lock (slow PNG decode), then swap
@@ -805,7 +874,8 @@ static void fsm_run_event_loop(void)
  * v2: resolves the forecast icons off-lock before the first weather screen can be built.
  * @dg_internal
  * v3: clock text uses the user's exact colour (legibility via label shadows), no bg sampling.
- * @version 3
+ * v4: starts from the effective settings (active background schedule profile applied).
+ * @version 4
  */
 static void fsm_task(void *arg)
 {
@@ -813,7 +883,8 @@ static void fsm_task(void *arg)
     ESP_LOGI(TAG, "FSM task started");
 
     clock_settings_t cfg;
-    settings_load(&cfg);
+    bg_profile_t prof;
+    s_bg_profile = effective_settings(&cfg, &prof);   // global settings + active schedule profile
 
     lv_obj_t *scr = setup_screen_widgets(&cfg);
 
@@ -821,6 +892,9 @@ static void fsm_task(void *arg)
     load_background(scr, &cfg);
     apply_clock_user_color(&cfg);
     clock_animation_init(scr);   // user-selected clock animation (hummingbird / snowfall / none)
+    s_bg_anim = clock_anim_pref_get();
+    apply_profile_anim(&prof);
+    if (prof.brightness != BG_INHERIT) display_fsm_refresh_brightness(cfg.brightness);
 
     // Preload the radar basemap off-lock so the first radar transition doesn't
     // stall on a ~2.4 MB SD read while holding the LVGL lock.
@@ -1022,7 +1096,8 @@ extern "C" void display_fsm_refresh_brightness(uint8_t percent)
  *     reboot/OTA, where the boot path legibility-adjusted it (white over a bright area
  *     turned black), which read as "the colour resets to black".
  * v3: clock text uses the user's exact colour (legibility via label shadows), no bg sampling.
- * @version 3
+ * v4: the active background schedule profile may override the colour (effective settings).
+ * @version 4
  * @req REQ-BG-002
  */
 extern "C" void display_fsm_refresh_text_color(void)
@@ -1030,7 +1105,7 @@ extern "C" void display_fsm_refresh_text_color(void)
     if (!DisplayFsm::get_clock()) return;
 
     clock_settings_t cfg;
-    if (settings_load(&cfg) != ESP_OK) return;
+    effective_settings(&cfg, NULL);
 
     apply_clock_user_color(&cfg);   // takes the LVGL lock itself
     ESP_LOGI(TAG, "Text color refreshed: 0x%06lX (background-contrast adjusted)",

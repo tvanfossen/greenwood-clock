@@ -409,6 +409,17 @@ requirements:
     acceptance_criteria: Clock digits are readable on light and dark backgrounds.
 
   # ---------------------------------------------------------------- PHOTO
+  REQ-BG-004:
+    name: Background schedule profiles
+    subsystem: BG
+    description: >-
+      Up to 4 daily time slots (shared start times) pick, per weekday, one of up to 8
+      background profiles. A profile overrides the background image, text colour, brightness
+      and clock animation; anything it leaves unset inherits the global setting. Night mode is
+      a profile with dark settings. Stored in its own NVS key; editable over the API.
+    acceptance_criteria: >-
+      At each slot start the clock switches to that slot's background and overrides without a
+      reboot; with no schedule set, the clock looks exactly as before.
   REQ-PHOTO-001:
     name: Photo slideshow
     subsystem: PHOTO

@@ -5,6 +5,7 @@
  */
 // components/settings/settings.c
 
+#include "bg_schedule.h"
 #include "settings.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
@@ -219,7 +220,8 @@ static void settings_unlock(void)
 /**
  * @brief Initialise the NVS flash partition, erasing and retrying if it is truncated or from a newer version.
  * v2: creates the recursive settings lock used by settings_update/save/reset.
- * @version 2
+ * v3: loads the background schedule (bg_schedule_init) once NVS is up.
+ * @version 3
  * @req REQ-SET-001
  * @return ESP_OK on success, or the nvs_flash_init error.
  */
@@ -242,7 +244,7 @@ esp_err_t settings_init(void) {
     }
 
     ESP_LOGI(TAG, "NVS initialized successfully");
-    return ESP_OK;
+    return bg_schedule_init();
 }
 
 /**

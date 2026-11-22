@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "http_api.c"
+    SRCS "http_api.c" "http_bg_schedule.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_http_server

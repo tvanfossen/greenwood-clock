@@ -52,11 +52,20 @@ RISCV_GDB = (
 )
 
 #: Host tests: tests/host/test_<name>.c -> the components/display_fsm/src/*.c it links.
+#: Host test name → modules it links. A bare name is a display_fsm source; "component/name"
+#: is components/<component>/<name>.c.
 HOST_TESTS = {
     "snow_physics": ("snow_physics",),
     "leaf_physics": ("leaf_physics",),
     "leaf_field": ("leaf_field", "leaf_physics"),
+    "bg_schedule": ("settings/bg_schedule_model",),
 }
+
+#: Include directories for the host tests.
+HOST_TEST_INCLUDES = (
+    REPO / "components" / "display_fsm" / "include",
+    REPO / "components" / "settings",
+)
 
 #: Log slot → URL path. Slot 0 is the live file and goes through the API so the
 #: device pauses its write handle; older slots are closed and stream directly.
@@ -192,6 +201,64 @@ def show(c, state, host=DEFAULT_HOST):
 @task(help={"host": "Device host or IP"})
 def settings(c, host=DEFAULT_HOST):
     _print_json(host, "/api/settings")
+
+
+#: Image types bg-ingest converts.
+INGEST_SUFFIXES = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
+
+
+## @brief File-name slug: lower case, runs of non-alphanumerics become one underscore.
+## @utility
+## @version 1
+## @return The slug.
+def _slug(name):
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+
+
+## @brief Convert every image in a folder to a 1024x600 PNG (sdcard/backgrounds) and push it.
+## @req REQ-BG-004
+## @version 1
+@task(
+    help={
+        "src": "Folder of source images (default: image_ingest)",
+        "fit": "fill (scale + crop, default) or contain (letterbox)",
+        "host": "Device host or IP",
+    }
+)
+def bg_ingest(c, src="image_ingest", fit="fill", host=DEFAULT_HOST):
+    out = REPO / "sdcard" / "backgrounds"
+    out.mkdir(parents=True, exist_ok=True)
+    for img in sorted(Path(src).iterdir()):
+        if img.suffix.lower() not in INGEST_SUFFIXES:
+            continue
+        dest = out / f"{_slug(img.stem)}.png"
+        convert = REPO / "tools" / "image_convert.py"
+        c.run(f'{sys.executable} {convert} "{img}" -o "{dest}" --fit {fit}')
+        push = REPO / "tools" / "file_push.py"
+        c.run(f'{sys.executable} {push} "{dest}" backgrounds/{dest.name} --host {host}')
+        print(f"{img.name} -> A:/backgrounds/{dest.name}")
+
+
+## @brief Show the background schedule, or replace it from a JSON file.
+## A file may give "every_day": [profile per slot] instead of seven "days" rows.
+## @req REQ-BG-004
+## @version 1
+@task(
+    help={
+        "file": "Schedule JSON to POST (omit to print the current one)",
+        "host": "Device host or IP",
+    }
+)
+def bg_schedule(c, file=None, host=DEFAULT_HOST):
+    if file is None:
+        _print_json(host, "/api/bg_schedule")
+        return
+    payload = json.loads(Path(file).read_text())
+    if "every_day" in payload:
+        payload["days"] = [payload.pop("every_day")] * 7
+    body = _request(host, "/api/bg_schedule", method="POST", payload=payload)
+    if body is not None:
+        print(body.decode(errors="replace"))
 
 
 ## @brief Set the background image (LVGL path, e.g. A:/backgrounds/campfire.png).
@@ -550,22 +617,30 @@ def push_lottie(c, host=DEFAULT_HOST, groups="weather,ui"):
         _push_staging_tree(c, f"lottie/{group.strip()}", "*.json", host)
 
 
+## @brief Source path of a host-test module ("name" in display_fsm, or "component/name").
+## @utility
+## @version 1
+def _host_module_src(module):
+    if "/" in module:
+        return REPO / "components" / f"{module}.c"
+    return REPO / "components" / "display_fsm" / "src" / f"{module}.c"
+
+
 ## @brief Build and run the host-side C unit tests (pure-logic modules, no ESP-IDF).
+## v3: modules may come from other components; include dirs from HOST_TEST_INCLUDES.
 ## @req REQ-TOOL-004
-## @version 2
+## @version 3
 @task
 def test_host(c):
     out = TMP / "host_tests"
     out.mkdir(parents=True, exist_ok=True)
-    inc = REPO / "components" / "display_fsm" / "include"
+    incs = " ".join(f"-I{d}" for d in HOST_TEST_INCLUDES)
     for name, modules in HOST_TESTS.items():
-        srcs = " ".join(
-            str(REPO / "components" / "display_fsm" / "src" / f"{m}.c") for m in modules
-        )
+        srcs = " ".join(str(_host_module_src(m)) for m in modules)
         test = REPO / "tests" / "host" / f"test_{name}.c"
         exe = out / f"test_{name}"
         c.run(
-            f"gcc -std=gnu11 -Wall -Wextra -Werror -O1 -I{inc} {srcs} {test} -lm -o {exe}"
+            f"gcc -std=gnu11 -Wall -Wextra -Werror -O1 {incs} {srcs} {test} -lm -o {exe}"
         )
         c.run(str(exe))
 
