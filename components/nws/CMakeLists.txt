@@ -7,6 +7,7 @@ idf_component_register(
         "src/nws_forecast.c"
         "src/nws_alerts.c"
         "src/nws_radar.c"
+        "src/nws_radar_history.c"
         "src/nws_task.c"
     INCLUDE_DIRS
         "include"

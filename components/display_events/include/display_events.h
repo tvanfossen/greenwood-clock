@@ -56,6 +56,7 @@ typedef enum {
     DISPLAY_EVT_SCHEDULE_CONFIG,     // update display durations/cooldowns
     DISPLAY_EVT_CLOCK_UPDATE,        // time tick → update clock widget
     DISPLAY_EVT_REFRESH_BG,          // reload clock background from settings
+    DISPLAY_EVT_RADAR_LOOP_LOAD,     // decode the next radar-loop frame off-lock
 } display_event_type_t;
 
 // ---------------------------------------------------------------------------

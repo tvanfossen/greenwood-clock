@@ -58,13 +58,17 @@ struct WeatherOverlay : DisplayFsm
 
 /**
  * @brief RadarOverlay state: minimized clock over the basemap and radar image.
- * @version 1
+ * v2: plays the past hour of radar from the SD history (loop_step).
+ * @version 2
  * @req REQ-RADAR-001
  * @return Not applicable: type declaration (clew-guard parses this struct header as a function).
  */
 struct RadarOverlay : DisplayFsm
 {
     static radar_view_t *s_rv;
+
+    /** Off-lock: decode one radar-loop frame, publish it under the lock, re-post if more. */
+    static void loop_step();
 
     void entry() override;
     void exit() override;

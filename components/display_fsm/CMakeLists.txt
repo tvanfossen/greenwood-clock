@@ -17,6 +17,7 @@ idf_component_register(
         "src/clock_animation.cpp"
         "src/alert_banner.c"
         "src/radar_view.c"
+        "src/radar_loop.c"
         "src/image_decode.c"
         "src/ui_contrast.c"
         "src/astro_calc.c"

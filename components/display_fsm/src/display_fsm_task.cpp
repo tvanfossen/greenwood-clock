@@ -198,9 +198,10 @@ static void lottie_loader_init(void)
 
 /**
  * @brief Map a C display_event_t onto the matching TinyFSM event and dispatch it to DisplayFsm.
+ * v2: DISPLAY_EVT_RADAR_LOOP_LOAD is handled before dispatch (no FSM event).
  *
  * @dg_internal
- * @version 1
+ * @version 2
  */
 static void dispatch_event(const display_event_t *evt)
 {
@@ -272,6 +273,7 @@ static void dispatch_event(const display_event_t *evt)
         }
         case DISPLAY_EVT_REFRESH_BG:
         case DISPLAY_EVT_PHOTO_ADVANCE:
+        case DISPLAY_EVT_RADAR_LOOP_LOAD:
             // Handled in process_event before dispatch; nothing to do here.
             break;
     }
@@ -737,10 +739,15 @@ static void start_periodic_timers(void)
  * v2: a forecast update rescans the forecast icons off-lock before dispatch.
  * @dg_internal
  * v3: clock text uses the user's exact colour (legibility via label shadows), no bg sampling.
- * @version 3
+ * v4: radar-loop frames decode off-lock, one per event (RadarOverlay::loop_step).
+ * @version 4
  */
 static void process_event(const display_event_t *evt)
 {
+    if (evt->type == DISPLAY_EVT_RADAR_LOOP_LOAD) {
+        RadarOverlay::loop_step();
+        return;   // not a state event — no FSM dispatch
+    }
     if (evt->type == DISPLAY_EVT_RADAR_READY) {
         size_t rlen = 0;
         const uint8_t *rpng = nws_get_radar_png(&rlen);

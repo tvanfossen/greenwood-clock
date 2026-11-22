@@ -15,6 +15,8 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <time.h>
 #include "esp_err.h"
 #include "display_events.h"
 
@@ -160,6 +162,25 @@ const uint8_t *nws_get_radar_png(size_t *len_out);
  * @return true if radar data exists and indicates precipitation.
  */
 bool nws_radar_has_precipitation(void);
+
+/** Radar history frames kept on the SD card for the radar loop (newest N, max age). */
+#define NWS_RADAR_HISTORY_MAX        6
+#define NWS_RADAR_HISTORY_MAX_AGE_S  (70 * 60)
+
+/**
+ * @brief Write a fetched radar PNG to the SD history (stamped now) and prune old frames.
+ *        NWS task only; skipped before SNTP time or without an SD card.
+ */
+void nws_radar_history_save(const uint8_t *png, size_t len);
+
+/**
+ * @brief List history frame times within the max age, ascending, at most @p max.
+ * @return Number of entries written to @p ts_out.
+ */
+int nws_radar_history_list(time_t *ts_out, int max);
+
+/** @brief Build the SD path of the history frame taken at @p ts. */
+void nws_radar_history_path(time_t ts, char *out, size_t out_sz);
 
 // ============================================================================
 // Task management

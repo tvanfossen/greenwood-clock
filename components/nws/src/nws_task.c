@@ -318,8 +318,11 @@ static void poll_alerts(float lat, float lon, TickType_t *now,
 /**
  * @brief If due (10 min), fetch radar, swap it into the cached PNG buffer and emit
  *        DISPLAY_EVT_RADAR_READY on success, count the attempt/failure and stagger.
- * @version 1
+ * v2: also writes each fetched image to the SD radar history (the radar loop); the fetch
+ *     rate is unchanged.
+ * @version 2
  * @req REQ-RADAR-001
+ * @req REQ-RADAR-003
  * @req REQ-WX-004
  */
 static void poll_radar(float lat, float lon, TickType_t *now,
@@ -335,6 +338,7 @@ static void poll_radar(float lat, float lon, TickType_t *now,
         s_radar_png     = png_buf;
         s_radar_png_len = png_len;
         ESP_LOGI(TAG, "radar cached: %zu bytes", png_len);
+        nws_radar_history_save(png_buf, png_len);
         send_simple_event(DISPLAY_EVT_RADAR_READY);
     } else {
         st->failed++;

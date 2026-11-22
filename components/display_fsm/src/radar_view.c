@@ -416,10 +416,41 @@ void radar_view_predecode(const uint8_t *png_data, size_t len)
 }
 
 /**
+ * @brief Set the chip to "<prefix> h:mm AM/PM (Nm ago)" for frame time @p ts.
+ * @version 1
+ * @dg_internal
+ */
+static void set_time_label(radar_view_t *rv, const char *prefix, time_t ts)
+{
+    time_t now;
+    time(&now);
+    struct tm ti;
+    localtime_r(&ts, &ti);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%s %d:%02d %s (%ldm ago)", prefix,
+             ti.tm_hour % 12 == 0 ? 12 : ti.tm_hour % 12, ti.tm_min,
+             ti.tm_hour >= 12 ? "PM" : "AM", (long)(now - ts) / 60);
+    lv_label_set_text(rv->lbl_updated, buf);
+}
+
+/**
+ * @brief Under the LVGL lock: show one radar-loop frame and its time on the chip.
+ * @version 1
+ * @req REQ-RADAR-003
+ */
+void radar_view_show_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, time_t ts)
+{
+    if (!rv || !dsc) return;
+    lv_image_set_src(rv->img_radar, dsc);
+    set_time_label(rv, "Radar", ts);
+}
+
+/**
  * @brief Under the LVGL lock, promote the pending overlay to active (freeing the
  *        old one), then show it with a "Last updated h:mm AM/PM (Nm ago)" label,
  *        or discard it and show "Radar data expired" if older than 30 min.
- * @version 1
+ * v2: label via set_time_label (shared with the radar loop).
+ * @version 2
  * @req REQ-RADAR-001
  */
 void radar_view_apply_radar(radar_view_t *rv)
@@ -459,16 +490,7 @@ void radar_view_apply_radar(radar_view_t *rv)
 
     lv_image_set_src(rv->img_radar, s_active_radar_dsc);
 
-    // Update timestamp label with age
-    struct tm ti;
-    localtime_r(&s_active_radar_ts, &ti);
-    char buf[48];
-    snprintf(buf, sizeof(buf), "Last updated: %d:%02d %s (%ldm ago)",
-             ti.tm_hour % 12 == 0 ? 12 : ti.tm_hour % 12,
-             ti.tm_min,
-             ti.tm_hour >= 12 ? "PM" : "AM",
-             age / 60);
-    lv_label_set_text(rv->lbl_updated, buf);
+    set_time_label(rv, "Last updated:", s_active_radar_ts);
 
     ESP_LOGI(TAG, "Radar applied: %ux%u (age=%ld s)",
              s_active_radar_dsc->header.w, s_active_radar_dsc->header.h, age);

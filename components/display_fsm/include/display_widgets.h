@@ -203,6 +203,8 @@ const lv_image_dsc_t *radar_view_map_dsc(void);
 // apply_radar runs with LVGL lock (instant pointer swap).
 void radar_view_predecode(const uint8_t *png_data, size_t len);
 void radar_view_apply_radar(radar_view_t *rv);
+// Show one radar-loop frame (taken at ts) on the overlay; caller holds the LVGL lock.
+void radar_view_show_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, time_t ts);
 
 lv_obj_t *radar_view_container(const radar_view_t *rv);
 

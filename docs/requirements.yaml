@@ -291,6 +291,16 @@ requirements:
     subsystem: RADAR
     description: The scheduler shows radar when precipitation is detected (image-size heuristic).
     acceptance_criteria: No radar on clear days.
+  REQ-RADAR-003:
+    name: Radar loop of the past hour
+    subsystem: RADAR
+    description: >-
+      Each fetched radar image is also kept on the SD card (newest 6, at most 70 min old), and
+      the radar screen plays them oldest to newest in a loop with each frame's time. No extra
+      radar downloads are made for the loop.
+    acceptance_criteria: >-
+      After an hour of uptime, the radar screen animates the last hour of precipitation with a
+      time label per frame, and still does after a reboot; the radar request rate is unchanged.
 
   # ---------------------------------------------------------------- ALERT
   REQ-ALERT-001:
