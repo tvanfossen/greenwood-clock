@@ -9,6 +9,7 @@ idf_component_register(
         "src/weather_widgets.c"
         "src/snow_physics.c"
         "src/particle_view.c"
+        "src/refresh_probe.c"
         "src/snowfall_view.c"
         "src/leaf_physics.c"
         "src/leaf_field.c"

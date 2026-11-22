@@ -10,6 +10,7 @@
 
 #include "display_widgets.h"
 #include "ui_contrast.h"
+#include "refresh_probe.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include <stdio.h>
@@ -421,6 +422,11 @@ static lv_color_t s_mc0, s_mc1;        // source/target text colour (recolours s
 // is no longer the cache.
 static lv_draw_buf_t *s_snap_cache;
 static char           s_snap_text[8];
+static lv_area_t      s_snap_time_rel;   // time label's area inside the cached snapshot
+// Morph measurement: refresh rate/gaps during the morph and the handoff geometry error.
+static refresh_probe_t s_morph_probe;
+static bool            s_morph_probe_attached;
+static int64_t         s_morph_t0_us;
 
 /**
  * @brief Linearly interpolate between two bytes at @p prog in 0..256.
@@ -552,6 +558,35 @@ static void fade_done_cb(lv_anim_t *a)
     kill_fade();
 }
 
+/**
+ * @brief Log one finished morph: refresh count, rate, longest refresh and gap, and how far the
+ *        snapshot's final time rect lands from the real label it hands off to (px; 0 = seamless).
+ * @version 1
+ * @req REQ-DISP-004
+ */
+static void morph_report(clock_widget_t *w, bool natural)
+{
+    const refresh_probe_t *p = &s_morph_probe;
+    int64_t dur = esp_timer_get_time() - s_morph_t0_us;
+    uint32_t refrs = p->refrs ? p->refrs : 1;
+    lv_obj_update_layout(w->container);
+    lv_area_t real;
+    lv_obj_get_coords(w->lbl_time, &real);
+    int32_t sc = s_msc1;
+    int32_t px1 = s_mx1 + s_snap_time_rel.x1 * sc / 256, py1 = s_my1 + s_snap_time_rel.y1 * sc / 256;
+    int32_t px2 = s_mx1 + (s_snap_time_rel.x2 + 1) * sc / 256 - 1;
+    int32_t py2 = s_my1 + (s_snap_time_rel.y2 + 1) * sc / 256 - 1;
+    ESP_LOGI(TAG, "[MORPH] -> %d %s in %lld ms: %lu refreshes (%.1f Hz), render avg %lld us, "
+             "refresh avg %lld us max %lld us, max gap %lld us; handoff snapshot "
+             "(%ld,%ld)-(%ld,%ld) real (%ld,%ld)-(%ld,%ld)",
+             (int)s_morph_target, natural ? "done" : "interrupted", (long long)(dur / 1000),
+             (unsigned long)p->refrs, dur > 0 ? (double)p->refrs * 1e6 / (double)dur : 0.0,
+             p->render_us / refrs, p->refr_us / refrs, p->refr_max_us, p->gap_max_us,
+             (long)px1, (long)py1, (long)px2, (long)py2,
+             (long)real.x1, (long)real.y1, (long)real.x2, (long)real.y2);
+    refresh_probe_reset(&s_morph_probe, false);
+}
+
 // Restore the real clock at the target layout, then dispose of the morph
 // snapshot image — by dissolving it out (crossfade=true, natural completion) or
 // instantly (crossfade=false, an interrupting morph settling this one). Idempotent.
@@ -559,7 +594,8 @@ static void fade_done_cb(lv_anim_t *a)
 /**
  * @brief Restore the real clock at the morph's target layout and colour, then dissolve the snapshot out (@p crossfade) or delete it instantly; idempotent.
  * v2: re-syncs the label shadows at the target layout.
- * @version 2
+ * v3: logs the morph's frame rate and handoff error (morph_report).
+ * @version 3
  * @req REQ-DISP-004
  */
 static void finalize_morph(bool crossfade)
@@ -577,6 +613,7 @@ static void finalize_morph(bool crossfade)
     snap_to(w, s_morph_target);
     apply_layout_for_mode(w, s_morph_target);
     apply_effective_color(w);
+    morph_report(w, crossfade);
 
     if (crossfade && s_morph_img && s_morph_snap) {
         // Fade AM/PM + date back in at the target layout as the time snapshot
@@ -683,7 +720,8 @@ static void snap_cache_release(void)
  * @brief Return the white FULL-layout time snapshot for the current time text: the cached one
  *        when the text is unchanged, else render (and cache) a new one. Leaves the labels in
  *        FULL layout, white, with AM/PM, date and shadows hidden on a render.
- * @version 1
+ * v2: records where the time label sits inside the snapshot (handoff measurement).
+ * @version 2
  * @req REQ-DISP-004
  * @return Snapshot buffer (owned by the cache), or NULL if rendering failed (OOM).
  */
@@ -708,6 +746,10 @@ static lv_draw_buf_t *morph_snapshot_get(clock_widget_t *w)
     shadows_hide(w);   // the snapshot is recoloured wholesale: no shadows in it
     lv_obj_update_layout(w->container);
     lv_draw_buf_t *snap = lv_snapshot_take(w->container, LV_COLOR_FORMAT_ARGB8888);
+    lv_area_t tc, cc;
+    lv_obj_get_coords(w->lbl_time, &tc);
+    lv_obj_get_coords(w->container, &cc);
+    lv_area_set(&s_snap_time_rel, tc.x1 - cc.x1, tc.y1 - cc.y1, tc.x2 - cc.x1, tc.y2 - cc.y1);
     ESP_LOGI(TAG, "morph snapshot rendered for '%s' in %lld us (cache miss)", text,
              (long long)(esp_timer_get_time() - t0));
     if (!snap) return NULL;
@@ -721,7 +763,8 @@ static lv_draw_buf_t *morph_snapshot_get(clock_widget_t *w)
  * @brief Switch clock mode; animates a 500 ms snapshot morph (time scaled and recoloured, AM/PM and date crossfaded), or snaps instantly if the snapshot cannot be taken.
  * v2: keeps the drop shadows out of the morph snapshot and in sync around it.
  * v3: reuses the cached time snapshot (morph_snapshot_get) instead of re-rendering it every morph.
- * @version 3
+ * v4: arms the morph refresh probe (frame rate measured per morph, see morph_report).
+ * @version 4
  * @req REQ-CLOCK-002
  * @req REQ-DISP-004
  */
@@ -809,6 +852,12 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
     lv_anim_set_exec_cb(&a, morph_exec_cb);
     lv_anim_set_completed_cb(&a, morph_done_cb);
     lv_anim_start(&a);
+    if (!s_morph_probe_attached) {
+        refresh_probe_attach(&s_morph_probe);
+        s_morph_probe_attached = true;
+    }
+    refresh_probe_reset(&s_morph_probe, true);
+    s_morph_t0_us = esp_timer_get_time();
 
     static const char *mode_names[] = {"FULL", "MINIMIZED", "TOPBAR"};
     ESP_LOGI(TAG, "ClockWidget mode → %s (snapshot morph)", mode_names[mode]);
