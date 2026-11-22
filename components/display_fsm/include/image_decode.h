@@ -55,13 +55,6 @@ lv_image_dsc_t *image_decode_png_file(const char *path);
 lv_image_dsc_t *image_decode_png_file_rgb565(const char *path);
 
 /**
- * @brief Decode an opaque PNG file into a persistent SPIRAM XRGB8888 descriptor (alpha
- *        ignored), which the PPA blits in hardware.
- * @return New descriptor (free with image_decode_free), or NULL on failure.
- */
-lv_image_dsc_t *image_decode_png_file_xrgb8888(const char *path);
-
-/**
  * @brief Load a raw RGB565 cache file ([u16 w][u16 h][u32 stride][data]) into a
  * persistent SPIRAM descriptor. Fast (fread, no decode). Returns NULL if the
  * file is missing/invalid — caller should then decode the PNG and save a cache.
