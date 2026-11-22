@@ -468,6 +468,19 @@ static lv_obj_t *overlay_back(const radar_view_t *rv)
 }
 
 /**
+ * @brief Show @p dsc on overlay @p img, scaled to fill the screen width (half-resolution
+ *        loop frames draw at 2x, an exact PPA scale; full-resolution images at 1x).
+ * @version 1
+ * @dg_internal
+ */
+static void overlay_set(lv_obj_t *img, const lv_image_dsc_t *dsc)
+{
+    lv_image_set_src(img, dsc);
+    lv_image_set_pivot(img, 0, 0);
+    lv_image_set_scale(img, (dsc && dsc->header.w) ? 256 * SCREEN_W / dsc->header.w : 256);
+}
+
+/**
  * @brief Detach @p dsc from whichever overlay still shows it (before it is freed).
  * @version 1
  * @dg_internal
@@ -506,7 +519,8 @@ static void crossfade_done_cb(lv_anim_t *a)
  *        show its time on the chip, and slide the progress bar to @p progress (0..1000 of
  *        the loop's time span) over the same time. A crossfade still running is finished
  *        first, so the frames never mix three-way.
- * @version 1
+ * v2: scales the frame to the screen width (loop frames are half resolution).
+ * @version 2
  * @req REQ-RADAR-003
  */
 void radar_view_crossfade_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, time_t ts,
@@ -519,8 +533,7 @@ void radar_view_crossfade_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, tim
         lv_anim_delete(rv, crossfade_exec_cb);   // no completed_cb on delete: swap here
         rv->img_front = overlay_back(rv);
     }
-    lv_obj_t *back = overlay_back(rv);
-    lv_image_set_src(back, dsc);
+    overlay_set(overlay_back(rv), dsc);
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, rv);
@@ -544,7 +557,8 @@ void radar_view_crossfade_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, tim
  *        or discard it and show "Radar data expired" if older than 30 min.
  * v2: label via set_time_label (shared with the radar loop).
  * v3: sets the front overlay (the loop crossfades between two).
- * @version 3
+ * v4: via overlay_set (resets the scale a half-resolution loop frame may have left).
+ * @version 4
  * @req REQ-RADAR-001
  */
 void radar_view_apply_radar(radar_view_t *rv)
@@ -580,7 +594,7 @@ void radar_view_apply_radar(radar_view_t *rv)
         return;
     }
 
-    lv_image_set_src(rv->img_front, s_active_radar_dsc);
+    overlay_set(rv->img_front, s_active_radar_dsc);
 
     set_time_label(rv, "Last updated:", s_active_radar_ts);
 

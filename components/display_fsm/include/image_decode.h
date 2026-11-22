@@ -71,6 +71,12 @@ bool image_decode_save_raw_rgb565(const char *path, const lv_image_dsc_t *dsc);
  */
 void image_decode_free(lv_image_dsc_t *dsc);
 
+/**
+ * @brief Half-resolution copy of an ARGB8888 descriptor (2x2 box filter).
+ * @return New descriptor (free with image_decode_free), or NULL on bad input or OOM.
+ */
+lv_image_dsc_t *image_decode_halve_argb(const lv_image_dsc_t *src);
+
 #ifdef __cplusplus
 }
 #endif

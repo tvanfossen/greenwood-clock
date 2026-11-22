@@ -378,6 +378,47 @@ bool image_decode_save_raw_rgb565(const char *path, const lv_image_dsc_t *dsc)
 }
 
 /**
+ * @brief Average one 2x2 block of ARGB8888 pixels at @p p (row pitch @p stride bytes) into @p out.
+ * @version 1
+ * @dg_internal
+ */
+static void avg_2x2(const uint8_t *p, uint32_t stride, uint8_t *out)
+{
+    for (int c = 0; c < 4; c++) {
+        out[c] = (uint8_t)((p[c] + p[4 + c] + p[stride + c] + p[stride + 4 + c] + 2) / 4);
+    }
+}
+
+/**
+ * @brief Make a half-resolution copy of an ARGB8888 descriptor (2x2 box filter), e.g. to
+ *        hold several full-screen overlays at a quarter of the memory.
+ * @version 1
+ * @req REQ-RADAR-003
+ * @return New descriptor (free with image_decode_free), or NULL on bad input or OOM.
+ */
+lv_image_dsc_t *image_decode_halve_argb(const lv_image_dsc_t *src)
+{
+    if (!src || src->header.cf != LV_COLOR_FORMAT_ARGB8888) return NULL;
+    int w = src->header.w / 2, h = src->header.h / 2;
+    uint32_t stride = lv_draw_buf_width_to_stride((uint32_t)w, LV_COLOR_FORMAT_ARGB8888);
+    uint32_t size = stride * (uint32_t)h;
+    uint8_t *pixels = (uint8_t *)heap_caps_aligned_alloc(64, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!pixels) {
+        ESP_LOGE(TAG, "halve: SPIRAM alloc failed (%lu B)", (unsigned long)size);
+        return NULL;
+    }
+    uint32_t sstride = src->header.stride;
+    for (int y = 0; y < h; y++) {
+        const uint8_t *row = src->data + (size_t)(2 * y) * sstride;
+        for (int x = 0; x < w; x++) avg_2x2(row + 8 * x, sstride, pixels + y * stride + 4 * x);
+    }
+    esp_cache_msync(pixels, size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+    lv_image_dsc_t *dsc = make_dsc(pixels, w, h, stride, size, LV_COLOR_FORMAT_ARGB8888);
+    if (!dsc) heap_caps_free(pixels);
+    return dsc;
+}
+
+/**
  * @brief Free a descriptor and its pixel buffer (no-op if NULL).
  * @version 1
  * @req REQ-BG-001
