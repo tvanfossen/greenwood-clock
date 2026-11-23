@@ -135,22 +135,17 @@ static void loop_timer_cb(lv_timer_t *t)
 }
 
 /**
- * @brief Under the lock: publish the decoded frames (and their positions, for the time view)
- *        and start playback on @p rv once at least two frames are ready.
+ * @brief Under the lock: publish the decoded frames and start playback on @p rv once at
+ *        least two frames are ready.
  * v2: passes the frames' positions to the view.
- * @version 2
+ * v3: no longer (the dial that drew them is gone).
+ * @version 3
  * @req REQ-RADAR-003
  */
 void radar_loop_attach(radar_view_t *rv)
 {
     if (!s_armed || !rv) return;
     s_rv = rv;
-    if (s_decoded != s_ready && s_decoded >= 2) {
-        int32_t pos[NWS_RADAR_HISTORY_MAX];
-        s_ready = s_decoded;
-        for (int i = 0; i < s_ready; i++) pos[i] = frame_progress(i);
-        radar_view_loop_frames(rv, pos, s_ready);
-    }
     s_ready = s_decoded;
     if (s_ready >= 2 && !s_timer) {
         s_idx = s_ready - 1;   /* start on the newest (what the screen already shows) */

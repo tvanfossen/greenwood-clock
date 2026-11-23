@@ -20,7 +20,6 @@ idf_component_register(
         "src/radar_view.c"
         "src/radar_loop.c"
         "src/radar_time_view.c"
-        "src/radar_time_dial.c"
         "src/image_decode.c"
         "src/ui_contrast.c"
         "src/astro_calc.c"

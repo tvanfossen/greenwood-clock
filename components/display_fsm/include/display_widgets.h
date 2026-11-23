@@ -221,8 +221,6 @@ void radar_view_apply_radar(radar_view_t *rv);
 // frame; caller holds the LVGL lock.
 void radar_view_crossfade_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, time_t ts,
                                 uint32_t fade_ms, int32_t progress, bool newest);
-// The loop's frame positions (0..1000 of its time span, oldest first), for the time view.
-void radar_view_loop_frames(radar_view_t *rv, const int32_t *pos, int count);
 
 lv_obj_t *radar_view_container(const radar_view_t *rv);
 

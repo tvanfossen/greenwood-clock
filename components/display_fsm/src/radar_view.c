@@ -68,7 +68,7 @@ struct radar_view_t {
     lv_obj_t       *img_front;       // overlay currently shown (img_radar or img_radar_b)
     lv_obj_t       *bar_progress;    // radar-loop position in its time span (hidden until it plays)
     lv_obj_t       *home_marker;     // crosshair/dot at home lat/lon
-    radar_time_view_t *time_view;    // which moment is shown (chip or dial, RADAR_TIME_STYLE)
+    radar_time_view_t *time_view;    // which moment is shown (chip or clock, RADAR_TIME_STYLE)
     float           center_lat;
     float           center_lon;
 };
@@ -498,7 +498,8 @@ static void crossfade_done_cb(lv_anim_t *a)
  *        first, so the frames never mix three-way.
  * v2: scales the frame to the screen width (loop frames are half resolution).
  * v3: the time goes to the time view (@p newest: the most recent frame).
- * @version 3
+ * v4: the view no longer takes the position (only the bar shows it).
+ * @version 4
  * @req REQ-RADAR-003
  */
 void radar_view_crossfade_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, time_t ts,
@@ -523,7 +524,7 @@ void radar_view_crossfade_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, tim
     lv_anim_set_completed_cb(&a, crossfade_done_cb);
     lv_anim_start(&a);
 
-    radar_time_view_frame(rv->time_view, ts, progress, fade_ms, newest);
+    radar_time_view_frame(rv->time_view, ts, newest);
     lv_obj_remove_flag(rv->bar_progress, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_style_anim_duration(rv->bar_progress, fade_ms, LV_PART_MAIN);
     lv_bar_set_value(rv->bar_progress, LV_CLAMP(0, progress, PROGRESS_MAX), LV_ANIM_ON);
@@ -579,15 +580,4 @@ void radar_view_apply_radar(radar_view_t *rv)
 
     ESP_LOGI(TAG, "Radar applied: %ux%u (age=%ld s)",
              s_active_radar_dsc->header.w, s_active_radar_dsc->header.h, age);
-}
-
-/**
- * @brief Under the LVGL lock: tell the time view where the loop's frames sit (0..1000 of
- *        its time span, oldest first).
- * @version 1
- * @req REQ-RADAR-003
- */
-void radar_view_loop_frames(radar_view_t *rv, const int32_t *pos, int count)
-{
-    if (rv) radar_time_view_frames(rv->time_view, pos, count);
 }
