@@ -38,14 +38,15 @@ static void format_when(time_t ts, struct tm *ti, char *when, size_t when_sz, ch
 }
 
 /**
- * @brief Show the live time on the clock again if this view held it.
- * @version 1
+ * @brief Show the live time on the clock again (rolling after @p delay_ms) if this view held it.
+ * v2: roll delay.
+ * @version 2
  * @dg_internal
  */
-static void release_clock(radar_time_view_t *tv)
+static void release_clock(radar_time_view_t *tv, uint32_t delay_ms)
 {
     if (!tv->holding) return;
-    clock_widget_release(display_fsm_get_clock());
+    clock_widget_release(display_fsm_get_clock(), delay_ms);
     tv->holding = false;
 }
 
@@ -91,13 +92,14 @@ radar_time_view_t *radar_time_view_create(lv_obj_t *parent, radar_time_style_t s
 /**
  * @brief Delete the indicator (and release the clock if it held a frame time). NULL-safe.
  * v2: deletes the chip (no look root).
- * @version 2
+ * v3: releases without a roll delay.
+ * @version 3
  * @req REQ-RADAR-003
  */
 void radar_time_view_destroy(radar_time_view_t *tv)
 {
     if (!tv) return;
-    release_clock(tv);
+    release_clock(tv, 0);
     lv_obj_delete(tv->chip);
     lv_free(tv);
 }
@@ -105,20 +107,22 @@ void radar_time_view_destroy(radar_time_view_t *tv)
 /**
  * @brief Show a status line instead of a time ("Radar loading...", "Radar data expired").
  * v2: on the chip directly (no look ops).
- * @version 2
+ * v3: releases without a roll delay.
+ * @version 3
  * @req REQ-RADAR-003
  */
 void radar_time_view_message(radar_time_view_t *tv, const char *text)
 {
     if (!tv) return;
-    release_clock(tv);
+    release_clock(tv, 0);
     chip_text(tv, text);
 }
 
 /**
  * @brief Show a single radar image (no loop) taken at @p ts.
  * v2: on the chip directly (no look ops).
- * @version 2
+ * v3: releases without a roll delay.
+ * @version 3
  * @req REQ-RADAR-003
  */
 void radar_time_view_latest(radar_time_view_t *tv, time_t ts)
@@ -127,19 +131,20 @@ void radar_time_view_latest(radar_time_view_t *tv, time_t ts)
     struct tm ti;
     char when[16], age[24], text[64];
     format_when(ts, &ti, when, sizeof(when), age, sizeof(age));
-    release_clock(tv);
+    release_clock(tv, 0);
     snprintf(text, sizeof(text), "Last updated: %s (%s)", when, age);
     chip_text(tv, text);
 }
 
 /**
- * @brief Show the loop frame taken at @p ts. The clock look holds the clock at that time
- *        (the live time on the @p newest frame) and hides the chip; the chip look writes it.
- * v2: no position (the progress bar shows it); the clock look hides the chip.
+ * @brief Show the loop frame taken at @p ts. The clock look rolls the clock to that time
+ *        (the live time on the @p newest frame) after @p delay_ms and hides the chip; the chip
+ *        look writes it.
+ * v2: no position (the progress bar shows it); the clock look hides the chip; roll delay.
  * @version 2
  * @req REQ-RADAR-003
  */
-void radar_time_view_frame(radar_time_view_t *tv, time_t ts, bool newest)
+void radar_time_view_frame(radar_time_view_t *tv, time_t ts, bool newest, uint32_t delay_ms)
 {
     if (!tv) return;
     struct tm ti;
@@ -152,9 +157,9 @@ void radar_time_view_frame(radar_time_view_t *tv, time_t ts, bool newest)
     }
     lv_obj_add_flag(tv->chip, LV_OBJ_FLAG_HIDDEN);
     if (newest) {
-        release_clock(tv);
+        release_clock(tv, delay_ms);
     } else {
-        clock_widget_hold(display_fsm_get_clock(), &ti);
+        clock_widget_hold(display_fsm_get_clock(), &ti, delay_ms);
         tv->holding = true;
     }
 }

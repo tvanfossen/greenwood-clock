@@ -38,6 +38,7 @@ static void pulse_opa_cb(void *obj, int32_t v)
 #define RADAR_BBOX_DEG 2.0f  // +/- degrees from center (matches nws_radar.c)
 #define HOME_MARKER_SIZE 10
 #define RADAR_OPA        LV_OPA_40   // overlay opacity over the basemap
+#define ROLL_OVERLAP_MS  100         // clock time roll starts this long before the crossfade ends
 
 // Cached map background — decoded once, reused across radar view lifecycle.
 static uint8_t        *s_map_pixels;  // ARGB8888 pixel data in SPIRAM
@@ -487,7 +488,8 @@ static void crossfade_done_cb(lv_anim_t *a)
  * v2: scales the frame to the screen width (loop frames are half resolution).
  * v3: the time goes to the time view (@p newest: the most recent frame).
  * v4: the view no longer takes the position; no progress bar.
- * @version 4
+ * v5: the clock rolls near the crossfade's end.
+ * @version 5
  * @req REQ-RADAR-003
  */
 void radar_view_crossfade_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, time_t ts,
@@ -512,7 +514,10 @@ void radar_view_crossfade_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, tim
     lv_anim_set_completed_cb(&a, crossfade_done_cb);
     lv_anim_start(&a);
 
-    radar_time_view_frame(rv->time_view, ts, newest);
+    // The clock's time roll waits for most of the crossfade: drawing both at once runs at
+    // ~7 fps, the roll alone at the full rate.
+    uint32_t roll_delay = fade_ms > ROLL_OVERLAP_MS ? fade_ms - ROLL_OVERLAP_MS : 0;
+    radar_time_view_frame(rv->time_view, ts, newest, roll_delay);
 }
 
 /**

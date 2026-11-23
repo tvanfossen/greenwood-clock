@@ -8,7 +8,7 @@
 #include "text_roll.h"
 
 #define HALF     256
-#define ROLL_DY  28      /* px the text travels on each side of rest */
+#define ROLL_DY  40      /* px the text travels on each side of rest */
 
 static struct {
     lv_obj_t         *objs[TEXT_ROLL_MAX_OBJS];
@@ -89,12 +89,14 @@ void text_roll_finish(void)
 }
 
 /**
- * @brief Roll @p objs (up to TEXT_ROLL_MAX_OBJS) over @p ms: forward (@p back false) slides
- *        the old text up and the new in from below. A roll still running is finished first.
- * @version 1
+ * @brief Roll @p objs (up to TEXT_ROLL_MAX_OBJS) over @p ms, starting after @p delay_ms:
+ *        forward (@p back false) slides the old text up and the new in from below. A roll
+ *        still running is finished first.
+ * v2: start delay; travel 28 -> 40 px.
+ * @version 2
  * @req REQ-RADAR-003
  */
-void text_roll_start(lv_obj_t *const objs[], int n, bool back, uint32_t ms,
+void text_roll_start(lv_obj_t *const objs[], int n, bool back, uint32_t delay_ms, uint32_t ms,
                      text_roll_swap_cb swap, void *user)
 {
     text_roll_finish();
@@ -110,6 +112,8 @@ void text_roll_start(lv_obj_t *const objs[], int n, bool back, uint32_t ms,
     lv_anim_init(&a);
     lv_anim_set_var(&a, &s_roll);
     lv_anim_set_values(&a, 0, 2 * HALF);
+    lv_anim_set_delay(&a, delay_ms);
+    lv_anim_set_early_apply(&a, false);   // old text stays at rest through the delay
     lv_anim_set_duration(&a, ms);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
     lv_anim_set_exec_cb(&a, roll_exec_cb);

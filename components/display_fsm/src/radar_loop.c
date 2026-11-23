@@ -15,9 +15,9 @@
 
 static const char *TAG = "radar_loop";
 
-#define LOOP_FRAME_MS      600          /* time per frame */
+#define LOOP_FRAME_MS      900          /* time per frame: the crossfade, then the clock's roll */
 #define LOOP_FADE_MS       450          /* crossfade into each frame (within LOOP_FRAME_MS) */
-#define LOOP_HOLD_TICKS    4            /* extra ticks on the newest frame (2 s) */
+#define LOOP_HOLD_TICKS    2            /* extra ticks on the newest frame (1.8 s) */
 #define LOOP_MIN_FREE_B    (8u << 20)   /* SPIRAM needed to start a decode (full frame + stb temp) */
 
 typedef struct {

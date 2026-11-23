@@ -61,11 +61,12 @@ void radar_time_view_message(radar_time_view_t *tv, const char *text);
 void radar_time_view_latest(radar_time_view_t *tv, time_t ts);
 
 /**
- * @brief Show the loop frame taken at @p ts. @p newest is the most recent frame.
+ * @brief Show the loop frame taken at @p ts, the clock look rolling to it after @p delay_ms.
+ *        @p newest is the most recent frame.
  * @version 2
  * @req REQ-RADAR-003
  */
-void radar_time_view_frame(radar_time_view_t *tv, time_t ts, bool newest);
+void radar_time_view_frame(radar_time_view_t *tv, time_t ts, bool newest, uint32_t delay_ms);
 
 #ifdef __cplusplus
 }

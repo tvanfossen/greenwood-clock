@@ -56,16 +56,18 @@ void clock_widget_update(clock_widget_t *w, const struct tm *ti);
 
 /**
  * @brief Show @p t until clock_widget_release; live updates are kept but not shown meanwhile
- *        (the radar loop shows each frame's time on the clock).
+ *        (the radar loop shows each frame's time on the clock). The time rolls to @p t,
+ *        starting after @p delay_ms.
  * Caller must hold LVGL lock.
  */
-void clock_widget_hold(clock_widget_t *w, const struct tm *t);
+void clock_widget_hold(clock_widget_t *w, const struct tm *t, uint32_t delay_ms);
 
 /**
- * @brief End a hold: show the latest live time again. No-op when nothing is held.
+ * @brief End a hold: roll back to the latest live time after @p delay_ms. No-op when nothing
+ *        is held.
  * Caller must hold LVGL lock.
  */
-void clock_widget_release(clock_widget_t *w);
+void clock_widget_release(clock_widget_t *w, uint32_t delay_ms);
 
 /**
  * @brief Switch between full-screen and minimized mode.

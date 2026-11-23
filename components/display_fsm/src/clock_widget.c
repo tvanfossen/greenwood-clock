@@ -65,7 +65,7 @@ static void (*s_settled_cb)(void);
 static clock_widget_t *s_morph_w;      // widget being morphed (NULL when no morph runs)
 static clock_mode_t    s_morph_from;   // layout on screen during the morph (the source)
 
-#define ROLL_MS     420         // held-time change (radar loop: within its 450 ms crossfade)
+#define ROLL_MS     500         // held-time change (radar loop: mostly after its crossfade)
 #define SHADOW_OPA  LV_OPA_60   // shadow text opacity (on top of the label's own opa)
 
 /**
@@ -449,13 +449,14 @@ static void roll_swap_cb(void *user)
 }
 
 /**
- * @brief Change the shown time to the held (or live) one with a roll: up when it is later,
- *        down when earlier (the radar loop wrapping to its oldest frame). Instant mid-morph
- *        (the morph owns the labels) or when the minute does not change.
+ * @brief Change the shown time to the held (or live) one with a roll starting after
+ *        @p delay_ms: up when it is later, down when earlier (the radar loop wrapping to its
+ *        oldest frame). Instant mid-morph (the morph owns the labels) or when the minute does
+ *        not change.
  * @version 1
  * @dg_internal
  */
-static void roll_to(clock_widget_t *w)
+static void roll_to(clock_widget_t *w, uint32_t delay_ms)
 {
     time_t to = minute_key(w->held ? &w->hold_t : &w->live);
     if (s_morph_w || to == w->shown) {
@@ -464,34 +465,34 @@ static void roll_to(clock_widget_t *w)
         return;
     }
     lv_obj_t *const objs[] = { w->lbl_time, w->sh_time, w->lbl_ampm, w->sh_ampm };
-    text_roll_start(objs, 4, to < w->shown, ROLL_MS, roll_swap_cb, w);
+    text_roll_start(objs, 4, to < w->shown, delay_ms, ROLL_MS, roll_swap_cb, w);
 }
 
 /**
  * @brief Show @p t until clock_widget_release; live updates are kept but not shown meanwhile.
- * v2: rolls the time to @p t (see roll_to).
+ * v2: rolls the time to @p t (see roll_to), starting after @p delay_ms.
  * @version 2
  * @req REQ-RADAR-003
  */
-void clock_widget_hold(clock_widget_t *w, const struct tm *t)
+void clock_widget_hold(clock_widget_t *w, const struct tm *t, uint32_t delay_ms)
 {
     if (!w || !t) return;
     w->held = true;
     w->hold_t = *t;
-    roll_to(w);
+    roll_to(w, delay_ms);
 }
 
 /**
  * @brief End a hold: show the latest live time again.
- * v2: rolls the time back to the live one (see roll_to).
+ * v2: rolls the time back to the live one (see roll_to), starting after @p delay_ms.
  * @version 2
  * @req REQ-RADAR-003
  */
-void clock_widget_release(clock_widget_t *w)
+void clock_widget_release(clock_widget_t *w, uint32_t delay_ms)
 {
     if (!w || !w->held) return;
     w->held = false;
-    if (w->live_valid) roll_to(w);
+    if (w->live_valid) roll_to(w, delay_ms);
 }
 
 /**
