@@ -20,7 +20,8 @@ struct ClockFull : DisplayFsm
 {
     /**
      * @brief Enter the home clock state.
-     * @version 1
+     * v2: (declaration block) ClockFull no longer overrides EvForceState; the base handles it.
+     * @version 2
      * @req REQ-CLOCK-001
      */
     void entry() override;
@@ -31,7 +32,6 @@ struct ClockFull : DisplayFsm
     void react(EvAstroTrigger const &) override;
     void react(EvPhotoTrigger const &) override;
     void react(EvAmbientTrigger const &) override;
-    void react(EvForceState const &) override;
 };
 
 // ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@
 #include "display_states.h"
 #include "display_widgets.h"
 #include "display_scheduler.h"
+#include "frame_capture.h"
 #include "nws.h"
 #include "esp_log.h"
 
@@ -168,11 +169,26 @@ void DisplayFsm::react(EvPhotoTrigger const &)    { }
  */
 void DisplayFsm::react(EvAmbientTrigger const &)  { }
 /**
- * @brief Default EvForceState handler: ignored unless a concrete state overrides it.
- * @version 1
+ * @brief Forced state change (API): show the requested state now, bypassing its cooldown
+ *        (force_show), or return to the clock. States that are already the target
+ *        override this to stay put.
+ * v2: implemented here for every state (was the clock's alone; the other states deferred to
+ *     this no-op, so a forced change worked only from the clock).
+ * @version 2
  * @req REQ-DISP-001
+ * @req REQ-API-003
  */
-void DisplayFsm::react(EvForceState const &)      { }
+void DisplayFsm::react(EvForceState const &e)
+{
+    if (e.state == s_state_id) return;   // already showing it
+    if (e.state == DISPLAY_STATE_SETTINGS) {
+        transit<Settings>();
+        return;
+    }
+    if (e.state == DISPLAY_STATE_CLOCK) display_scheduler_get()->return_to_clock();
+    else display_scheduler_get()->force_show(e.state);
+    transit_to(e.state);
+}
 /**
  * @brief Default EvScheduleConfig handler: ignored unless a concrete state overrides it.
  * @version 1
@@ -200,7 +216,8 @@ static int carousel_index_of(display_state_id_t id)
 
 /**
  * @brief Move @p offset steps through the carousel (wrapping), updating the scheduler's return timer; from a non-carousel state go to the clock.
- * @version 1
+ * v2: the state switch moved to transit_to (shared with the forced change).
+ * @version 2
  * @req REQ-DISP-003
  * @req REQ-DISP-002
  */
@@ -232,7 +249,17 @@ void DisplayFsm::carousel_navigate(int offset)
         display_scheduler_get()->force_show(target);
     }
 
-    switch (target) {
+    transit_to(target);
+}
+
+/**
+ * @brief Transit to the carousel state @p id (other ids are ignored).
+ * @version 1
+ * @req REQ-DISP-001
+ */
+void DisplayFsm::transit_to(display_state_id_t id)
+{
+    switch (id) {
         case DISPLAY_STATE_CLOCK:      transit<ClockFull>();        break;
         case DISPLAY_STATE_WEATHER:    transit<WeatherOverlay>();   break;
         case DISPLAY_STATE_RADAR:      transit<RadarOverlay>();     break;
@@ -336,11 +363,14 @@ void DisplayFsm::update_dot_indicator()
 
 /**
  * @brief Record the current state id and name and refresh the dot indicator.
- * @version 1
+ * v2: starts an armed frame-capture recording (every state entry is a transition).
+ * @version 2
  * @req REQ-DISP-001
+ * @req REQ-API-003
  */
 void DisplayFsm::set_state_info(display_state_id_t id, const char *name)
 {
+    frame_capture_on_transition();
     s_state_id   = id;
     s_state_name = name;
     update_dot_indicator();

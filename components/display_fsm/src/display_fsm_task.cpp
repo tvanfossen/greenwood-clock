@@ -13,6 +13,7 @@
 #include "display_states.h"
 #include "display_widgets.h"
 #include "display_scheduler.h"
+#include "frame_capture.h"
 #include "image_decode.h"
 #include "ui_contrast.h"
 #include "clock_animation.h"
@@ -875,7 +876,8 @@ static void fsm_run_event_loop(void)
  * @dg_internal
  * v3: clock text uses the user's exact colour (legibility via label shadows), no bg sampling.
  * v4: starts from the effective settings (active background schedule profile applied).
- * @version 4
+ * v5: hooks the debug frame recorder to the display.
+ * @version 5
  */
 static void fsm_task(void *arg)
 {
@@ -904,6 +906,7 @@ static void fsm_task(void *arg)
     display_scheduler_get()->init();
 
     lvgl_port_lock(0);
+    frame_capture_attach();
     DisplayFsm::start();   // enters ClockFull::entry() which does LVGL ops
     lvgl_port_unlock();
 

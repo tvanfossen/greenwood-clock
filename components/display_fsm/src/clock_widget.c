@@ -463,13 +463,20 @@ static refresh_probe_t s_morph_probe;
 static bool            s_morph_probe_attached;
 static int64_t         s_morph_t0_us;
 
+/** The PPA scales exactly only in 1/16 steps (PPA_LL_SRM_SCALING_FRAG_MAX); other scales go
+ *  to the software renderer, ~37 ms per morph frame. */
+#define MORPH_SCALE_STEP 16
+
 /**
  * @brief lv_anim exec callback: place and scale the morph snapshot at progress @p prog (0 source .. 256 target).
  * v2: no per-frame recolour. PPA declines recoloured images, so the recolour forced a software
  *     scale + recolour of the whole 1008x350 snapshot every frame: measured 6.5 Hz, ~140 ms
  *     render per frame. The snapshot is now rendered in the source colour; the colour change
  *     happens in the end crossfade.
- * @version 2
+ * v3: between the endpoints the scale snaps to MORPH_SCALE_STEP so the PPA scales it; the
+ *     time's centre still follows the unsnapped path, so only its size steps (6% a step,
+ *     finer than the ~6-10 frames a morph gets).
+ * @version 3
  * @callback
  */
 static void morph_exec_cb(void *var, int32_t prog)   // prog: 0 (source) .. 256 (target)
@@ -478,6 +485,14 @@ static void morph_exec_cb(void *var, int32_t prog)   // prog: 0 (source) .. 256 
     int32_t x  = s_mx0  + (int32_t)((int64_t)(s_mx1  - s_mx0)  * prog / 256);
     int32_t y  = s_my0  + (int32_t)((int64_t)(s_my1  - s_my0)  * prog / 256);
     int32_t sc = s_msc0 + (int32_t)((int64_t)(s_msc1 - s_msc0) * prog / 256);
+    if (prog > 0 && prog < 256) {
+        int32_t q = (sc + MORPH_SCALE_STEP / 2) / MORPH_SCALE_STEP * MORPH_SCALE_STEP;
+        int32_t cx = (s_morph_time_rel.x1 + s_morph_time_rel.x2) / 2;   // time centre in the snapshot
+        int32_t cy = (s_morph_time_rel.y1 + s_morph_time_rel.y2) / 2;
+        x += cx * (sc - q) / 256;   // keep that centre where the unsnapped scale puts it
+        y += cy * (sc - q) / 256;
+        sc = q;
+    }
     if(sc < 1) sc = 1;
     lv_obj_set_pos(img, x, y);
     lv_image_set_scale(img, (uint32_t)sc);
@@ -627,7 +642,9 @@ static void morph_report(clock_widget_t *w, bool natural)
  * v3: logs the morph's frame rate and handoff error (morph_report).
  * v4: checks every snapshot cache slot (snap_is_cached).
  * v5: runs the pending settled callback (clock_widget_when_settled) last.
- * @version 5
+ * v6: AM/PM and the date are no longer faded in here (they fade in during the morph's second
+ *     half, morph_midpoint_cb); they are just made opaque.
+ * @version 6
  * @req REQ-DISP-004
  */
 static void finalize_morph(bool crossfade)
@@ -647,19 +664,11 @@ static void finalize_morph(bool crossfade)
     apply_effective_color(w);
     morph_report(w, crossfade);
 
+    // AM/PM + date faded in at the target layout over the morph's second half; whatever
+    // is left of that fade ends here.
+    lv_obj_set_style_opa(w->lbl_ampm, LV_OPA_COVER, 0);
+    lv_obj_set_style_opa(w->lbl_date, LV_OPA_COVER, 0);
     if (crossfade && s_morph_img && s_morph_snap) {
-        // Fade AM/PM + date back in at the target layout as the time snapshot
-        // dissolves out — a clean crossfade instead of a slide or a pop.
-        lv_obj_set_style_opa(w->lbl_ampm, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_opa(w->lbl_date, LV_OPA_TRANSP, 0);
-        lv_anim_t li;
-        lv_anim_init(&li);
-        lv_anim_set_duration(&li, 160);
-        lv_anim_set_values(&li, LV_OPA_TRANSP, LV_OPA_COVER);
-        lv_anim_set_exec_cb(&li, fade_opa_cb);
-        lv_anim_set_var(&li, w->lbl_ampm); lv_anim_start(&li);
-        lv_anim_set_var(&li, w->lbl_date); lv_anim_start(&li);
-
         kill_fade();                          // only one dissolve at a time
         lv_anim_delete(s_morph_img, NULL);    // stop the scale anim
         s_fade_img  = s_morph_img;
@@ -673,9 +682,7 @@ static void finalize_morph(bool crossfade)
         lv_anim_set_completed_cb(&fa, fade_done_cb);
         lv_anim_start(&fa);
     } else {
-        // Instant settle (an interrupting morph): labels fully opaque, no fade.
-        lv_obj_set_style_opa(w->lbl_ampm, LV_OPA_COVER, 0);
-        lv_obj_set_style_opa(w->lbl_date, LV_OPA_COVER, 0);
+        // Instant settle (an interrupting morph).
         if (s_morph_img) { lv_anim_delete(s_morph_img, NULL); lv_obj_delete(s_morph_img); }
         if (s_morph_snap && !snap_is_cached(s_morph_snap)) lv_draw_buf_destroy(s_morph_snap);
     }
@@ -868,6 +875,25 @@ static lv_draw_buf_t *morph_snapshot_get(clock_widget_t *w, lv_color_t color)
 }
 
 /**
+ * @brief lv_anim start callback at the morph's midpoint: move AM/PM and the date (faded out
+ *        by now) to the target layout and colour, so they fade in there while the time
+ *        snapshot finishes its move.
+ * @version 1
+ * @callback
+ */
+static void morph_midpoint_cb(lv_anim_t *a)
+{
+    LV_UNUSED(a);
+    clock_widget_t *w = s_morph_w;
+    if (!w) return;
+    snap_to(w, s_morph_target);
+    apply_layout_for_mode(w, s_morph_target);
+    s_morph_from = s_morph_target;   // the layout now on screen (clock_widget_update aligns to it)
+    apply_effective_color(w);
+    shadows_sync(w);
+}
+
+/**
  * @brief Switch clock mode; animates a 500 ms snapshot morph (time and its shadow scaled, then crossfaded to the real clock; AM/PM and date crossfaded), or snaps instantly if the snapshot cannot be taken.
  * v2: keeps the drop shadows out of the morph snapshot and in sync around it.
  * v3: reuses the cached time snapshot (morph_snapshot_get) instead of re-rendering it every morph.
@@ -877,7 +903,9 @@ static lv_draw_buf_t *morph_snapshot_get(clock_widget_t *w, lv_color_t color)
  * v6: drops a pending settled callback: it belonged to the mode being left.
  * v7: places the cropped snapshot by its crop origin.
  * v8: CLOCK_MORPH_MS duration; AM/PM + date fade out over half of it; records the source mode.
- * @version 8
+ * v9: AM/PM + date fade back in at the target layout over the second half (they were gone
+ *     until the time landed, then appeared: a two-step look).
+ * @version 9
  * @req REQ-CLOCK-002
  * @req REQ-DISP-004
  */
@@ -941,6 +969,15 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
     lv_anim_set_exec_cb(&lf, fade_opa_cb);
     lv_anim_set_var(&lf, w->lbl_ampm); lv_anim_start(&lf);
     lv_anim_set_var(&lf, w->lbl_date); lv_anim_start(&lf);
+    // ...and fade back in at the target layout over the second half, converging with the
+    // time. Not early-applied: that would cancel the fade-out above at once.
+    lv_anim_t li = lf;
+    lv_anim_set_delay(&li, CLOCK_MORPH_MS / 2);
+    lv_anim_set_values(&li, LV_OPA_TRANSP, LV_OPA_COVER);
+    lv_anim_set_early_apply(&li, false);
+    lv_anim_set_var(&li, w->lbl_date); lv_anim_start(&li);
+    lv_anim_set_start_cb(&li, morph_midpoint_cb);
+    lv_anim_set_var(&li, w->lbl_ampm); lv_anim_start(&li);
     shadows_sync(w);   // source layout; the hidden time's shadow stays hidden
 
     s_morph_img = lv_image_create(lv_obj_get_parent(w->container));

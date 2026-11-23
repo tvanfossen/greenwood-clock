@@ -377,6 +377,26 @@ def screenshot(c, host=DEFAULT_HOST, out=None):
     c.run(f"{sys.executable} {REPO / 'tools' / 'screenshot.py'} --host {host} -o {out}")
 
 
+## @brief Record the next rendered frames (half resolution) to PNGs and a contact sheet; with --state, across that forced state change.
+## @req REQ-API-003
+## @version 1
+@task(
+    help={
+        "host": "Device host or IP",
+        "state": "Force this state; recording starts at the change (else immediately)",
+        "frames": "Frames to record (1-24)",
+        "out": "Output directory (default .claude/tmp/capture_<state>_<time>)",
+    }
+)
+def capture(c, state=None, frames=16, host=DEFAULT_HOST, out=None):
+    out = out or TMP / f"capture_{state or 'now'}_{datetime.now():%H%M%S}"
+    state_arg = f"--state {state}" if state else ""
+    c.run(
+        f"{sys.executable} {REPO / 'tools' / 'frame_capture.py'} --host {host} "
+        f"--out {out} --frames {frames} {state_arg}"
+    )
+
+
 ## @brief Reboot the device.
 ## @req REQ-TOOL-001
 ## @version 1

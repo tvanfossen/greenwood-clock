@@ -6,6 +6,8 @@
 // components/http_api/http_api.c
 
 #include "http_bg_schedule.h"
+#include "http_frame_capture.h"
+#include "frame_capture.h"
 #include "http_api.h"
 #include "ota.h"
 #include "secrets.h"
@@ -745,9 +747,10 @@ static esp_err_t coredump_get_handler(httpd_req_t *req)
  * pixels, including any SW/PPA composite artifacts) and stream it. Response:
  * an ASCII header line "w h stride cf\n" followed by the raw pixel data.
  * Decode + view with tools/screenshot.py.
+ * v2: copies the buffer on screen, not buf_act (the next refresh's target, one frame stale).
  *
  * @param req  Incoming request.
- * @version 1
+ * @version 2
  * @callback
  * @return ESP_OK on success; ESP_FAIL if no display, capture fails, or a send fails.
  * @req REQ-API-003
@@ -766,7 +769,7 @@ static esp_err_t screenshot_get_handler(httpd_req_t *req)
     // Copy the framebuffer under the LVGL lock (the panel DMA reads it
     // concurrently; a quick memcpy gives a coherent snapshot).
     lvgl_port_lock(0);
-    lv_draw_buf_t *fb = lv_display_get_buf_active(disp);
+    lv_draw_buf_t *fb = frame_capture_shown_buffer();   // buf_act is the next frame's target
     if (fb && fb->data) {
         w      = lv_display_get_horizontal_resolution(disp);
         h      = lv_display_get_vertical_resolution(disp);
@@ -1066,11 +1069,13 @@ static void http_api_register_display_handlers(httpd_handle_t srv)
  *
  * @param srv  Running httpd server handle.
  * v2: also the background schedule endpoints.
- * @version 2
+ * v3: also the debug frame-capture endpoints.
+ * @version 3
  * @req REQ-API-001
  */
 static void http_api_register_handlers(httpd_handle_t srv)
 {
+    http_frame_capture_register(srv);
     http_bg_schedule_register(srv);   // before the display handlers' www catch-all
     http_api_register_file_handlers(srv);
     http_api_register_ota_handlers(srv);

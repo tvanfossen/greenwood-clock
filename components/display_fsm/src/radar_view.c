@@ -265,7 +265,8 @@ void radar_view_preload_map(void)
  *        loaded), 40 %-opacity radar overlay, pulsing home marker at the centre
  *        and a "Last updated" chip.
  * v2: a second overlay for loop crossfades and a (hidden) loop progress bar.
- * @version 2
+ * v3: no container fill when the basemap covers the screen.
+ * @version 3
  * @req REQ-RADAR-001
  * @return The new view, or NULL if allocation failed.
  */
@@ -284,8 +285,10 @@ radar_view_t *radar_view_create(lv_obj_t *parent, float lat, float lon)
     rv->container = lv_obj_create(parent);
     lv_obj_set_size(rv->container, SCREEN_W, SCREEN_H);
     lv_obj_align(rv->container, LV_ALIGN_TOP_LEFT, 0, 0);
+    // Dark backing only without a basemap: the map covers the screen, and while the view
+    // fades in a translucent full-screen fill is software-blended (~75 ms a frame, measured).
     lv_obj_set_style_bg_color(rv->container, lv_color_hex(0x0a0a1e), 0);
-    lv_obj_set_style_bg_opa(rv->container, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(rv->container, s_map_dsc ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(rv->container, 0, 0);
     lv_obj_set_style_pad_all(rv->container, 0, 0);
     lv_obj_set_style_radius(rv->container, 0, 0);

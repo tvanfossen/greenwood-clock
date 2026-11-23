@@ -101,6 +101,9 @@ protected:
     /** Navigate carousel by offset (-1 = prev, +1 = next). Wraps around. */
     void carousel_navigate(int offset);
 
+    /** Transit to the carousel state @p id (other ids are ignored). */
+    void transit_to(display_state_id_t id);
+
     /** Animate an LVGL object from transparent to fully opaque (900ms ease-in-out).
      *  Caller must hold LVGL lock. */
     static void fade_in(lv_obj_t *obj);

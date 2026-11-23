@@ -104,42 +104,5 @@ void ClockFull::react(EvAmbientTrigger const &)
     }
 }
 
-/**
- * @brief Force a state from the clock (bypassing cooldown via force_show) or open Settings; other ids are ignored.
- * @version 1
- * @req REQ-DISP-002
- * @req REQ-API-003
- */
-void ClockFull::react(EvForceState const &e)
-{
-    switch (e.state) {
-        case DISPLAY_STATE_WEATHER:
-            display_scheduler_get()->force_show(DISPLAY_STATE_WEATHER);
-            transit<WeatherOverlay>();
-            break;
-        case DISPLAY_STATE_RADAR:
-            display_scheduler_get()->force_show(DISPLAY_STATE_RADAR);
-            transit<RadarOverlay>();
-            break;
-        case DISPLAY_STATE_ASTRONOMY:
-            display_scheduler_get()->force_show(DISPLAY_STATE_ASTRONOMY);
-            transit<Astronomy>();
-            break;
-        case DISPLAY_STATE_PHOTOS:
-            display_scheduler_get()->force_show(DISPLAY_STATE_PHOTOS);
-            transit<PhotoSlideshow>();
-            break;
-        case DISPLAY_STATE_AMBIENT:
-            display_scheduler_get()->force_show(DISPLAY_STATE_AMBIENT);
-            transit<AmbientDashboard>();
-            break;
-        case DISPLAY_STATE_SETTINGS:
-            transit<Settings>();
-            break;
-        default:
-            break;
-    }
-}
-
 // FSM_INITIAL_STATE must be in the same TU as the full ClockFull definition
 FSM_INITIAL_STATE(DisplayFsm, ClockFull)
