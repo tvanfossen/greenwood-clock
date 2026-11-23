@@ -4,10 +4,10 @@
  * @brief How the radar screen tells time: which moment the overlay shows. Two looks
  *        (RADAR_TIME_STYLE picks one, so either is a one-line switch):
  *          - RADAR_TIME_CHIP: a text chip, "Radar 6:01 PM (40m ago)".
- *          - RADAR_TIME_CLOCK: the minimized clock shows each loop frame's time (the live time
- *            on the newest); the chip only carries status and the single-image time.
- *        Where a frame sits in the loop is the radar view's progress bar. All functions
- *        require the LVGL lock.
+ *          - RADAR_TIME_CLOCK: the minimized clock rolls to each loop frame's time (up going
+ *            forward, down when the loop wraps; the live time on the newest); the chip only
+ *            carries status and the single-image time.
+ *        All functions require the LVGL lock.
  */
 #ifndef RADAR_TIME_VIEW_H
 #define RADAR_TIME_VIEW_H

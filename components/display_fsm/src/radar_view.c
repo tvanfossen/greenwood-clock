@@ -38,7 +38,6 @@ static void pulse_opa_cb(void *obj, int32_t v)
 #define RADAR_BBOX_DEG 2.0f  // +/- degrees from center (matches nws_radar.c)
 #define HOME_MARKER_SIZE 10
 #define RADAR_OPA        LV_OPA_40   // overlay opacity over the basemap
-#define PROGRESS_MAX     1000        // progress bar range (permille of the loop's time span)
 
 // Cached map background — decoded once, reused across radar view lifecycle.
 static uint8_t        *s_map_pixels;  // ARGB8888 pixel data in SPIRAM
@@ -66,7 +65,6 @@ struct radar_view_t {
     lv_obj_t       *img_radar;       // transparent radar overlay
     lv_obj_t       *img_radar_b;     // second overlay for loop crossfades
     lv_obj_t       *img_front;       // overlay currently shown (img_radar or img_radar_b)
-    lv_obj_t       *bar_progress;    // radar-loop position in its time span (hidden until it plays)
     lv_obj_t       *home_marker;     // crosshair/dot at home lat/lon
     radar_time_view_t *time_view;    // which moment is shown (chip or clock, RADAR_TIME_STYLE)
     float           center_lat;
@@ -268,7 +266,8 @@ void radar_view_preload_map(void)
  * v2: a second overlay for loop crossfades and a (hidden) loop progress bar.
  * v3: no container fill when the basemap covers the screen.
  * v4: the time is shown by a radar_time_view (chip or dial) instead of a label.
- * @version 4
+ * v5: no progress bar (the clock's time roll shows the loop's direction).
+ * @version 5
  * @req REQ-RADAR-001
  * @return The new view, or NULL if allocation failed.
  */
@@ -349,16 +348,6 @@ radar_view_t *radar_view_create(lv_obj_t *parent, float lat, float lon)
 
     rv->time_view = radar_time_view_create(rv->container, RADAR_TIME_STYLE);
     radar_time_view_message(rv->time_view, "Radar loading...");
-
-    // Radar-loop progress: a thin bar along the bottom edge, sliding with the frame times.
-    rv->bar_progress = lv_bar_create(rv->container);
-    lv_obj_set_size(rv->bar_progress, SCREEN_W - 32, 6);
-    lv_obj_align(rv->bar_progress, LV_ALIGN_BOTTOM_MID, 0, -8);
-    lv_bar_set_range(rv->bar_progress, 0, PROGRESS_MAX);
-    lv_obj_set_style_bg_color(rv->bar_progress, lv_color_hex(0x0a0a1e), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(rv->bar_progress, LV_OPA_60, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(rv->bar_progress, lv_color_hex(0xe0e0e0), LV_PART_INDICATOR);
-    lv_obj_add_flag(rv->bar_progress, LV_OBJ_FLAG_HIDDEN);
 
     ESP_LOGI(TAG, "RadarView created (center=%.3f,%.3f)", lat, lon);
     return rv;
@@ -493,17 +482,16 @@ static void crossfade_done_cb(lv_anim_t *a)
 
 /**
  * @brief Under the LVGL lock: crossfade the overlay to one radar-loop frame over @p fade_ms,
- *        show its time on the chip, and slide the progress bar to @p progress (0..1000 of
- *        the loop's time span) over the same time. A crossfade still running is finished
- *        first, so the frames never mix three-way.
+ *        and show its time. A crossfade still running is finished first, so the frames never
+ *        mix three-way.
  * v2: scales the frame to the screen width (loop frames are half resolution).
  * v3: the time goes to the time view (@p newest: the most recent frame).
- * v4: the view no longer takes the position (only the bar shows it).
+ * v4: the view no longer takes the position; no progress bar.
  * @version 4
  * @req REQ-RADAR-003
  */
 void radar_view_crossfade_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, time_t ts,
-                                uint32_t fade_ms, int32_t progress, bool newest)
+                                uint32_t fade_ms, bool newest)
 {
     if (!rv || !dsc) return;
     lv_anim_t *running = lv_anim_get(rv, crossfade_exec_cb);
@@ -525,9 +513,6 @@ void radar_view_crossfade_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, tim
     lv_anim_start(&a);
 
     radar_time_view_frame(rv->time_view, ts, newest);
-    lv_obj_remove_flag(rv->bar_progress, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_anim_duration(rv->bar_progress, fade_ms, LV_PART_MAIN);
-    lv_bar_set_value(rv->bar_progress, LV_CLAMP(0, progress, PROGRESS_MAX), LV_ANIM_ON);
 }
 
 /**

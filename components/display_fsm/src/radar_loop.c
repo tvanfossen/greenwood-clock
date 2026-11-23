@@ -102,22 +102,11 @@ bool radar_loop_load_next(void)
 }
 
 /**
- * @brief Position of frame @p i in the loop's time span, 0..1000 (oldest .. newest).
- * @version 1
- * @dg_internal
- * @return Progress in permille.
- */
-static int32_t frame_progress(int i)
-{
-    time_t span = s_frames[s_ready - 1].ts - s_frames[0].ts;
-    return span > 0 ? (int32_t)((s_frames[i].ts - s_frames[0].ts) * 1000 / span) : 1000;
-}
-
-/**
  * @brief Playback timer (LVGL task): crossfade to the next published frame, holding the newest.
  * v2: crossfades between frames and moves the progress bar (was a hard frame swap).
  * v3: tells the view which frame is the newest.
- * @version 3
+ * v4: no progress (the bar is gone).
+ * @version 4
  * @callback
  */
 static void loop_timer_cb(lv_timer_t *t)
@@ -131,7 +120,7 @@ static void loop_timer_cb(lv_timer_t *t)
     s_hold = 0;
     s_idx = (s_idx + 1) % s_ready;
     radar_view_crossfade_frame(s_rv, s_frames[s_idx].dsc, s_frames[s_idx].ts, LOOP_FADE_MS,
-                               frame_progress(s_idx), s_idx == s_ready - 1);
+                               s_idx == s_ready - 1);
 }
 
 /**

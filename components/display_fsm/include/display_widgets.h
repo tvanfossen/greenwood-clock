@@ -216,11 +216,10 @@ const lv_image_dsc_t *radar_view_map_dsc(void);
 // apply_radar runs with LVGL lock (instant pointer swap).
 void radar_view_predecode(const uint8_t *png_data, size_t len);
 void radar_view_apply_radar(radar_view_t *rv);
-// Crossfade the overlay to one radar-loop frame (taken at ts) over fade_ms and slide the loop
-// progress bar to `progress` (0..1000 of the loop's time span); `newest` is the most recent
-// frame; caller holds the LVGL lock.
+// Crossfade the overlay to one radar-loop frame (taken at ts) over fade_ms; `newest` is the
+// most recent frame; caller holds the LVGL lock.
 void radar_view_crossfade_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, time_t ts,
-                                uint32_t fade_ms, int32_t progress, bool newest);
+                                uint32_t fade_ms, bool newest);
 
 lv_obj_t *radar_view_container(const radar_view_t *rv);
 

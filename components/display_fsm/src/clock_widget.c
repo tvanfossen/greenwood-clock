@@ -11,6 +11,7 @@
 #include "display_widgets.h"
 #include "ui_contrast.h"
 #include "refresh_probe.h"
+#include "text_roll.h"
 #include "src/misc/lv_area_private.h"  /* lv_area_intersect / lv_area_join (private API) */
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -52,15 +53,19 @@ struct clock_widget_t {
     struct tm    live;        // last live time from clock_widget_update
     bool         live_valid;
     bool         held;        // showing a held time (clock_widget_hold): live ticks not shown
+    struct tm    hold_t;      // the held time
+    time_t       shown;       // the time on the labels (roll direction)
 };
 
 static void show_time(clock_widget_t *w, const struct tm *ti);
+static time_t minute_key(const struct tm *t);
 
 // Run once the clock is at rest (morph finished or none running); see clock_widget_when_settled.
 static void (*s_settled_cb)(void);
 static clock_widget_t *s_morph_w;      // widget being morphed (NULL when no morph runs)
 static clock_mode_t    s_morph_from;   // layout on screen during the morph (the source)
 
+#define ROLL_MS     420         // held-time change (radar loop: within its 450 ms crossfade)
 #define SHADOW_OPA  LV_OPA_60   // shadow text opacity (on top of the label's own opa)
 
 /**
@@ -377,13 +382,15 @@ clock_widget_t *clock_widget_create(lv_obj_t *parent)
  * @brief Cancel any in-flight crossfade, delete the widget's LVGL objects and free it (no-op if NULL).
  * v2: also settles any morph and frees the snapshot cache.
  * v3: drops a pending settled callback first (it must not run during teardown).
- * @version 3
+ * v4: finishes a time roll first (it animates the labels being deleted).
+ * @version 4
  * @req REQ-CLOCK-001
  */
 void clock_widget_destroy(clock_widget_t *w)
 {
     if (!w) return;
     s_settled_cb = NULL;
+    text_roll_finish();   // its objects are about to go
     kill_fade();   // drop any in-flight crossfade snapshot before teardown
     finalize_morph(false);
     snap_cache_release();
@@ -401,7 +408,8 @@ void clock_widget_destroy(clock_widget_t *w)
  * v3: during a morph, aligns AM/PM for the layout on screen (the morph's source), not the
  *     target mode: a tick mid-morph moved AM/PM by the target's offset (flicker).
  * v4: records the live time and shows it unless a held time is shown (clock_widget_hold).
- * @version 4
+ * v5: a time roll still running is finished first (it may be rolling to the old live time).
+ * @version 5
  * @req REQ-CLOCK-001
  */
 void clock_widget_update(clock_widget_t *w, const struct tm *ti)
@@ -409,41 +417,93 @@ void clock_widget_update(clock_widget_t *w, const struct tm *ti)
     if (!w || !ti) return;
     w->live = *ti;
     w->live_valid = true;
-    if (!w->held) show_time(w, ti);
+    if (w->held) return;
+    text_roll_finish();
+    show_time(w, ti);
+}
+
+/**
+ * @brief @p t as a comparable minute: seconds dropped, DST resolved by mktime (live ticks
+ *        carry tm_isdst 0, frame times from localtime_r the real flag).
+ * @version 1
+ * @dg_internal
+ * @return Epoch seconds of the minute.
+ */
+static time_t minute_key(const struct tm *t)
+{
+    struct tm k = *t;
+    k.tm_sec = 0;
+    k.tm_isdst = -1;
+    return mktime(&k);
+}
+
+/**
+ * @brief text_roll swap callback: show the time the clock should now show (held or live).
+ * @version 1
+ * @callback
+ */
+static void roll_swap_cb(void *user)
+{
+    clock_widget_t *w = (clock_widget_t *)user;
+    show_time(w, w->held ? &w->hold_t : &w->live);
+}
+
+/**
+ * @brief Change the shown time to the held (or live) one with a roll: up when it is later,
+ *        down when earlier (the radar loop wrapping to its oldest frame). Instant mid-morph
+ *        (the morph owns the labels) or when the minute does not change.
+ * @version 1
+ * @dg_internal
+ */
+static void roll_to(clock_widget_t *w)
+{
+    time_t to = minute_key(w->held ? &w->hold_t : &w->live);
+    if (s_morph_w || to == w->shown) {
+        text_roll_finish();
+        roll_swap_cb(w);
+        return;
+    }
+    lv_obj_t *const objs[] = { w->lbl_time, w->sh_time, w->lbl_ampm, w->sh_ampm };
+    text_roll_start(objs, 4, to < w->shown, ROLL_MS, roll_swap_cb, w);
 }
 
 /**
  * @brief Show @p t until clock_widget_release; live updates are kept but not shown meanwhile.
- * @version 1
+ * v2: rolls the time to @p t (see roll_to).
+ * @version 2
  * @req REQ-RADAR-003
  */
 void clock_widget_hold(clock_widget_t *w, const struct tm *t)
 {
     if (!w || !t) return;
     w->held = true;
-    show_time(w, t);
+    w->hold_t = *t;
+    roll_to(w);
 }
 
 /**
  * @brief End a hold: show the latest live time again.
- * @version 1
+ * v2: rolls the time back to the live one (see roll_to).
+ * @version 2
  * @req REQ-RADAR-003
  */
 void clock_widget_release(clock_widget_t *w)
 {
     if (!w || !w->held) return;
     w->held = false;
-    if (w->live_valid) show_time(w, &w->live);
+    if (w->live_valid) roll_to(w);
 }
 
 /**
  * @brief Set the labels to @p ti (time, AM/PM, date) for the layout on screen.
  * v2 of clock_widget_update's body (split out so a held time can be shown).
- * @version 2
+ * v3: records the time shown (the roll's direction).
+ * @version 3
  * @dg_internal
  */
 static void show_time(clock_widget_t *w, const struct tm *ti)
 {
+    w->shown = minute_key(ti);
     char buf_time[6], buf_ampm[3], buf_date[30];
     format_time(ti, buf_time, sizeof(buf_time),
                 buf_ampm, sizeof(buf_ampm),
@@ -947,7 +1007,8 @@ static void morph_midpoint_cb(lv_anim_t *a)
  * v8: CLOCK_MORPH_MS duration; AM/PM + date fade out over half of it; records the source mode.
  * v9: AM/PM + date fade back in at the target layout over the second half (they were gone
  *     until the time landed, then appeared: a two-step look).
- * @version 9
+ * v10: finishes a time roll first (labels at rest for the snapshot).
+ * @version 10
  * @req REQ-CLOCK-002
  * @req REQ-DISP-004
  */
@@ -955,6 +1016,7 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
 {
     if (!w) return;
     s_settled_cb = NULL;     // a pending callback belonged to the mode being left
+    text_roll_finish();      // labels at rest before the morph snapshots them
     finalize_morph(false);   // settle any in-flight morph instantly — morphs are serial
     kill_fade();             // and drop any still-dissolving previous snapshot
     if (w->mode == mode) {
