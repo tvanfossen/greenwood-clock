@@ -55,6 +55,19 @@ void clock_widget_destroy(clock_widget_t *w);
 void clock_widget_update(clock_widget_t *w, const struct tm *ti);
 
 /**
+ * @brief Show @p t until clock_widget_release; live updates are kept but not shown meanwhile
+ *        (the radar loop shows each frame's time on the clock).
+ * Caller must hold LVGL lock.
+ */
+void clock_widget_hold(clock_widget_t *w, const struct tm *t);
+
+/**
+ * @brief End a hold: show the latest live time again. No-op when nothing is held.
+ * Caller must hold LVGL lock.
+ */
+void clock_widget_release(clock_widget_t *w);
+
+/**
  * @brief Switch between full-screen and minimized mode.
  * Caller must hold LVGL lock.
  */
@@ -204,9 +217,12 @@ const lv_image_dsc_t *radar_view_map_dsc(void);
 void radar_view_predecode(const uint8_t *png_data, size_t len);
 void radar_view_apply_radar(radar_view_t *rv);
 // Crossfade the overlay to one radar-loop frame (taken at ts) over fade_ms and slide the loop
-// progress bar to `progress` (0..1000 of the loop's time span); caller holds the LVGL lock.
+// progress bar to `progress` (0..1000 of the loop's time span); `newest` is the most recent
+// frame; caller holds the LVGL lock.
 void radar_view_crossfade_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, time_t ts,
-                                uint32_t fade_ms, int32_t progress);
+                                uint32_t fade_ms, int32_t progress, bool newest);
+// The loop's frame positions (0..1000 of its time span, oldest first), for the time view.
+void radar_view_loop_frames(radar_view_t *rv, const int32_t *pos, int count);
 
 lv_obj_t *radar_view_container(const radar_view_t *rv);
 

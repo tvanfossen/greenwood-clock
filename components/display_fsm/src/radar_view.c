@@ -8,6 +8,7 @@
  */
 
 #include "display_widgets.h"
+#include "radar_time_view.h"
 #include "image_decode.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -67,7 +68,7 @@ struct radar_view_t {
     lv_obj_t       *img_front;       // overlay currently shown (img_radar or img_radar_b)
     lv_obj_t       *bar_progress;    // radar-loop position in its time span (hidden until it plays)
     lv_obj_t       *home_marker;     // crosshair/dot at home lat/lon
-    lv_obj_t       *lbl_updated;     // "Last updated: HH:MM"
+    radar_time_view_t *time_view;    // which moment is shown (chip or dial, RADAR_TIME_STYLE)
     float           center_lat;
     float           center_lon;
 };
@@ -266,7 +267,8 @@ void radar_view_preload_map(void)
  *        and a "Last updated" chip.
  * v2: a second overlay for loop crossfades and a (hidden) loop progress bar.
  * v3: no container fill when the basemap covers the screen.
- * @version 3
+ * v4: the time is shown by a radar_time_view (chip or dial) instead of a label.
+ * @version 4
  * @req REQ-RADAR-001
  * @return The new view, or NULL if allocation failed.
  */
@@ -345,20 +347,8 @@ radar_view_t *radar_view_create(lv_obj_t *parent, float lat, float lon)
     lv_anim_set_exec_cb(&a, pulse_opa_cb);
     lv_anim_start(&a);
 
-    // "Last updated" label
-    rv->lbl_updated = lv_label_create(rv->container);
-    lv_obj_set_style_text_font(rv->lbl_updated, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(rv->lbl_updated, lv_color_hex(0xe0e0e0), 0);
-    // Dark semi-opaque backing chip: the map (and bright precip cells) are an
-    // image, so no single text colour is guaranteed — the chip is. Padding +
-    // radius make it a readable pill.
-    lv_obj_set_style_bg_color(rv->lbl_updated, lv_color_hex(0x0a0a1e), 0);
-    lv_obj_set_style_bg_opa(rv->lbl_updated, LV_OPA_70, 0);
-    lv_obj_set_style_pad_hor(rv->lbl_updated, 8, 0);
-    lv_obj_set_style_pad_ver(rv->lbl_updated, 4, 0);
-    lv_obj_set_style_radius(rv->lbl_updated, 6, 0);
-    lv_obj_align(rv->lbl_updated, LV_ALIGN_BOTTOM_LEFT, 16, -22);
-    lv_label_set_text(rv->lbl_updated, "Radar loading...");
+    rv->time_view = radar_time_view_create(rv->container, RADAR_TIME_STYLE);
+    radar_time_view_message(rv->time_view, "Radar loading...");
 
     // Radar-loop progress: a thin bar along the bottom edge, sliding with the frame times.
     rv->bar_progress = lv_bar_create(rv->container);
@@ -378,12 +368,14 @@ radar_view_t *radar_view_create(lv_obj_t *parent, float lat, float lon)
  * @brief Stop the view's animations, delete its LVGL objects and free it; the
  *        module-level map and radar caches are kept. NULL-safe.
  * v2: also stops a running loop crossfade.
- * @version 2
+ * v3: destroys the time view first.
+ * @version 3
  * @req REQ-RADAR-001
  */
 void radar_view_destroy(radar_view_t *rv)
 {
     if (!rv) return;
+    radar_time_view_destroy(rv->time_view);   // releases the clock if it shows a frame time
     if (rv->home_marker) lv_anim_delete(rv->home_marker, NULL);
     lv_anim_delete(rv, NULL);   // loop crossfade (its var is the view)
     if (rv->container) {
@@ -439,24 +431,6 @@ void radar_view_predecode(const uint8_t *png_data, size_t len)
     ESP_LOGI(TAG, "Radar staged: %lux%lu (%lu bytes)",
              (unsigned long)dsc->header.w, (unsigned long)dsc->header.h,
              (unsigned long)dsc->data_size);
-}
-
-/**
- * @brief Set the chip to "<prefix> h:mm AM/PM (Nm ago)" for frame time @p ts.
- * @version 1
- * @dg_internal
- */
-static void set_time_label(radar_view_t *rv, const char *prefix, time_t ts)
-{
-    time_t now;
-    time(&now);
-    struct tm ti;
-    localtime_r(&ts, &ti);
-    char buf[64];
-    snprintf(buf, sizeof(buf), "%s %d:%02d %s (%ldm ago)", prefix,
-             ti.tm_hour % 12 == 0 ? 12 : ti.tm_hour % 12, ti.tm_min,
-             ti.tm_hour >= 12 ? "PM" : "AM", (long)(now - ts) / 60);
-    lv_label_set_text(rv->lbl_updated, buf);
 }
 
 /**
@@ -523,11 +497,12 @@ static void crossfade_done_cb(lv_anim_t *a)
  *        the loop's time span) over the same time. A crossfade still running is finished
  *        first, so the frames never mix three-way.
  * v2: scales the frame to the screen width (loop frames are half resolution).
- * @version 2
+ * v3: the time goes to the time view (@p newest: the most recent frame).
+ * @version 3
  * @req REQ-RADAR-003
  */
 void radar_view_crossfade_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, time_t ts,
-                                uint32_t fade_ms, int32_t progress)
+                                uint32_t fade_ms, int32_t progress, bool newest)
 {
     if (!rv || !dsc) return;
     lv_anim_t *running = lv_anim_get(rv, crossfade_exec_cb);
@@ -548,7 +523,7 @@ void radar_view_crossfade_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, tim
     lv_anim_set_completed_cb(&a, crossfade_done_cb);
     lv_anim_start(&a);
 
-    set_time_label(rv, "Radar", ts);
+    radar_time_view_frame(rv->time_view, ts, progress, fade_ms, newest);
     lv_obj_remove_flag(rv->bar_progress, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_style_anim_duration(rv->bar_progress, fade_ms, LV_PART_MAIN);
     lv_bar_set_value(rv->bar_progress, LV_CLAMP(0, progress, PROGRESS_MAX), LV_ANIM_ON);
@@ -561,7 +536,8 @@ void radar_view_crossfade_frame(radar_view_t *rv, const lv_image_dsc_t *dsc, tim
  * v2: label via set_time_label (shared with the radar loop).
  * v3: sets the front overlay (the loop crossfades between two).
  * v4: via overlay_set (resets the scale a half-resolution loop frame may have left).
- * @version 4
+ * v5: the time goes to the time view.
+ * @version 5
  * @req REQ-RADAR-001
  */
 void radar_view_apply_radar(radar_view_t *rv)
@@ -593,14 +569,25 @@ void radar_view_apply_radar(radar_view_t *rv)
         overlay_detach(rv, s_active_radar_dsc);
         heap_caps_free(s_active_radar_pixels); s_active_radar_pixels = NULL;
         heap_caps_free(s_active_radar_dsc);    s_active_radar_dsc = NULL;
-        lv_label_set_text(rv->lbl_updated, "Radar data expired");
+        radar_time_view_message(rv->time_view, "Radar data expired");
         return;
     }
 
     overlay_set(rv->img_front, s_active_radar_dsc);
 
-    set_time_label(rv, "Last updated:", s_active_radar_ts);
+    radar_time_view_latest(rv->time_view, s_active_radar_ts);
 
     ESP_LOGI(TAG, "Radar applied: %ux%u (age=%ld s)",
              s_active_radar_dsc->header.w, s_active_radar_dsc->header.h, age);
+}
+
+/**
+ * @brief Under the LVGL lock: tell the time view where the loop's frames sit (0..1000 of
+ *        its time span, oldest first).
+ * @version 1
+ * @req REQ-RADAR-003
+ */
+void radar_view_loop_frames(radar_view_t *rv, const int32_t *pos, int count)
+{
+    if (rv) radar_time_view_frames(rv->time_view, pos, count);
 }

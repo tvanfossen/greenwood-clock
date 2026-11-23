@@ -49,7 +49,12 @@ struct clock_widget_t {
     lv_color_t   min_color;   // MINIMIZED-mode colour (current; states may override)
     lv_color_t   min_base;    // default MINIMIZED colour (legible over the bg image,
                               // used by states that show the clock bg behind the clock)
+    struct tm    live;        // last live time from clock_widget_update
+    bool         live_valid;
+    bool         held;        // showing a held time (clock_widget_hold): live ticks not shown
 };
+
+static void show_time(clock_widget_t *w, const struct tm *ti);
 
 // Run once the clock is at rest (morph finished or none running); see clock_widget_when_settled.
 static void (*s_settled_cb)(void);
@@ -395,13 +400,50 @@ void clock_widget_destroy(clock_widget_t *w)
  * v2: re-syncs the label shadows after the text changes.
  * v3: during a morph, aligns AM/PM for the layout on screen (the morph's source), not the
  *     target mode: a tick mid-morph moved AM/PM by the target's offset (flicker).
- * @version 3
+ * v4: records the live time and shows it unless a held time is shown (clock_widget_hold).
+ * @version 4
  * @req REQ-CLOCK-001
  */
 void clock_widget_update(clock_widget_t *w, const struct tm *ti)
 {
     if (!w || !ti) return;
+    w->live = *ti;
+    w->live_valid = true;
+    if (!w->held) show_time(w, ti);
+}
 
+/**
+ * @brief Show @p t until clock_widget_release; live updates are kept but not shown meanwhile.
+ * @version 1
+ * @req REQ-RADAR-003
+ */
+void clock_widget_hold(clock_widget_t *w, const struct tm *t)
+{
+    if (!w || !t) return;
+    w->held = true;
+    show_time(w, t);
+}
+
+/**
+ * @brief End a hold: show the latest live time again.
+ * @version 1
+ * @req REQ-RADAR-003
+ */
+void clock_widget_release(clock_widget_t *w)
+{
+    if (!w || !w->held) return;
+    w->held = false;
+    if (w->live_valid) show_time(w, &w->live);
+}
+
+/**
+ * @brief Set the labels to @p ti (time, AM/PM, date) for the layout on screen.
+ * v2 of clock_widget_update's body (split out so a held time can be shown).
+ * @version 2
+ * @dg_internal
+ */
+static void show_time(clock_widget_t *w, const struct tm *ti)
+{
     char buf_time[6], buf_ampm[3], buf_date[30];
     format_time(ti, buf_time, sizeof(buf_time),
                 buf_ampm, sizeof(buf_ampm),
