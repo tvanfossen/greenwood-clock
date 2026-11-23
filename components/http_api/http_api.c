@@ -1839,8 +1839,9 @@ static esp_err_t display_state_get_handler(httpd_req_t *req)
 
 /**
  * @brief Map state name string to display_state_id_t.
+ * v2: "settings" too.
  * @return DISPLAY_STATE_MAX if not found.
- * @version 1
+ * @version 2
  * @req REQ-API-003
  */
 static display_state_id_t state_name_to_id(const char *name)
@@ -1852,6 +1853,7 @@ static display_state_id_t state_name_to_id(const char *name)
         {"astronomy", DISPLAY_STATE_ASTRONOMY},
         {"photos",    DISPLAY_STATE_PHOTOS},
         {"ambient",   DISPLAY_STATE_AMBIENT},
+        {"settings",  DISPLAY_STATE_SETTINGS},
     };
     for (size_t i = 0; i < sizeof(map)/sizeof(map[0]); i++) {
         if (strcmp(name, map[i].name) == 0) return map[i].id;

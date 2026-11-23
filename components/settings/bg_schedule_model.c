@@ -1,7 +1,8 @@
 /**
  * @file bg_schedule_model.c
- * @version 1
- * @brief Background schedule model: defaults, validation and slot/profile resolution.
+ * @version 2
+ * @brief Background schedule model: defaults, validation, slot/profile resolution and the
+ *        editor's edits (slots, profiles, cells).
  *        Pure C (no ESP-IDF), covered by tests/host/test_bg_schedule.c.
  */
 #include "bg_schedule_model.h"
@@ -117,4 +118,120 @@ int bg_schedule_profile_at(const bg_schedule_t *s, int wday, int minute)
         if (s->slot_start[i] <= minute) slot = i;
     }
     return s->grid[day][slot];
+}
+
+/**
+ * @brief Append a slot halfway between the last start and midnight; each day's new cell copies
+ *        its last slot.
+ * @version 1
+ * @req REQ-BG-004
+ * @return false at BG_SCHED_SLOTS slots or if no minute is free after the last start.
+ */
+bool bg_schedule_add_slot(bg_schedule_t *s)
+{
+    int n = s->slot_count;
+    int last = s->slot_start[n - 1];
+    if (n >= BG_SCHED_SLOTS || last >= BG_MINUTES_PER_DAY - 1) return false;
+    s->slot_start[n] = (uint16_t)(last + (BG_MINUTES_PER_DAY - last) / 2);
+    for (int d = 0; d < BG_SCHED_DAYS; d++) s->grid[d][n] = s->grid[d][n - 1];
+    s->slot_count++;
+    return true;
+}
+
+/**
+ * @brief Remove slot @p i, closing the gap in the starts and every day's cells.
+ * @version 1
+ * @req REQ-BG-004
+ * @return false for the only slot or an index out of range.
+ */
+bool bg_schedule_remove_slot(bg_schedule_t *s, int i)
+{
+    int n = s->slot_count;
+    if (n <= 1 || i < 0 || i >= n) return false;
+    int tail = n - 1 - i;
+    memmove(&s->slot_start[i], &s->slot_start[i + 1], (size_t)tail * sizeof(s->slot_start[0]));
+    for (int d = 0; d < BG_SCHED_DAYS; d++) {
+        memmove(&s->grid[d][i], &s->grid[d][i + 1], (size_t)tail);
+        s->grid[d][n - 1] = 0;
+    }
+    s->slot_start[n - 1] = 0;
+    s->slot_count--;
+    return true;
+}
+
+/**
+ * @brief Move slot @p i to start at @p minute, between its neighbours.
+ * @version 1
+ * @req REQ-BG-004
+ * @return false (nothing changed) unless the starts stay strictly ascending within the day.
+ */
+bool bg_schedule_set_slot_start(bg_schedule_t *s, int i, int minute)
+{
+    bool ok = i >= 0 && i < s->slot_count && minute >= 0 && minute < BG_MINUTES_PER_DAY;
+    ok = ok && (i == 0 || minute > s->slot_start[i - 1]);
+    ok = ok && (i == s->slot_count - 1 || minute < s->slot_start[i + 1]);
+    if (ok) s->slot_start[i] = (uint16_t)minute;
+    return ok;
+}
+
+/**
+ * @brief Append a profile named @p name that inherits every setting.
+ * @version 1
+ * @req REQ-BG-004
+ * @return Its index, or -1 at BG_SCHED_PROFILES profiles.
+ */
+int bg_schedule_add_profile(bg_schedule_t *s, const char *name)
+{
+    if (s->profile_count >= BG_SCHED_PROFILES) return -1;
+    int i = s->profile_count++;
+    bg_profile_t *p = &s->profiles[i];
+    memset(p, 0, sizeof(*p));
+    strncpy(p->name, name, sizeof(p->name) - 1);
+    p->text_color = BG_INHERIT_COLOR;
+    p->brightness = BG_INHERIT;
+    p->anim = BG_INHERIT;
+    return i;
+}
+
+/**
+ * @brief Remove profile @p i: its cells use profile 0, later profiles' cells are renumbered.
+ * @version 1
+ * @req REQ-BG-004
+ * @return false for the only profile or an index out of range.
+ */
+bool bg_schedule_remove_profile(bg_schedule_t *s, int i)
+{
+    int n = s->profile_count;
+    if (n <= 1 || i < 0 || i >= n) return false;
+    for (int d = 0; d < BG_SCHED_DAYS; d++) {
+        for (int k = 0; k < BG_SCHED_SLOTS; k++) {
+            uint8_t *c = &s->grid[d][k];
+            *c = (*c == i) ? 0 : (uint8_t)(*c > i ? *c - 1 : *c);
+        }
+    }
+    memmove(&s->profiles[i], &s->profiles[i + 1], (size_t)(n - 1 - i) * sizeof(s->profiles[0]));
+    s->profile_count--;
+    return true;
+}
+
+/**
+ * @brief Step cell (@p day, @p slot) to the next profile, wrapping to the first.
+ * @version 1
+ * @req REQ-BG-004
+ */
+void bg_schedule_cycle_cell(bg_schedule_t *s, int day, int slot)
+{
+    if (day < 0 || day >= BG_SCHED_DAYS || slot < 0 || slot >= s->slot_count) return;
+    s->grid[day][slot] = (uint8_t)((s->grid[day][slot] + 1) % s->profile_count);
+}
+
+/**
+ * @brief Copy weekday @p day's cells to every day.
+ * @version 1
+ * @req REQ-BG-004
+ */
+void bg_schedule_copy_day(bg_schedule_t *s, int day)
+{
+    if (day < 0 || day >= BG_SCHED_DAYS) return;
+    for (int d = 0; d < BG_SCHED_DAYS; d++) memcpy(s->grid[d], s->grid[day], sizeof(s->grid[d]));
 }

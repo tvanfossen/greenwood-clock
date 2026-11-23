@@ -77,6 +77,61 @@ bool bg_schedule_valid(const bg_schedule_t *s);
  */
 int bg_schedule_profile_at(const bg_schedule_t *s, int wday, int minute);
 
+/**
+ * @brief Append a slot halfway between the last start and midnight; each day's new cell copies
+ *        its last slot.
+ * @version 1
+ * @req REQ-BG-004
+ * @return false at BG_SCHED_SLOTS slots or if no minute is free after the last start.
+ */
+bool bg_schedule_add_slot(bg_schedule_t *s);
+
+/**
+ * @brief Remove slot @p i, closing the gap in the starts and every day's cells.
+ * @version 1
+ * @req REQ-BG-004
+ * @return false for the only slot or an index out of range.
+ */
+bool bg_schedule_remove_slot(bg_schedule_t *s, int i);
+
+/**
+ * @brief Move slot @p i to start at @p minute, between its neighbours.
+ * @version 1
+ * @req REQ-BG-004
+ * @return false (nothing changed) unless the starts stay strictly ascending within the day.
+ */
+bool bg_schedule_set_slot_start(bg_schedule_t *s, int i, int minute);
+
+/**
+ * @brief Append a profile named @p name that inherits every setting.
+ * @version 1
+ * @req REQ-BG-004
+ * @return Its index, or -1 at BG_SCHED_PROFILES profiles.
+ */
+int bg_schedule_add_profile(bg_schedule_t *s, const char *name);
+
+/**
+ * @brief Remove profile @p i: its cells use profile 0, later profiles' cells are renumbered.
+ * @version 1
+ * @req REQ-BG-004
+ * @return false for the only profile or an index out of range.
+ */
+bool bg_schedule_remove_profile(bg_schedule_t *s, int i);
+
+/**
+ * @brief Step cell (@p day, @p slot) to the next profile, wrapping to the first.
+ * @version 1
+ * @req REQ-BG-004
+ */
+void bg_schedule_cycle_cell(bg_schedule_t *s, int day, int slot);
+
+/**
+ * @brief Copy weekday @p day's cells to every day.
+ * @version 1
+ * @req REQ-BG-004
+ */
+void bg_schedule_copy_day(bg_schedule_t *s, int day);
+
 #ifdef __cplusplus
 }
 #endif

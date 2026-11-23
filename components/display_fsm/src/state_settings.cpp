@@ -13,6 +13,7 @@
 #include "display_scheduler.h"
 #include "display_fsm.h"
 #include "clock_animation.h"
+#include "settings_ui.h"
 
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
@@ -43,19 +44,7 @@ static const char *TAG = "state_settings";
 // Internal sub-screen IDs and navigation stack
 // ============================================================================
 
-enum settings_sub_screen_t {
-    SUB_MENU = 0,
-    SUB_WIFI,
-    SUB_BRIGHTNESS,
-    SUB_BACKGROUND,
-    SUB_TEXT_COLOR,
-    SUB_ANIMATION,
-    SUB_CLOCK_ANIM,
-    SUB_ABOUT,
-    SUB_MAX
-};
-
-#define MAX_SUB_STACK 4
+#define MAX_SUB_STACK 6   // menu > schedule > profiles > profile, with room
 
 static settings_sub_screen_t s_sub_stack[MAX_SUB_STACK];
 static int s_sub_top = -1;
@@ -81,6 +70,9 @@ static const sub_creator_fn_t SUB_CREATORS[SUB_MAX] = {
     [SUB_ANIMATION]  = create_sub_animation,
     [SUB_CLOCK_ANIM] = create_sub_clock_anim,
     [SUB_ABOUT]      = create_sub_about,
+    [SUB_SCHEDULE]       = create_sub_schedule,
+    [SUB_SCHED_PROFILES] = create_sub_sched_profiles,
+    [SUB_SCHED_PROFILE]  = create_sub_sched_profile,
 };
 
 // ============================================================================
@@ -107,10 +99,11 @@ static void destroy_all_subs(void)
 
 /**
  * @brief Hide the current sub-screen, create the requested one on demand, show it and push it on the stack.
- * @version 1
+ * v2: shared with the schedule editor (settings_ui.h).
+ * @version 2
  * @req REQ-UI-001
  */
-static void show_sub(settings_sub_screen_t sub)
+void show_sub(settings_sub_screen_t sub)
 {
     if (sub >= SUB_MAX || !s_settings_root) return;
 
@@ -140,10 +133,11 @@ static void show_sub(settings_sub_screen_t sub)
 
 /**
  * @brief Destroy the top sub-screen and re-show the previous one; at menu level, send DISPLAY_EVT_SETTINGS_BACK to exit settings.
- * @version 1
+ * v2: shared with the schedule editor (settings_ui.h).
+ * @version 2
  * @req REQ-UI-001
  */
-static void pop_sub(void)
+void pop_sub(void)
 {
     if (s_sub_top <= 0) {
         // At menu level — exit settings entirely
@@ -188,15 +182,17 @@ static void back_btn_cb(lv_event_t *e)
  * @brief Create a styled container with title and back button.
  *
  * All sub-screens share the same visual style: dark bg, rounded corners, centered.
- * @version 1
- * @dg_internal
+ * v2: shared with the schedule editor (settings_ui.h).
+ * @version 2
+ * @req REQ-UI-001
  * @return The new sub-screen container.
  */
-static lv_obj_t *make_sub_container(lv_obj_t *parent, const char *title)
+lv_obj_t *make_sub_container(lv_obj_t *parent, const char *title)
 {
     lv_obj_t *cont = lv_obj_create(parent);
-    lv_obj_set_size(cont, 800, 500);
-    lv_obj_align(cont, LV_ALIGN_CENTER, -80, 20);
+    // Below the topbar clock (y 54..110), which the panel used to cover the Back button with.
+    lv_obj_set_size(cont, 800, 480);
+    lv_obj_align(cont, LV_ALIGN_TOP_MID, -80, 114);
     lv_obj_set_style_bg_color(cont, lv_color_hex(0x1a1a2e), 0);
     lv_obj_set_style_bg_opa(cont, LV_OPA_90, 0);
     lv_obj_set_style_border_width(cont, 1, 0);
@@ -303,7 +299,8 @@ static void menu_add_item(lv_obj_t *list, const char *icon,
 
 /**
  * @brief Build the top-level settings menu list, including the reboot button.
- * @version 1
+ * v2: adds the background schedule editor.
+ * @version 2
  * @req REQ-UI-001
  * @return The sub-screen container.
  */
@@ -319,6 +316,7 @@ static lv_obj_t *create_sub_menu(lv_obj_t *parent)
     menu_add_item(list, LV_SYMBOL_WIFI,     "WiFi Settings",     SUB_WIFI);
     menu_add_item(list, LV_SYMBOL_IMAGE,    "Brightness",        SUB_BRIGHTNESS);
     menu_add_item(list, LV_SYMBOL_IMAGE,    "Background Image",  SUB_BACKGROUND);
+    menu_add_item(list, LV_SYMBOL_LIST,     "Background Schedule", SUB_SCHEDULE);
     menu_add_item(list, LV_SYMBOL_EDIT,     "Text Color",        SUB_TEXT_COLOR);
     menu_add_item(list, LV_SYMBOL_LOOP,     "Clock Animation",   SUB_CLOCK_ANIM);
     menu_add_item(list, LV_SYMBOL_PLAY,     "Animation Preview", SUB_ANIMATION);
@@ -821,12 +819,7 @@ static lv_obj_t *create_sub_background(lv_obj_t *parent)
 // Text color settings
 // ============================================================================
 
-struct color_preset_t {
-    uint32_t    color;
-    const char *name;
-};
-
-static const color_preset_t COLOR_PRESETS[] = {
+const color_preset_t COLOR_PRESETS[] = {
     {0x000000, "Black"},
     {0xFFFFFF, "White"},
     {0xFF0000, "Red"},
@@ -836,8 +829,12 @@ static const color_preset_t COLOR_PRESETS[] = {
     {0x00FFFF, "Cyan"},
     {0xFF00FF, "Magenta"},
     {0xFF8800, "Orange"},
+    {0x7A1E1E, "Dim red (night)"},
+    {0x8A5A1E, "Dim amber (night)"},
+    {0x5A5A5A, "Dim grey (night)"},
 };
-static constexpr int NUM_COLOR_PRESETS = sizeof(COLOR_PRESETS) / sizeof(COLOR_PRESETS[0]);
+const int NUM_COLOR_PRESETS = 12;
+static_assert(sizeof(COLOR_PRESETS) / sizeof(COLOR_PRESETS[0]) == 12, "NUM_COLOR_PRESETS");
 
 /**
  * @brief Color button handler: save the chosen text color to NVS, refresh the clock text color and show success.

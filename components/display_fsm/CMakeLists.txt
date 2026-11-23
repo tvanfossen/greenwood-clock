@@ -34,6 +34,7 @@ idf_component_register(
         "src/state_ambient.cpp"
         "src/state_surprise.cpp"
         "src/state_settings.cpp"
+        "src/settings_schedule.cpp"
     INCLUDE_DIRS
         "include"
     REQUIRES

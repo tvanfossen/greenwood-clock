@@ -1,8 +1,8 @@
 /**
  * @file test_bg_schedule.c
- * @version 1
+ * @version 2
  * @brief Host tests for the background schedule model: defaults, slot/profile resolution
- *        (including the slot that wraps past midnight) and validation.
+ *        (including the slot that wraps past midnight), validation and the editor's edits.
  */
 #include "bg_schedule_model.h"
 
@@ -145,12 +145,136 @@ static void test_validation(void)
  * @dg_internal
  * @return 0 when every check passed, 1 otherwise.
  */
+/**
+ * @brief Adding a slot appends one starting halfway between the last start and midnight, with
+ *        every day's new cell copying that day's last slot; adding past the maximum fails.
+ * @version 1
+ * @req REQ-BG-004
+ */
+static void test_add_slot(void)
+{
+    bg_schedule_t s;
+    bg_schedule_defaults(&s);   // one slot at 00:00
+    CHECK(bg_schedule_add_slot(&s), "add to one slot");
+    CHECK(s.slot_count == 2 && s.slot_start[1] == 12 * 60, "new slot at noon, got %u", s.slot_start[1]);
+    CHECK(s.grid[MON][1] == s.grid[MON][0], "new cell copies the day's last slot");
+    winter_schedule(&s);
+    CHECK(!bg_schedule_add_slot(&s), "a fifth slot is refused");
+    CHECK(bg_schedule_valid(&s), "still valid after the refusal");
+}
+
+/**
+ * @brief Removing a slot closes the gap in the start times and every day's cells; the last
+ *        slot cannot be removed.
+ * @version 1
+ * @req REQ-BG-004
+ */
+static void test_remove_slot(void)
+{
+    bg_schedule_t s;
+    winter_schedule(&s);
+    CHECK(bg_schedule_remove_slot(&s, 1), "remove the 12:00 slot");
+    CHECK(s.slot_count == 3 && s.slot_start[1] == 17 * 60, "17:00 moved into slot 1");
+    CHECK(s.grid[SAT][1] == 2 && s.grid[SAT][2] == 3, "cells shifted left");
+    CHECK(bg_schedule_valid(&s), "valid after removal");
+    bg_schedule_defaults(&s);
+    CHECK(!bg_schedule_remove_slot(&s, 0), "the only slot stays");
+    CHECK(!bg_schedule_remove_slot(&s, 3), "out of range is refused");
+}
+
+/**
+ * @brief A slot start can move only between its neighbours (starts stay strictly ascending).
+ * @version 1
+ * @req REQ-BG-004
+ */
+static void test_set_slot_start(void)
+{
+    bg_schedule_t s;
+    winter_schedule(&s);
+    CHECK(bg_schedule_set_slot_start(&s, 1, 13 * 60), "12:00 -> 13:00");
+    CHECK(s.slot_start[1] == 13 * 60, "stored");
+    CHECK(!bg_schedule_set_slot_start(&s, 1, 17 * 60), "onto the next start is refused");
+    CHECK(!bg_schedule_set_slot_start(&s, 1, 6 * 60), "before the previous start is refused");
+    CHECK(s.slot_start[1] == 13 * 60, "a refused move changes nothing");
+    CHECK(!bg_schedule_set_slot_start(&s, 3, BG_MINUTES_PER_DAY), "past midnight is refused");
+}
+
+/**
+ * @brief A new profile inherits everything and is named; at the maximum it is refused.
+ * @version 1
+ * @req REQ-BG-004
+ */
+static void test_add_profile(void)
+{
+    bg_schedule_t s;
+    winter_schedule(&s);
+    int i = bg_schedule_add_profile(&s, "Night");
+    CHECK(i == 4 && s.profile_count == 5, "added as profile 4, got %d", i);
+    CHECK(strcmp(s.profiles[4].name, "Night") == 0, "named");
+    CHECK(s.profiles[4].image[0] == '\0' && s.profiles[4].text_color == BG_INHERIT_COLOR &&
+              s.profiles[4].brightness == BG_INHERIT && s.profiles[4].anim == BG_INHERIT,
+          "inherits everything");
+    while (s.profile_count < BG_SCHED_PROFILES) bg_schedule_add_profile(&s, "x");
+    CHECK(bg_schedule_add_profile(&s, "y") < 0, "a ninth profile is refused");
+}
+
+/**
+ * @brief Removing a profile points the cells that used it at profile 0 and renumbers the cells
+ *        of the profiles after it; the last profile cannot be removed.
+ * @version 1
+ * @req REQ-BG-004
+ */
+static void test_remove_profile(void)
+{
+    bg_schedule_t s;
+    winter_schedule(&s);
+    CHECK(bg_schedule_remove_profile(&s, 1), "remove profile 1");
+    CHECK(s.profile_count == 3, "three left");
+    CHECK(s.grid[TUE][1] == 0, "its cells now use profile 0");
+    CHECK(s.grid[TUE][2] == 1 && s.grid[TUE][3] == 2, "later profiles renumbered");
+    CHECK(strcmp(s.profiles[1].name, "p2") == 0, "profiles shifted down");
+    CHECK(bg_schedule_valid(&s), "valid after removal");
+    bg_schedule_defaults(&s);
+    CHECK(!bg_schedule_remove_profile(&s, 0), "the only profile stays");
+}
+
+/**
+ * @brief Cycling a cell steps through the profiles and wraps; copying a day fills every day.
+ * @version 1
+ * @req REQ-BG-004
+ */
+static void test_cycle_and_copy(void)
+{
+    bg_schedule_t s;
+    winter_schedule(&s);
+    bg_schedule_cycle_cell(&s, MON, 3);
+    CHECK(s.grid[MON][3] == 0, "profile 3 wraps to 0");
+    bg_schedule_cycle_cell(&s, MON, 3);
+    CHECK(s.grid[MON][3] == 1, "then 1");
+    bg_schedule_copy_day(&s, MON);
+    CHECK(s.grid[SUN][3] == 1 && s.grid[SAT][3] == 1, "copied to every day");
+    CHECK(s.grid[SAT][0] == 0, "other cells copied too");
+}
+
+/**
+ * @brief Run every check and report the tally.
+ * v2: also the editor's edits (slots, profiles, cells).
+ * @version 2
+ * @req REQ-BG-004
+ * @return 0 if every check passed, 1 otherwise.
+ */
 int main(void)
 {
     test_defaults();
     test_slot_boundaries();
     test_wrap_uses_previous_day();
     test_validation();
+    test_add_slot();
+    test_remove_slot();
+    test_set_slot_start();
+    test_add_profile();
+    test_remove_profile();
+    test_cycle_and_copy();
     printf("bg_schedule: %d/%d checks passed\n", s_checks - s_failures, s_checks);
     return s_failures ? 1 : 0;
 }
