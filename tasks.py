@@ -737,15 +737,25 @@ THEME_PREVIEW_SRCS = (
     "components/display_fsm/src/ui_contrast.c",
     "components/display_fsm/src/weather_widgets.c",
     "components/display_fsm/src/alert_banner.c",
+    "components/display_fsm/src/alert_card.c",
+    "components/display_fsm/src/settings_frame.c",
+    "components/display_fsm/src/clock_widget.c",
+    "components/display_fsm/src/text_roll.c",
+    "components/display_fsm/src/refresh_probe.c",
     "components/cjson/cjson/cJSON.c",
     "components/fonts/c_array/nunito_48.c",
     "components/fonts/c_array/nunito_128.c",
+    "components/fonts/c_array/nunito_256.c",
+    "components/fonts/c_array/nunito_clock_256.c",
+    "components/fonts/c_array/nunito_clock_128.c",
+    "components/fonts/c_array/nunito_clock_48.c",
     "tools/theme_preview/preview.c",
 )
 #: Include path for host builds against the real LVGL (stubs last, so real headers win).
 LVGL_HOST_INCLUDES = (
     LVGL_HOST_DIR,
     REPO / "components" / "lvgl",
+    REPO / "components",  # "lvgl/lvgl.h", as the firmware build resolves it (fonts)
     REPO / "components" / "display_fsm" / "include",
     REPO / "components" / "nws" / "include",
     REPO / "components" / "settings",

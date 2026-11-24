@@ -9,6 +9,7 @@
 
 #include "display_widgets.h"
 #include "ui_theme_bind.h"
+#include "alert_card.h"
 #include "nws.h"
 #include "esp_log.h"
 #include <string.h>
@@ -30,6 +31,7 @@ static const char *TAG = "alert_banner";
 struct alert_banner_t {
     lv_obj_t *container;
     lv_obj_t *lbl_headline;
+    lv_obj_t *lbl_details;   // fixed "Details >" at the right: the banner opens the card
     bool      visible;
 };
 
@@ -37,13 +39,14 @@ struct alert_banner_t {
  * @brief Map an NWS severity string to the banner's theme slot (whose role a theme can move).
  * v3: slots (the theme's settings choose each severity's role); was fixed roles.
  * v2: theme roles (were fixed hex colours).
- * @version 3
+ * v4: public (the alert card's header shares it).
+ * @version 4
  * @req REQ-ALERT-001
  * @req REQ-UI-003
  * @return ALERT_EXTREME / ALERT_MODERATE / ALERT_MINOR, ALERT_SEVERE for Severe and anything
  *         unknown.
  */
-static ui_slot_t severity_slot(const char *severity)
+ui_slot_t alert_severity_slot(const char *severity)
 {
     ui_slot_t slot = UI_SLOT_ALERT_SEVERE;
     if (strcmp(severity, "Extreme") == 0) slot = UI_SLOT_ALERT_EXTREME;
@@ -53,11 +56,24 @@ static ui_slot_t severity_slot(const char *severity)
 }
 
 /**
+ * @brief Banner tapped: open the details card for every active alert, at the shown one.
+ * @version 1
+ * @callback
+ * @req REQ-ALERT-002
+ */
+static void banner_click_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    alert_card_open(lv_layer_top(), nws_get_alerts(), 0);
+}
+
+/**
  * @brief Create a hidden full-width banner (1024 x ALERT_BANNER_HEIGHT) at the top
  *        of @p parent with a circular-scrolling headline label.
  * v2: colours from the theme roles (ui_theme), no literals.
  * v3: fill and text bound to the theme.
- * @version 3
+ * v4: tappable: opens the details card; a fixed 'Details >' at the right.
+ * @version 4
  * @req REQ-ALERT-001
  * @return The new banner, or NULL if allocation failed.
  */
@@ -79,8 +95,9 @@ alert_banner_t *alert_banner_create(lv_obj_t *parent)
     lv_obj_set_style_border_width(b->container, 0, 0);
     lv_obj_set_style_pad_all(b->container, 0, 0);
     lv_obj_set_style_radius(b->container, 0, 0);
-    lv_obj_clear_flag(b->container, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(b->container, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(b->container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(b->container, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_HIDDEN);   // tap = details
+    lv_obj_add_event_cb(b->container, banner_click_cb, LV_EVENT_CLICKED, NULL);
 
     // Scrolling headline label — colour chosen for contrast vs the banner bg.
     b->lbl_headline = lv_label_create(b->container);
@@ -90,9 +107,15 @@ alert_banner_t *alert_banner_create(lv_obj_t *parent)
     // Plain-ms duration (recomputed per headline in alert_banner_show); see the
     // SCROLL_MS_PER_CHAR note above for why we avoid lv_anim_speed*().
     lv_obj_set_style_anim_duration(b->lbl_headline, 20000, 0);
-    lv_obj_set_width(b->lbl_headline, 1000);
-    lv_obj_align(b->lbl_headline, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_width(b->lbl_headline, 1024 - 150);
+    lv_obj_align(b->lbl_headline, LV_ALIGN_LEFT_MID, 8, 0);
     lv_label_set_text(b->lbl_headline, "");
+
+    b->lbl_details = lv_label_create(b->container);
+    lv_obj_set_style_text_font(b->lbl_details, &lv_font_montserrat_20, 0);
+    lv_label_set_text(b->lbl_details, "Details " LV_SYMBOL_RIGHT);
+    lv_obj_align(b->lbl_details, LV_ALIGN_RIGHT_MID, -12, 0);
+    ui_bind_text(b->lbl_details, UI_ROLE_TEXT);
 
     b->visible = false;
     ESP_LOGI(TAG, "AlertBanner created");
@@ -121,17 +144,17 @@ void alert_banner_destroy(alert_banner_t *b)
  * v2: colours from the theme roles (ui_theme), no literals.
  * v3: ':' between event and headline (the em dash is not in the font: it drew a box).
  * v4: fill bound to the severity's slot, text re-judged on it.
- * @version 4
+ * v5: the details label is re-judged on the fill too.
+ * @version 5
  * @req REQ-ALERT-001
  */
 void alert_banner_show(alert_banner_t *b, const nws_alert_t *alert)
 {
     if (!b || !alert) return;
 
-    // Set severity color + a contrast-matched headline colour (yellow/Moderate
-    // needs black text; the dark severities need white).
-    ui_bind_fill(b->container, severity_slot(alert->severity));
+    ui_bind_fill(b->container, alert_severity_slot(alert->severity));
     ui_bind_text(b->lbl_headline, UI_ROLE_TEXT);   // re-judged against the new fill
+    ui_bind_text(b->lbl_details, UI_ROLE_TEXT);
 
     // Set headline text — circular scroll handles overflow
     char text[320];

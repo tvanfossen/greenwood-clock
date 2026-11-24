@@ -102,7 +102,8 @@ static lv_obj_t *outer_panel(lv_obj_t *obj, lv_obj_t *root)
 /**
  * @brief The colour under every fill of @p obj's tree: the picture under @p panel when there
  *        is one, else @p root's colour when it is opaque, else the active screen's.
- * @version 1
+ * v2: the screen colour is the sampling fallback.
+ * @version 2
  * @utility
  * @return The base colour.
  */
@@ -117,7 +118,7 @@ static lv_color_t base_under(lv_obj_t *root, lv_obj_t *panel)
         lv_area_t a;
         lv_obj_get_coords(panel, &a);
         base = ui_image_region_mean(s_picture, LV_MAX(a.x1, 0), LV_MAX(a.y1, 0),
-                                    lv_area_get_width(&a), lv_area_get_height(&a));
+                                    lv_area_get_width(&a), lv_area_get_height(&a), base);
     }
     return base;
 }

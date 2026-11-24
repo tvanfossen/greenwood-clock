@@ -310,6 +310,17 @@ requirements:
     description: Active NWS alerts for the location are fetched every 5 min and shown as a scrolling banner.
     acceptance_criteria: >-
       An active NWS alert for the configured location appears in the banner within 5 min of issue and disappears after it expires.
+  REQ-ALERT-002:
+    name: Alert details card
+    subsystem: ALERT
+    description: >-
+      Tapping the alert banner opens a card with what the headline leaves out: the event,
+      severity / urgency / certainty, onset and expiry, the affected area, the full description
+      and the safety instructions, paging through every active alert. It closes on a tap
+      outside it, Close, a minute untouched, a screen change or an alerts update.
+    acceptance_criteria: >-
+      With two active alerts, tapping the banner shows the first alert's full description and
+      instructions; Next shows the second; tapping outside the card closes it.
 
   # ---------------------------------------------------------------- DISP
   REQ-DISP-001:

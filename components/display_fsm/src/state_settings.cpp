@@ -15,6 +15,7 @@
 #include "display_fsm.h"
 #include "clock_animation.h"
 #include "settings_ui.h"
+#include "settings_frame.h"
 
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
@@ -26,6 +27,7 @@
 #include "freertos/task.h"
 
 extern "C" {
+#include "bg_schedule.h"
 #include "network.h"
 #include "settings.h"
 #include "sdcard.h"
@@ -192,41 +194,14 @@ static void back_btn_cb(lv_event_t *e)
  * v2: shared with the schedule editor (settings_ui.h).
  * v3: colours from the theme roles (ui_theme), no literals.
  * v4: colours bound to the theme (ui_bind_*): repainted live on a theme change.
- * @version 4
+ * v5: the frame is settings_frame (centred; renderable on the host).
+ * @version 5
  * @req REQ-UI-001
  * @return The new sub-screen container.
  */
 lv_obj_t *make_sub_container(lv_obj_t *parent, const char *title)
 {
-    lv_obj_t *cont = lv_obj_create(parent);
-    // Below the topbar clock (y 54..110), which the panel used to cover the Back button with.
-    lv_obj_set_size(cont, 800, 480);
-    lv_obj_align(cont, LV_ALIGN_TOP_MID, -80, 114);
-    ui_bind_fill(cont, UI_SLOT_DIALOG);
-    lv_obj_set_style_bg_opa(cont, LV_OPA_90, 0);
-    lv_obj_set_style_border_width(cont, 1, 0);
-    ui_bind_border(cont, UI_ROLE_BORDER);
-    lv_obj_set_style_radius(cont, 16, 0);
-    lv_obj_set_style_pad_all(cont, 20, 0);
-    lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
-
-    // Title
-    lv_obj_t *lbl = lv_label_create(cont);
-    lv_label_set_text(lbl, title);
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_32, 0);
-    ui_bind_text(lbl, UI_ROLE_TEXT);
-    lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 0);
-
-    // Back button
-    lv_obj_t *btn = lv_btn_create(cont);
-    lv_obj_set_size(btn, 120, 50);
-    lv_obj_align(btn, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_add_event_cb(btn, back_btn_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *btn_lbl = lv_label_create(btn);
-    lv_label_set_text(btn_lbl, LV_SYMBOL_LEFT " Back");
-    lv_obj_center(btn_lbl);
-
-    return cont;
+    return settings_frame_create(parent, title, back_btn_cb);
 }
 
 /**
@@ -293,48 +268,33 @@ static void reboot_btn_cb(lv_event_t *e)
     esp_restart();
 }
 
-/**
- * @brief Add a settings menu button that opens the given sub-screen when clicked.
- * @version 1
- * @utility
- */
-static void menu_add_item(lv_obj_t *list, const char *icon,
-                           const char *label, settings_sub_screen_t sub)
-{
-    lv_obj_t *btn = lv_list_add_button(list, icon, label);
-    lv_obj_add_event_cb(btn, menu_item_cb, LV_EVENT_CLICKED,
-                        (void *)(uintptr_t)sub);
-}
 
 /**
  * @brief Build the top-level settings menu list, including the reboot button.
  * v2: adds the background schedule editor.
  * v3: themes replace the text colour (theme names, theme roles, theme events).
- * @version 3
+ * v4: a two-column grid (every entry visible; the list scrolled and cut 'About' off).
+ * @version 4
  * @req REQ-UI-001
  * @return The sub-screen container.
  */
 static lv_obj_t *create_sub_menu(lv_obj_t *parent)
 {
     lv_obj_t *cont = make_sub_container(parent, "Settings");
-
-    lv_obj_t *list = lv_list_create(cont);
-    lv_obj_set_size(list, 700, 380);
-    lv_obj_align(list, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_text_font(list, &lv_font_montserrat_24, 0);
-
-    menu_add_item(list, LV_SYMBOL_WIFI,     "WiFi Settings",     SUB_WIFI);
-    menu_add_item(list, LV_SYMBOL_IMAGE,    "Brightness",        SUB_BRIGHTNESS);
-    menu_add_item(list, LV_SYMBOL_IMAGE,    "Background Image",  SUB_BACKGROUND);
-    menu_add_item(list, LV_SYMBOL_LIST,     "Background Schedule", SUB_SCHEDULE);
-    menu_add_item(list, LV_SYMBOL_EDIT,     "Theme",             SUB_THEME);
-    menu_add_item(list, LV_SYMBOL_LOOP,     "Clock Animation",   SUB_CLOCK_ANIM);
-    menu_add_item(list, LV_SYMBOL_PLAY,     "Animation Preview", SUB_ANIMATION);
-    menu_add_item(list, LV_SYMBOL_SETTINGS, "About",             SUB_ABOUT);
-
-    lv_obj_t *btn_reboot = lv_list_add_button(list, LV_SYMBOL_POWER, "Reboot Device");
-    lv_obj_add_event_cb(btn_reboot, reboot_btn_cb, LV_EVENT_CLICKED, NULL);
-
+#define SUB(s) menu_item_cb, (void *)(uintptr_t)(s)
+    static const settings_menu_item_t ITEMS[] = {
+        { LV_SYMBOL_WIFI,     "WiFi",            SUB(SUB_WIFI) },
+        { LV_SYMBOL_IMAGE,    "Brightness",      SUB(SUB_BRIGHTNESS) },
+        { LV_SYMBOL_IMAGE,    "Background",      SUB(SUB_BACKGROUND) },
+        { LV_SYMBOL_LIST,     "Schedule",        SUB(SUB_SCHEDULE) },
+        { LV_SYMBOL_EDIT,     "Theme",           SUB(SUB_THEME) },
+        { LV_SYMBOL_LOOP,     "Clock Animation", SUB(SUB_CLOCK_ANIM) },
+        { LV_SYMBOL_PLAY,     "Animation",       SUB(SUB_ANIMATION) },
+        { LV_SYMBOL_SETTINGS, "About",           SUB(SUB_ABOUT) },
+        { LV_SYMBOL_POWER,    "Reboot",          reboot_btn_cb, nullptr },
+    };
+#undef SUB
+    settings_menu_grid(cont, ITEMS, (int)(sizeof(ITEMS) / sizeof(ITEMS[0])));
     return cont;
 }
 
@@ -885,22 +845,49 @@ static lv_obj_t *create_sub_theme(lv_obj_t *parent)
 static bool s_editor_saved = false;   // the editor saved: leave the theme list too on close
 
 /**
- * @brief Theme editor save: write the edited theme as custom.json and make it the global
- *        theme (SD and NVS writes off the LVGL lock), then have fsm_task re-apply it.
+ * @brief Make theme @p stem the active schedule profile's theme (SD-free: NVS only).
  * @version 1
+ * @utility
+ * @return Whether the schedule was saved.
+ */
+static bool set_active_profile_theme(const char *stem)
+{
+    time_t now = time(NULL);
+    struct tm ti;
+    localtime_r(&now, &ti);
+    bg_schedule_t s;
+    bg_schedule_get(&s);
+    int idx = bg_schedule_active(&ti, NULL);
+    bool ok = idx >= 0 && idx < s.profile_count;
+    if (ok) {
+        strlcpy(s.profiles[idx].theme, stem, sizeof(s.profiles[idx].theme));
+        ok = bg_schedule_set(&s) == ESP_OK;
+    }
+    return ok;
+}
+
+/**
+ * @brief Theme editor save: write the edited theme as custom.json and make it the global
+ *        theme, or the active schedule profile's (@p for_profile); SD and NVS writes off the
+ *        LVGL lock, then fsm_task re-applies.
+ * v2: saves for the active profile or globally.
+ * @version 2
  * @callback
  * @req REQ-UI-004
  */
-static void theme_editor_saved(const ui_theme_t *t)
+static void theme_editor_saved(const ui_theme_t *t, bool for_profile)
 {
     ui_theme_t copy = *t;
     lvgl_port_unlock();
     bool ok = theme_store_save(CUSTOM_THEME_STEM, &copy) &&
-              theme_pref_set(CUSTOM_THEME_STEM) == ESP_OK;
+              (for_profile ? set_active_profile_theme(CUSTOM_THEME_STEM)
+                           : theme_pref_set(CUSTOM_THEME_STEM) == ESP_OK);
     lvgl_port_lock(0);
-    ESP_LOGI(TAG, "Theme editor: %s", ok ? "saved as custom (global theme)" : "save FAILED");
+    ESP_LOGI(TAG, "Theme editor: %s (%s)", ok ? "saved as custom" : "save FAILED",
+             for_profile ? "active profile" : "global");
     s_editor_saved = ok;
-    if (ok) display_fsm_refresh_theme();
+    if (ok && for_profile) display_fsm_refresh_background();   // re-applies the profile
+    else if (ok) display_fsm_refresh_theme();
 }
 
 /**
@@ -920,7 +907,8 @@ static void theme_editor_closed(void)
 
 /**
  * @brief The on-screen theme editor, full width below the top-bar clock.
- * @version 1
+ * v2: passes the active profile (when the schedule has several).
+ * @version 2
  * @req REQ-UI-001
  * @req REQ-UI-004
  * @return The sub-screen container.
@@ -933,7 +921,15 @@ static lv_obj_t *create_sub_theme_editor(lv_obj_t *parent)
     lv_obj_remove_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_update_layout(cont);
     s_editor_saved = false;
-    theme_editor_create(cont, 114, theme_editor_saved, theme_editor_closed);
+    time_t now = time(NULL);
+    struct tm ti;
+    localtime_r(&now, &ti);
+    bg_schedule_t sched;
+    bg_schedule_get(&sched);
+    bg_profile_t prof;
+    bg_schedule_active(&ti, &prof);   // a one-profile schedule is no choice: save globally
+    theme_editor_create(cont, SETTINGS_FRAME_Y, sched.profile_count > 1 ? prof.name : "",
+                        theme_editor_saved, theme_editor_closed);
     return cont;
 }
 

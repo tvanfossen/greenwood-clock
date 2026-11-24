@@ -15,6 +15,7 @@ extern "C" {
 #endif
 
 #include "lvgl.h"
+#include "ui_theme.h"   // ui_slot_t
 #include <stdbool.h>
 #include <time.h>
 
@@ -132,6 +133,18 @@ lv_color_t clock_widget_user_color(const clock_widget_t *w);
 void clock_widget_full_area(lv_area_t *out);
 
 /**
+ * @brief Top-bar clock screen rectangle, screen-space.
+ * @version 1
+ */
+void clock_widget_bar_area(lv_area_t *out);
+
+/**
+ * @brief Top-bar text colour (legible over the strip of picture behind the bar).
+ * @version 1
+ */
+void clock_widget_set_bar_color(clock_widget_t *w, lv_color_t color);
+
+/**
  * @brief Minimized-clock screen rectangle, screen-space.
  * @version 1
  */
@@ -209,6 +222,16 @@ void forecast_icons_rescan(void);
 struct nws_alert_t;
 
 typedef struct alert_banner_t alert_banner_t;
+
+/**
+ * @brief The theme slot for NWS severity @p severity: ALERT_EXTREME / MODERATE / MINOR, and
+ *        ALERT_SEVERE for Severe and anything unknown.
+ * @version 4
+ * @req REQ-ALERT-001
+ * @req REQ-UI-003
+ * @return The slot.
+ */
+ui_slot_t alert_severity_slot(const char *severity);
 
 alert_banner_t *alert_banner_create(lv_obj_t *parent);
 void alert_banner_destroy(alert_banner_t *b);

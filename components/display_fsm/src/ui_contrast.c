@@ -1,7 +1,9 @@
 /**
  * @file ui_contrast.c
  * v2: OKLCH conversions public; the legibility target is a parameter (ui_legible_to).
- * @version 2
+ * v3: no colour literals: ui_text_on (unused) is gone; the region mean's fallback is the
+ *     caller's.
+ * @version 3
  * @brief Text-legibility helpers: WCAG luminance/contrast, black/white pick, OKLCH
  *        conversions, minimal OKLCH lightness shift and image-region mean colour.
  */
@@ -71,19 +73,6 @@ float ui_contrast_ratio(lv_color_t a, lv_color_t b)
     return (hi + 0.05f) / (lo + 0.05f);
 }
 
-/**
- * @brief Pick white or black, whichever has the higher WCAG contrast against @p bg.
- * @version 1
- * @req REQ-BG-002
- * @return White or black.
- */
-lv_color_t ui_text_on(lv_color_t bg)
-{
-    lv_color_t white = lv_color_white();
-    lv_color_t black = lv_color_black();
-    return (ui_contrast_ratio(white, bg) >= ui_contrast_ratio(black, bg))
-               ? white : black;
-}
 
 // ---------------------------------------------------------------------------
 // OKLab / OKLCH (Björn Ottosson's matrices) — used to raise a hue's lightness
@@ -283,14 +272,14 @@ static bool clamp_region(const lv_image_dsc_t *img,
 // (coords in BUFFER space). Coarse grid sample (~64x64) for speed.
 /**
  * @brief Mean colour of a region of an RGB565/ARGB8888 image buffer, sampled on a ~64x64 grid.
- * @version 1
+ * v2: the caller gives the fallback (was a fixed mid-grey).
+ * @version 2
  * @req REQ-BG-002
- * @return Mean colour, or mid-grey (128,128,128) for missing data or an empty region.
+ * @return Mean colour, or @p fallback for missing data or an empty region.
  */
-lv_color_t ui_image_region_mean(const lv_image_dsc_t *img,
-                                int32_t x, int32_t y, int32_t w, int32_t h)
+lv_color_t ui_image_region_mean(const lv_image_dsc_t *img, int32_t x, int32_t y, int32_t w,
+                                int32_t h, lv_color_t fallback)
 {
-    lv_color_t fallback = lv_color_make(128, 128, 128);
     if (!img || !img->data || w <= 0 || h <= 0) return fallback;
     if (!clamp_region(img, &x, &y, &w, &h)) return fallback;
 

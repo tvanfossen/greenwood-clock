@@ -14,6 +14,8 @@
  *   live     — the weather screen built under the FIRST theme, then switched to this one in
  *              place (no rebuild): what a theme change on the device repaints
  *   editor_<tab> — the on-screen theme editor on each tab, over the background
+ *   settings — the settings menu under the real top-bar clock
+ *   alert    — the alert details card (first of three alerts) over the weather screen
  *   editor_edit  — FIRST theme only: the editor after moving the accent hue to 200 (teal)
  * `inv theme-preview` builds this and converts the frames to PNG.
  */
@@ -26,6 +28,8 @@
 #include "display_fsm.h"   // lottie_load_job_t (the seam stubbed below)
 #include "info_panel.h"
 #include "theme_editor.h"
+#include "alert_card.h"
+#include "settings_frame.h"
 #include "nws.h"
 #include "src/libs/lodepng/lodepng.h"
 
@@ -33,11 +37,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #define SCREEN_W 1024
 #define SCREEN_H 600
 
 static uint16_t       s_fb[SCREEN_W * SCREEN_H];   // RGB565, what the panel would show
+static clock_widget_t *s_clock = NULL;             // the real clock, on the top layer
+static nws_alerts_t   s_alerts;                    // what nws_get_alerts() serves here
 static lv_image_dsc_t s_bg;                        // decoded background (RGB565), if any
 static bool           s_have_bg = false;
 
@@ -55,6 +62,17 @@ bool display_fsm_load_lottie(const lottie_load_job_t *job)
 {
     (void)job;
     return false;
+}
+
+/**
+ * @brief The alerts the banner's tap opens (the device's come from the NWS task).
+ * @version 1
+ * @utility
+ * @return The fake alerts.
+ */
+const nws_alerts_t *nws_get_alerts(void)
+{
+    return &s_alerts;
 }
 
 /**
@@ -187,6 +205,55 @@ static lv_obj_t *fresh_screen(bool with_bg)
 }
 
 // ---------------------------------------------------------------------------
+// The clock (real widget, top layer)
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief Run LVGL timers and animations for @p ms of real time (morphs, rolls settle).
+ * @version 1
+ * @utility
+ */
+static void settle(uint32_t ms)
+{
+    uint32_t t0 = tick_cb();
+    while (tick_cb() - t0 < ms) {
+        lv_timer_handler();
+        usleep(5000);
+    }
+}
+
+/**
+ * @brief Show the clock in @p mode (hidden for -1), coloured the way the device colours it:
+ *        the theme ink made legible over the picture under each mode's area.
+ * @version 1
+ * @utility
+ */
+static void clock_in(int mode)
+{
+    if (!s_clock) {
+        s_clock = clock_widget_create(lv_layer_top());
+        struct tm tm = { .tm_hour = 12, .tm_min = 9, .tm_mday = 24, .tm_mon = 10, .tm_year = 126,
+                         .tm_wday = 2 };
+        clock_widget_update(s_clock, &tm);
+    }
+    lv_obj_t *root = lv_obj_get_child(lv_layer_top(), 0);
+    lv_obj_set_flag(root, LV_OBJ_FLAG_HIDDEN, mode < 0);
+    if (mode < 0) return;
+    const lv_image_dsc_t *pic = s_have_bg ? &s_bg : NULL;
+    lv_color_t scr = ui_theme_color(UI_ROLE_SCREEN);
+    lv_area_t a;
+    clock_widget_set_user_color(s_clock, ui_oklch_to_color(ui_theme_get()->ink));
+    clock_widget_full_area(&a);
+    clock_widget_set_color(s_clock, ui_theme_ink_on_picture(pic, &a, scr));
+    clock_widget_bar_area(&a);
+    clock_widget_set_bar_color(s_clock, ui_theme_ink_on_picture(pic, &a, scr));
+    clock_widget_min_area(&a);
+    clock_widget_set_minimized_base_color(s_clock, ui_theme_ink_on_picture(pic, &a, scr));
+    clock_widget_set_mode(s_clock, (clock_mode_t)mode);
+    settle(900);
+}
+
+// ---------------------------------------------------------------------------
 // Scenes
 // ---------------------------------------------------------------------------
 
@@ -224,7 +291,8 @@ static void fake_weather(nws_conditions_t *c, nws_forecast_t *fc)
 /**
  * @brief The weather screen: card, forecast strip and a Severe alert over the background.
  * v2: a real event name; no contrast calls (bindings).
- * @version 2
+ * v3: the real clock, minimized.
+ * @version 3
  * @utility
  */
 static void scene_weather(void)
@@ -244,6 +312,7 @@ static void scene_weather(void)
     strcpy(a.severity, "Severe");
     strcpy(a.headline, "until 7 PM: heavy snow, 6 to 10 inches");
     alert_banner_show(ab, &a);
+    clock_in(CLOCK_MODE_MINIMIZED);
 }
 
 /**
@@ -350,11 +419,13 @@ static void palette_row(lv_obj_t *scr)
 
 /**
  * @brief The gallery: every role, stock widgets, alerts and palettes.
- * @version 1
+ * v2: clock hidden.
+ * @version 2
  * @utility
  */
 static void scene_gallery(void)
 {
+    clock_in(-1);
     lv_obj_t *scr = fresh_screen(false);
     tier_panel(scr, UI_ROLE_SURFACE, 20, 20);
     tier_panel(scr, UI_ROLE_SURFACE_RAISED, 330, 20);
@@ -369,18 +440,96 @@ static bool install_theme(const char *path, ui_theme_t *t);
 
 /**
  * @brief The theme editor over the background, on @p tab, written to <stem>_editor_<name>.
- * @version 1
+ * v2: top-bar clock; a profile for the save choice.
+ * @version 2
  * @utility
  */
 static void scene_editor(const char *out_dir, const char *stem, theme_editor_tab_t tab,
                          const char *name)
 {
     lv_obj_t *scr = fresh_screen(true);
-    theme_editor_create(scr, 114, NULL, NULL);
+    clock_in(CLOCK_MODE_TOPBAR);
+    theme_editor_create(scr, SETTINGS_FRAME_Y, "Winter afternoon", NULL, NULL);
     theme_editor_set_tab(tab);
     char file[512];
     snprintf(file, sizeof(file), "%s/%s_editor_%s.ppm", out_dir, stem, name);
     write_frame(file);
+}
+
+/**
+ * @brief A menu entry that does nothing (the preview only draws the menu).
+ * @version 1
+ * @callback
+ */
+static void noop_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+}
+
+/**
+ * @brief The settings menu (the device's frame and grid) under the top-bar clock.
+ * @version 1
+ * @utility
+ */
+static void scene_settings(void)
+{
+    lv_obj_t *scr = fresh_screen(true);
+    clock_in(CLOCK_MODE_TOPBAR);
+    lv_obj_t *frame = settings_frame_create(scr, "Settings", noop_cb);
+    static const settings_menu_item_t ITEMS[] = {
+        { LV_SYMBOL_WIFI, "WiFi", noop_cb, NULL },          { LV_SYMBOL_IMAGE, "Brightness", noop_cb, NULL },
+        { LV_SYMBOL_IMAGE, "Background", noop_cb, NULL },   { LV_SYMBOL_LIST, "Schedule", noop_cb, NULL },
+        { LV_SYMBOL_EDIT, "Theme", noop_cb, NULL },         { LV_SYMBOL_LOOP, "Clock Animation", noop_cb, NULL },
+        { LV_SYMBOL_PLAY, "Animation", noop_cb, NULL },     { LV_SYMBOL_SETTINGS, "About", noop_cb, NULL },
+        { LV_SYMBOL_POWER, "Reboot", noop_cb, NULL },
+    };
+    settings_menu_grid(frame, ITEMS, 9);
+}
+
+/**
+ * @brief Fill s_alerts with three alerts of different severities and lengths.
+ * @version 1
+ * @utility
+ */
+static void fake_alerts(void)
+{
+    memset(&s_alerts, 0, sizeof(s_alerts));
+    static const char *const EV[3] = { "Winter Storm Warning", "Wind Advisory", "Frost Advisory" };
+    static const char *const SEV[3] = { "Severe", "Moderate", "Minor" };
+    for (int i = 0; i < 3; i++) {
+        nws_alert_t *a = &s_alerts.alerts[i];
+        strcpy(a->event, EV[i]);
+        strcpy(a->severity, SEV[i]);
+        strcpy(a->urgency, "Expected");
+        strcpy(a->certainty, "Likely");
+        strcpy(a->area_desc, "Kent; Ottawa; a nearby city; the sample place; Montcalm");
+        a->onset = 1795993200 + i * 3600;
+        a->expires = a->onset + 9 * 3600;
+    }
+    strcpy(s_alerts.alerts[0].headline, "Winter Storm Warning issued November 24 at 9:12AM EST until "
+           "November 24 at 7:00PM EST by NWS Chicago MI");
+    strcpy(s_alerts.alerts[0].description, "* WHAT...Heavy snow expected. Total snow accumulations "
+           "of 6 to 10 inches. Winds gusting as high as 35 mph.\n\n* WHERE...Portions of west "
+           "Illinois.\n\n* WHEN...Until 7 PM EST this evening.\n\n* IMPACTS...Travel could be "
+           "very difficult to impossible. The hazardous conditions could impact the evening "
+           "commute.");
+    strcpy(s_alerts.alerts[0].instruction, "If you must travel, keep an extra flashlight, food, "
+           "and water in your vehicle in case of an emergency. The latest road conditions can be "
+           "obtained by calling 5 1 1.");
+    s_alerts.alert_count = 3;
+    s_alerts.valid = true;
+}
+
+/**
+ * @brief The alert details card over the weather screen (as a banner tap opens it).
+ * @version 1
+ * @utility
+ */
+static void scene_alert(void)
+{
+    fake_alerts();
+    scene_weather();
+    alert_card_open(lv_layer_top(), &s_alerts, 0);
 }
 
 /**
@@ -458,7 +607,8 @@ static void render_live(const char *out_dir, const char *first, const char *path
 /**
  * @brief The editor under theme @p path after moving the accent hue to 200: what one drag of
  *        the h slider repaints.
- * @version 1
+ * v2: top-bar clock; a profile.
+ * @version 2
  * @utility
  */
 static void render_edit_demo(const char *out_dir, const char *path)
@@ -466,7 +616,8 @@ static void render_edit_demo(const char *out_dir, const char *path)
     ui_theme_t t;
     if (!install_theme(path, &t)) return;
     lv_obj_t *scr = fresh_screen(true);
-    theme_editor_create(scr, 114, NULL, NULL);
+    clock_in(CLOCK_MODE_TOPBAR);
+    theme_editor_create(scr, SETTINGS_FRAME_Y, "Winter afternoon", NULL, NULL);
     theme_editor_set_tab(THEME_EDITOR_ACCENT);
     ui_oklch_t accent = t.accent;
     accent.h = 200.0f;
@@ -482,7 +633,8 @@ static void render_edit_demo(const char *out_dir, const char *path)
  * @brief Render every scene for the theme in @p path into @p out_dir.
  * v2: installs through install_theme (bindings repainted).
  * v3: editor scenes per tab.
- * @version 3
+ * v4: settings and alert-card scenes.
+ * @version 4
  * @utility
  * @return Whether the theme parsed.
  */
@@ -503,6 +655,13 @@ static bool render_theme(const char *out_dir, const char *path)
     scene_editor(out_dir, stem, THEME_EDITOR_CONTRAST, "text");
     scene_editor(out_dir, stem, THEME_EDITOR_SLOTS, "slots");
     fresh_screen(false);   // closes the editor: the theme it opened with comes back
+    scene_settings();
+    snprintf(file, sizeof(file), "%s/%s_settings.ppm", out_dir, stem);
+    write_frame(file);
+    scene_alert();
+    snprintf(file, sizeof(file), "%s/%s_alert.ppm", out_dir, stem);
+    write_frame(file);
+    alert_card_close();
     printf("%s: %s\n", stem, t.name);
     return true;
 }

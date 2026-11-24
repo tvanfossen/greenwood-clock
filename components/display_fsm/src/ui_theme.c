@@ -464,6 +464,25 @@ bool ui_theme_slot_by_name(const char *name, ui_slot_t *out)
 }
 
 /**
+ * @brief The theme's ink made legible over the picture under @p a (or @p fallback).
+ * @version 1
+ * @req REQ-UI-003
+ * @req REQ-BG-002
+ * @return The text colour.
+ */
+lv_color_t ui_theme_ink_on_picture(const lv_image_dsc_t *picture, const lv_area_t *a,
+                                   lv_color_t fallback)
+{
+    lv_color_t behind = fallback;
+    if (picture) {
+        behind = ui_image_region_mean(picture, a->x1, a->y1 < 0 ? 0 : a->y1, a->x2 - a->x1 + 1,
+                                      a->y2 - a->y1 + 1, fallback);
+    }
+    return ui_legible_to(ui_oklch_to_color(current()->ink), behind,
+                         target_of(current(), UI_ROLE_TEXT));
+}
+
+/**
  * @brief The role named @p name.
  * @version 1
  * @req REQ-UI-003

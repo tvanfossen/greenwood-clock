@@ -48,6 +48,7 @@ struct clock_widget_t {
     lv_color_t   user_color;  // raw NVS text colour — the OKLCH base for all modes
     lv_color_t   color;       // FULL-mode colour (legible over the bg image)
     lv_color_t   min_color;   // MINIMIZED-mode colour (current; states may override)
+    lv_color_t   bar_color;   // TOPBAR-mode colour (legible over the strip it sits on)
     lv_color_t   min_base;    // default MINIMIZED colour (legible over the bg image,
                               // used by states that show the clock bg behind the clock)
     struct tm    live;        // last live time from clock_widget_update
@@ -318,7 +319,8 @@ static void snap_to(clock_widget_t *w, clock_mode_t mode)
  * @brief Allocate a clock widget on @p parent: transparent container with white time, AM/PM and date labels in full mode.
  * v2: creates a drop-shadow label behind each text label.
  * v3: colours from the theme roles (ui_theme), no literals.
- * @version 3
+ * v4: a top-bar colour of its own.
+ * @version 4
  * @req REQ-CLOCK-001
  * @return New widget, or NULL if allocation fails.
  */
@@ -334,6 +336,7 @@ clock_widget_t *clock_widget_create(lv_obj_t *parent)
     w->color      = w->user_color;
     w->min_color  = w->user_color;   // until the backdrop is sampled
     w->min_base   = w->user_color;
+    w->bar_color  = w->user_color;
     w->mode       = CLOCK_MODE_FULL;
 
     // Transparent container — groups labels for easy repositioning.
@@ -830,15 +833,30 @@ static void mode_geometry(clock_mode_t mode, int32_t *x, int32_t *y, int32_t *w,
 // clock's backdrop, or over the minimized clock's (each state sets that one from what is
 // behind it).
 /**
+ * @brief The text colour of @p mode: the full, top-bar or minimized one.
+ * @version 1
+ * @utility
+ * @return The colour.
+ */
+static lv_color_t mode_color(const clock_widget_t *w, clock_mode_t mode)
+{
+    lv_color_t c = w->min_color;
+    if (mode == CLOCK_MODE_FULL) c = w->color;
+    else if (mode == CLOCK_MODE_TOPBAR) c = w->bar_color;
+    return c;
+}
+
+/**
  * @brief Apply the mode's effective text colour (full colour in FULL mode, minimized colour otherwise) to all three labels.
  * v2: also colours the drop shadows (contrasting black/white).
  * v3: colours from the theme roles (ui_theme), no literals.
- * @version 3
+ * v4: the top bar has its own colour (it borrowed the minimized one, judged for the top-right corner).
+ * @version 4
  * @req REQ-BG-002
  */
 static void apply_effective_color(clock_widget_t *w)
 {
-    lv_color_t c = (w->mode == CLOCK_MODE_FULL) ? w->color : w->min_color;
+    lv_color_t c = mode_color(w, w->mode);
     lv_obj_set_style_text_color(w->lbl_time, c, 0);
     lv_obj_set_style_text_color(w->lbl_ampm, c, 0);
     lv_obj_set_style_text_color(w->lbl_date, c, 0);
@@ -1011,7 +1029,8 @@ static void morph_midpoint_cb(lv_anim_t *a)
  * v9: AM/PM + date fade back in at the target layout over the second half (they were gone
  *     until the time landed, then appeared: a two-step look).
  * v10: finishes a time roll first (labels at rest for the snapshot).
- * @version 10
+ * v11: morph source colour per mode (top bar included).
+ * @version 11
  * @req REQ-CLOCK-002
  * @req REQ-DISP-004
  */
@@ -1040,7 +1059,7 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
     // reveals the target colour). Minimized defaults to min_base; states whose
     // own content covers the bg (radar/photos) set min_base before minimizing.
     if (mode == CLOCK_MODE_MINIMIZED) w->min_color = w->min_base;
-    s_mc0 = (old_mode == CLOCK_MODE_FULL) ? w->color : w->min_color;
+    s_mc0 = mode_color(w, old_mode);
 
     // FULL-layout time snapshot in the source colour: cached per time text and colour.
     s_morph_snap = morph_snapshot_get(w, s_mc0);
@@ -1130,6 +1149,34 @@ void clock_widget_set_color(clock_widget_t *w, lv_color_t color)
     if (!w) return;
     w->color = color;
     apply_effective_color(w);   // honours current mode (only FULL uses it)
+}
+
+/**
+ * @brief Set the top-bar text colour and apply it if the clock is in the top bar.
+ * @version 1
+ * @req REQ-BG-002
+ * @req REQ-CLOCK-002
+ */
+void clock_widget_set_bar_color(clock_widget_t *w, lv_color_t color)
+{
+    if (!w) return;
+    w->bar_color = color;
+    apply_effective_color(w);
+}
+
+/**
+ * @brief Write the screen area of the top-bar clock into @p out (no-op if NULL).
+ * @version 1
+ * @req REQ-CLOCK-002
+ * @req REQ-BG-002
+ */
+void clock_widget_bar_area(lv_area_t *out)
+{
+    if (!out) return;
+    out->x1 = BAR_X;
+    out->y1 = BAR_Y;
+    out->x2 = BAR_X + BAR_W - 1;
+    out->y2 = BAR_Y + BAR_H - 1;
 }
 
 /**

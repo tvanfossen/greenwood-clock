@@ -31,6 +31,8 @@ idf_component_register(
         "src/theme_editor.c"
         "src/theme_editor_tracks.c"
         "src/theme_editor_preview.c"
+        "src/settings_frame.c"
+        "src/alert_card.c"
         "src/astro_calc.c"
         "src/image_rotator.c"
         "src/json_layout.c"

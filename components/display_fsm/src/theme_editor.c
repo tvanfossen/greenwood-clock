@@ -51,6 +51,9 @@ typedef struct {
     lv_obj_t               *contrast_slider;
     lv_obj_t               *contrast_label;
     lv_obj_t               *slot_labels[UI_SLOT_COUNT];
+    lv_obj_t               *actions;       /**< Revert / Back / Save row. */
+    lv_obj_t               *save_choice;   /**< All the time / <profile> only / Cancel row. */
+    char                    profile[24];   /**< Active schedule profile ("" = none). */
     lv_timer_t             *apply_timer;
     theme_editor_save_cb_t  on_save;
     theme_editor_close_cb_t on_close;
@@ -210,17 +213,50 @@ static void close_editor(void)
 }
 
 /**
- * @brief Save: hand the edited theme to the caller and close.
+ * @brief Save as @p for_profile says: hand the edited theme to the caller and close.
  * @version 1
+ * @utility
+ */
+static void do_save(bool for_profile)
+{
+    strncpy(s_ed.work.name, EDITED_NAME, sizeof(s_ed.work.name) - 1);
+    s_ed.saved = true;
+    if (s_ed.on_save) s_ed.on_save(&s_ed.work, for_profile);
+    close_editor();
+}
+
+/**
+ * @brief Save tapped: with an active profile, ask where; else save as the global theme.
+ * v2: asks where to save when a profile is given.
+ * @version 2
  * @callback
  */
 static void save_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
-    strncpy(s_ed.work.name, EDITED_NAME, sizeof(s_ed.work.name) - 1);
-    s_ed.saved = true;
-    if (s_ed.on_save) s_ed.on_save(&s_ed.work);
-    close_editor();
+    theme_editor_press_save();
+}
+
+/**
+ * @brief The where-to-save choice: all the time (@p user 0) or the profile only (1).
+ * @version 1
+ * @callback
+ */
+static void save_where_cb(lv_event_t *e)
+{
+    do_save(lv_event_get_user_data(e) != NULL);
+}
+
+/**
+ * @brief Cancel the where-to-save choice.
+ * @version 1
+ * @callback
+ */
+static void save_cancel_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    lv_obj_add_flag(s_ed.save_choice, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(s_ed.actions, LV_OBJ_FLAG_HIDDEN);
 }
 
 /**
@@ -361,7 +397,8 @@ static void build_slots_body(lv_obj_t *panel)
 
 /**
  * @brief The control panel: tabs, the three bodies, Revert / Back / Save.
- * @version 1
+ * v2: the where-to-save row.
+ * @version 2
  * @utility
  */
 static void build_panel(lv_obj_t *root, int32_t h)
@@ -381,21 +418,34 @@ static void build_panel(lv_obj_t *root, int32_t h)
     build_contrast_body(panel);
     build_slots_body(panel);
     int32_t by = h - 8 - 24 - 40;
-    button(panel, "Revert", 0, by, 140, revert_cb, 0);
-    button(panel, "Back", 160, by, 140, back_cb, 0);
-    button(panel, "Save", 320, by, 140, save_cb, 0);
+    s_ed.actions = plain(panel, 0, by, 460, 40);
+    button(s_ed.actions, "Revert", 0, 0, 140, revert_cb, 0);
+    button(s_ed.actions, "Back", 160, 0, 140, back_cb, 0);
+    button(s_ed.actions, "Save", 320, 0, 140, save_cb, 0);
+    s_ed.save_choice = plain(panel, 0, by, 460, 40);
+    char only[48];
+    snprintf(only, sizeof(only), "%s only", s_ed.profile);
+    button(s_ed.save_choice, "All the time", 0, 0, 170, save_where_cb, 0);
+    lv_label_set_long_mode(lv_obj_get_child(button(s_ed.save_choice, only, 180, 0, 190,
+                                                   save_where_cb, 1), 0),
+                           LV_LABEL_LONG_MODE_DOTS);
+    button(s_ed.save_choice, "Cancel", 380, 0, 80, save_cancel_cb, 0);
+    lv_obj_add_flag(s_ed.save_choice, LV_OBJ_FLAG_HIDDEN);
 }
 
 /**
- * @brief Build the editor on @p parent from @p y down, starting from the current theme.
- * @version 1
+ * @brief Build the editor on @p parent from @p y down, starting from the current theme; Save
+ *        asks global-or-@p profile when a profile is given.
+ * v2: takes the active profile's name.
+ * @version 2
  * @req REQ-UI-004
  * @return The editor's root object.
  */
-lv_obj_t *theme_editor_create(lv_obj_t *parent, int32_t y, theme_editor_save_cb_t on_save,
-                              theme_editor_close_cb_t on_close)
+lv_obj_t *theme_editor_create(lv_obj_t *parent, int32_t y, const char *profile,
+                              theme_editor_save_cb_t on_save, theme_editor_close_cb_t on_close)
 {
     memset(&s_ed, 0, sizeof(s_ed));
+    if (profile) strncpy(s_ed.profile, profile, sizeof(s_ed.profile) - 1);
     s_ed.orig = *ui_theme_get();
     s_ed.work = s_ed.orig;
     s_ed.on_save = on_save;
@@ -409,6 +459,22 @@ lv_obj_t *theme_editor_create(lv_obj_t *parent, int32_t y, theme_editor_save_cb_
     lv_timer_pause(s_ed.apply_timer);
     theme_editor_set_tab(THEME_EDITOR_INK);
     return s_ed.root;
+}
+
+/**
+ * @brief Press Save: show the where-to-save choice with a profile, else save globally.
+ * @version 1
+ * @req REQ-UI-004
+ */
+void theme_editor_press_save(void)
+{
+    if (!s_ed.root) return;
+    if (!s_ed.profile[0]) {
+        do_save(false);
+        return;
+    }
+    lv_obj_add_flag(s_ed.actions, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(s_ed.save_choice, LV_OBJ_FLAG_HIDDEN);
 }
 
 /**

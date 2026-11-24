@@ -1,6 +1,7 @@
 /**
  * @file ui_theme_lvgl.c
- * @version 1
+ * v2: pressed and disabled states themed (no default-theme black / grey recolours).
+ * @version 2
  * @brief The OKLCH theme as an LVGL theme: stock widgets (containers, buttons, lists,
  *        sliders, switches, rollers, text areas, keyboards, message boxes, scrollbars) draw
  *        with the theme's roles instead of LVGL's built-in palette.
@@ -34,6 +35,8 @@ static lv_style_t s_cursor;       // text area cursor
 static lv_style_t s_placeholder;  // text area placeholder
 static lv_style_t s_backdrop;     // message-box modal backdrop
 static lv_style_t s_scrollbar;    // every scrollbar
+static lv_style_t s_disabled;     // any disabled widget (the default theme greys it)
+static lv_style_t s_disabled_fg;  // a disabled slider / bar / switch fill and knob
 
 /** One theme rule: objects of @c cls (exactly, or any subclass) get @c style at @c sel. */
 typedef struct {
@@ -47,6 +50,9 @@ typedef struct {
 static const theme_rule_t RULES[] = {
     { &lv_obj_class,          true,  &s_surface,     LV_PART_MAIN },
     { &lv_obj_class,          false, &s_scrollbar,   LV_PART_SCROLLBAR },
+    { &lv_obj_class,          false, &s_disabled,    LV_PART_MAIN | LV_STATE_DISABLED },
+    { &lv_obj_class,          false, &s_disabled_fg, LV_PART_INDICATOR | LV_STATE_DISABLED },
+    { &lv_obj_class,          false, &s_disabled_fg, LV_PART_KNOB | LV_STATE_DISABLED },
     { &lv_button_class,       false, &s_button,      LV_PART_MAIN },
     { &lv_button_class,       false, &s_active,      LV_PART_MAIN | LV_STATE_PRESSED },
     { &lv_button_class,       false, &s_active,      LV_PART_MAIN | LV_STATE_CHECKED },
@@ -106,7 +112,8 @@ static void set_fill(lv_style_t *st, ui_role_t fill)
 
 /**
  * @brief Write the current theme's colours into every style.
- * @version 1
+ * v2: pressed and disabled states: the default theme's black / grey recolours cancelled.
+ * @version 2
  * @utility
  */
 static void recolor_styles(void)
@@ -139,6 +146,15 @@ static void recolor_styles(void)
     lv_style_set_bg_color(&s_backdrop, ui_theme_color(UI_ROLE_SCREEN));
     lv_style_set_bg_opa(&s_backdrop, LV_OPA_50);
     lv_style_set_bg_color(&s_scrollbar, border);
+    // The default theme darkens pressed widgets with a black recolour and greys disabled ones
+    // with its own palette: cancel both, the theme's fills carry the state instead.
+    lv_style_set_recolor_opa(&s_active, LV_OPA_TRANSP);
+    set_fill(&s_disabled, UI_ROLE_SURFACE_INSET);
+    lv_style_set_text_color(&s_disabled, ui_theme_text_on(UI_ROLE_TEXT_FAINT,
+                                                          ui_theme_color(UI_ROLE_SURFACE_INSET)));
+    lv_style_set_recolor_opa(&s_disabled, LV_OPA_TRANSP);
+    set_fill(&s_disabled_fg, UI_ROLE_BORDER);
+    lv_style_set_recolor_opa(&s_disabled_fg, LV_OPA_TRANSP);
 }
 
 /**
@@ -157,7 +173,8 @@ static lv_theme_t *init_base(void)
 
 /**
  * @brief Install the themed LVGL theme on @p disp (once; later calls only recolour).
- * @version 1
+ * v2: initialises the disabled style.
+ * @version 2
  * @req REQ-UI-003
  */
 void ui_theme_lvgl_init(lv_display_t *disp)
@@ -169,7 +186,8 @@ void ui_theme_lvgl_init(lv_display_t *disp)
     s_disp = disp;
     lv_style_t *all[] = { &s_surface, &s_button, &s_active, &s_list_item, &s_list_header,
                           &s_track, &s_indicator, &s_knob, &s_input, &s_cursor,
-                          &s_placeholder, &s_backdrop, &s_scrollbar };
+                          &s_placeholder, &s_backdrop, &s_scrollbar, &s_disabled,
+                          &s_disabled_fg };
     for (size_t i = 0; i < sizeof(all) / sizeof(all[0]); i++) lv_style_init(all[i]);
     recolor_styles();
 

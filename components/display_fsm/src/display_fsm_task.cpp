@@ -485,19 +485,16 @@ static void load_background(lv_obj_t *scr, const clock_settings_t *cfg)
  * @utility
  * v3: the theme's contrast target (was AA).
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 3
+ * v4: the screen colour is the sampling fallback.
+ * v5: the theme's ink via ui_theme_ink_on_picture (shared with the host preview).
+ * @version 5
  * @return The colour to draw the text in.
  */
-static lv_color_t legible_over(lv_color_t user, const lv_image_dsc_t *img, const lv_area_t *a)
+static lv_color_t legible_over(const lv_image_dsc_t *img, const lv_area_t *a)
 {
     lv_obj_t *scr = DisplayFsm::get_screen();
-    lv_color_t behind = scr ? lv_obj_get_style_bg_color(scr, LV_PART_MAIN)
-                            : ui_theme_color(UI_ROLE_SCREEN);
-    if (img) {
-        behind = ui_image_region_mean(img, a->x1, LV_MAX(a->y1, 0), a->x2 - a->x1 + 1,
-                                      a->y2 - a->y1 + 1);
-    }
-    return ui_legible_to(user, behind, ui_theme_target(UI_ROLE_TEXT));
+    return ui_theme_ink_on_picture(img, a, scr ? lv_obj_get_style_bg_color(scr, LV_PART_MAIN)
+                                               : ui_theme_color(UI_ROLE_SCREEN));
 }
 
 /**
@@ -521,17 +518,16 @@ extern "C" void display_fsm_set_bg_visible(bool visible)
  *        minimized clock: radar map, photo), or over the background picture when NULL.
  *        Caller holds the LVGL lock.
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: the theme's ink (legible_over no longer takes a colour).
+ * @version 3
  * @req REQ-BG-002
  * @return The user's colour, minimally adjusted for contrast.
  */
 extern "C" lv_color_t display_fsm_min_clock_color(const lv_image_dsc_t *behind)
 {
-    clock_widget_t *clk = DisplayFsm::get_clock();
-    lv_color_t user = clk ? clock_widget_user_color(clk) : ui_theme_color(UI_ROLE_TEXT);
     lv_area_t ma;
     clock_widget_min_area(&ma);
-    return legible_over(user, behind ? behind : s_bg_dsc, &ma);
+    return legible_over(behind ? behind : s_bg_dsc, &ma);
 }
 
 /**
@@ -544,7 +540,8 @@ extern "C" lv_color_t display_fsm_min_clock_color(const lv_image_dsc_t *behind)
  * v3: the ink is the current theme's (was the settings / profile text colour).
  *
  * @utility
- * @version 3
+ * v4: the top-bar colour, judged against the strip behind the bar.
+ * @version 4
  * @req REQ-BG-002
  */
 static void apply_clock_user_color(void)
@@ -557,7 +554,10 @@ static void apply_clock_user_color(void)
     clock_widget_set_user_color(clk, user);
     lv_area_t fa;
     clock_widget_full_area(&fa);
-    clock_widget_set_color(clk, legible_over(user, s_bg_dsc, &fa));
+    clock_widget_set_color(clk, legible_over(s_bg_dsc, &fa));
+    lv_area_t ba;
+    clock_widget_bar_area(&ba);
+    clock_widget_set_bar_color(clk, legible_over(s_bg_dsc, &ba));
     clock_widget_set_minimized_base_color(clk, display_fsm_min_clock_color(NULL));
     lvgl_port_unlock();
 }

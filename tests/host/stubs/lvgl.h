@@ -1,6 +1,7 @@
 /**
  * @file lvgl.h
- * @version 1
+ * v2: lv_area_t.
+ * @version 2
  * @brief Host-test stand-in for the few LVGL types the pure display helpers use (colours,
  *        image descriptors). Only for tests/host; the firmware uses the real LVGL.
  */
@@ -17,6 +18,13 @@ typedef struct {
 } lv_color_t;
 
 typedef uint8_t lv_dir_t;
+
+typedef struct {
+    int32_t x1;
+    int32_t y1;
+    int32_t x2;
+    int32_t y2;
+} lv_area_t;
 
 typedef enum {
     LV_COLOR_FORMAT_RGB565   = 0x12,

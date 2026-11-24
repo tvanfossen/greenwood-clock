@@ -28,8 +28,9 @@ typedef enum {
     THEME_EDITOR_TAB_COUNT
 } theme_editor_tab_t;
 
-/** Called with the edited theme when the user saves (the caller persists it). */
-typedef void (*theme_editor_save_cb_t)(const ui_theme_t *theme);
+/** Called with the edited theme when the user saves (the caller persists it): for the active
+ *  schedule profile only when @p for_profile, else as the global theme. */
+typedef void (*theme_editor_save_cb_t)(const ui_theme_t *theme, bool for_profile);
 
 /** Called when the user closes the editor (after save, or Back): the caller deletes it (or its
  *  parent). Deleting it without saving restores the theme it opened with. */
@@ -37,13 +38,22 @@ typedef void (*theme_editor_close_cb_t)(void);
 
 /**
  * @brief Build the editor full-width on @p parent from @p y down, starting from the current
- *        theme.
- * @version 1
+ *        theme. With @p profile (the active schedule profile's name; NULL or "" for none),
+ *        Save asks whether the theme is for all the time or for that profile only.
+ * v2: takes the active profile's name: Save asks global or profile.
+ * @version 2
  * @req REQ-UI-004
  * @return The editor's root object (delete it, or close the editor, to remove it).
  */
-lv_obj_t *theme_editor_create(lv_obj_t *parent, int32_t y, theme_editor_save_cb_t on_save,
-                              theme_editor_close_cb_t on_close);
+lv_obj_t *theme_editor_create(lv_obj_t *parent, int32_t y, const char *profile,
+                              theme_editor_save_cb_t on_save, theme_editor_close_cb_t on_close);
+
+/**
+ * @brief Press Save (as tapping it would): with a profile, shows the where-to-save choice.
+ * @version 1
+ * @req REQ-UI-004
+ */
+void theme_editor_press_save(void);
 
 /**
  * @brief Show tab @p tab (as tapping it would).

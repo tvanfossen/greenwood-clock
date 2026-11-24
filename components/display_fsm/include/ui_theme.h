@@ -229,6 +229,18 @@ bool ui_theme_slot_by_name(const char *name, ui_slot_t *out);
 bool ui_theme_parse(const char *json, ui_theme_t *out);
 
 /**
+ * @brief The theme's ink made legible at the TEXT target over the mean of @p picture in
+ *        screen area @p a (a screen-sized, top-down picture), or over @p fallback without a
+ *        picture: the colour of text drawn straight on the background (the clock).
+ * @version 1
+ * @req REQ-UI-003
+ * @req REQ-BG-002
+ * @return The text colour.
+ */
+lv_color_t ui_theme_ink_on_picture(const lv_image_dsc_t *picture, const lv_area_t *a,
+                                   lv_color_t fallback);
+
+/**
  * @brief Write @p t as a theme file (the format ui_theme_parse reads, every slot spelled out).
  * @version 1
  * @req REQ-UI-003

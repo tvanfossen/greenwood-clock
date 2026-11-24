@@ -11,6 +11,7 @@
 #include "display_scheduler.h"
 #include "frame_capture.h"
 #include "ui_theme_bind.h"
+#include "alert_card.h"
 #include "nws.h"
 #include "esp_log.h"
 
@@ -133,7 +134,8 @@ void DisplayFsm::react(EvRadarReady const &)      { }
 // Alert banner — handled in base class, composited on ALL states
 /**
  * @brief Show the first active NWS alert in the banner on every state, or hide the banner when none are active.
- * @version 1
+ * v2: an open details card closes (its copy is stale).
+ * @version 2
  * @req REQ-ALERT-001
  */
 void DisplayFsm::react(EvAlertReceived const &)
@@ -142,6 +144,7 @@ void DisplayFsm::react(EvAlertReceived const &)
 
     const nws_alerts_t *alerts = nws_get_alerts();
     if (!alerts || !alerts->valid) return;
+    alert_card_close();   // its copy is stale now
 
     if (alerts->alert_count > 0) {
         alert_banner_show(s_alert_banner, &alerts->alerts[0]);
@@ -367,13 +370,15 @@ void DisplayFsm::update_dot_indicator()
 /**
  * @brief Record the current state id and name and refresh the dot indicator.
  * v2: starts an armed frame-capture recording (every state entry is a transition).
- * @version 2
+ * v3: closes the alert details card.
+ * @version 3
  * @req REQ-DISP-001
  * @req REQ-API-003
  */
 void DisplayFsm::set_state_info(display_state_id_t id, const char *name)
 {
     frame_capture_on_transition();
+    alert_card_close();   // details belong to the screen they were opened over
     s_state_id   = id;
     s_state_name = name;
     update_dot_indicator();
