@@ -1,7 +1,8 @@
 /**
  * @file weather_widgets.c
  * v2: forecast icons resolved off-lock into a cache (forecast_icons_rescan).
- * @version 2
+ * v3: panel text colours judged against the panel's composite backdrop; Lottie top right.
+ * @version 3
  * @brief Layer 1: WeatherCard + ForecastStrip widgets.
  *
  * Caller must hold LVGL lock for all functions, EXCEPT forecast_icons_rescan() (SD I/O: off-lock).
@@ -22,22 +23,28 @@
 
 static const char *TAG = "weather_widgets";
 
-// Panel (box) background colours — the OKLCH contrast reference for text on them.
+// Panel (box) background colours.
 #define WX_CARD_PANEL   0x0a0a1e
 #define WX_STRIP_PANEL  0x1a1a2e
 
+// Secondary text: this share of the primary (rest toward the backdrop), then held to AA.
+#define WX_SECONDARY_MIX  LV_OPA_80
+
 /**
  * @brief Derive a legible primary + a dimmed secondary text colour for @p base over the
- *        given (opaque-equivalent) panel colour. Secondary leans ~43% toward the panel.
- * @version 1
+ *        colour actually behind the text on @p panel (its fill blended over the picture).
+ *        Both are held to WCAG AA against that backdrop.
+ * v2: judged against the composite backdrop, not the panel fill as if opaque (the 70%
+ * panel over a bright picture is far lighter); secondary no longer dims below AA.
+ * @version 2
  * @utility
  */
-static void derive_panel_colors(lv_color_t base, uint32_t panel_hex,
+static void derive_panel_colors(lv_color_t base, lv_obj_t *panel,
                                 lv_color_t *primary, lv_color_t *secondary)
 {
-    lv_color_t panel = lv_color_hex(panel_hex);
-    *primary   = ui_legible(base, panel);
-    *secondary = lv_color_mix(panel, *primary, 85);   // gently dimmed, still clearly light
+    lv_color_t backdrop = display_fsm_panel_backdrop(panel);
+    *primary   = ui_legible(base, backdrop);
+    *secondary = ui_legible(lv_color_mix(*primary, backdrop, WX_SECONDARY_MIX), backdrop);
 }
 
 LV_FONT_DECLARE(nunito_48);
@@ -212,8 +219,8 @@ void forecast_icons_rescan(void)
 
 #if LV_USE_LOTTIE
 
-#define WX_LOTTIE_W          300
-#define WX_LOTTIE_H          300
+#define WX_LOTTIE_W          220
+#define WX_LOTTIE_H          220
 #define WX_LOTTIE_FPS        20
 
 #endif // LV_USE_LOTTIE
@@ -254,7 +261,7 @@ static float kmh_to_mph(float k) { return k * 0.621371f; }
 /**
  * @brief Create the current-conditions card (temp, unit, description, feels-like, wind,
  *        humidity labels) on a dark rounded panel at the top-left of @p parent.
- * @version 1
+ * @version 2
  * @return New card, or NULL on allocation failure (logged).
  * @req REQ-WX-002
  */
@@ -274,7 +281,7 @@ weather_card_t *weather_card_create(lv_obj_t *parent)
     w->container = lv_obj_create(parent);
     lv_obj_set_size(w->container, 556, 350);
     lv_obj_align(w->container, LV_ALIGN_TOP_LEFT, 16, ALERT_BANNER_HEIGHT + 16);
-    lv_obj_set_style_bg_color(w->container, lv_color_hex(0x0a0a1e), 0);
+    lv_obj_set_style_bg_color(w->container, lv_color_hex(WX_CARD_PANEL), 0);
     lv_obj_set_style_bg_opa(w->container, LV_OPA_70, 0);
     lv_obj_set_style_radius(w->container, 12, 0);
     lv_obj_set_style_border_width(w->container, 0, 0);
@@ -379,7 +386,8 @@ void weather_card_set_color(weather_card_t *w, lv_color_t primary, lv_color_t se
 /**
  * @brief Derive panel-legible colours from @p base: primary for temperature and
  *        description, dimmed secondary for unit, feels-like, wind and humidity. NULL-safe.
- * @version 1
+ * @version 2
+ * v2: judged against the panel's real backdrop (fill over the picture under it).
  * @req REQ-WX-002
  * @req REQ-BG-002
  */
@@ -387,7 +395,7 @@ void weather_card_set_contrast(weather_card_t *w, lv_color_t base)
 {
     if (!w) return;
     lv_color_t primary, secondary;
-    derive_panel_colors(base, WX_CARD_PANEL, &primary, &secondary);
+    derive_panel_colors(base, w->container, &primary, &secondary);
     lv_obj_set_style_text_color(w->lbl_temp, primary, 0);
     lv_obj_set_style_text_color(w->lbl_description, primary, 0);
     lv_obj_set_style_text_color(w->lbl_temp_unit, secondary, 0);
@@ -454,7 +462,8 @@ void weather_card_update(weather_card_t *w, const nws_conditions_t *cond)
  * @brief Resolve the condition's Lottie file, allocate its SPIRAM render buffer, create
  *        the background widget and queue it on the shared Lottie loader task.
  *        No-op when LV_USE_LOTTIE is off; failures are logged and cleaned up.
- * @version 1
+ * @version 2
+ * v2: 220 px at the card's top right, clear of the text (was 300 px centred over it).
  * @req REQ-WX-005
  * @req REQ-LOTTIE-001
  */
@@ -500,10 +509,9 @@ void weather_card_load_condition_lottie(weather_card_t *w, const char *condition
 
     lv_obj_set_size(w->lottie_widget, WX_LOTTIE_W, WX_LOTTIE_H);
     lv_lottie_set_buffer(w->lottie_widget, WX_LOTTIE_W, WX_LOTTIE_H, w->lottie_buf);
-    // Position: centered in card, behind text. Opacity raised from 30% — at 30%
-    // it read as a dull, washed-out watermark; 80% makes the condition animation
-    // clearly visible while still sitting behind the (now bright) text labels.
-    lv_obj_align(w->lottie_widget, LV_ALIGN_CENTER, 0, 0);
+    // Top-right of the card, beside the temperature and clear of the text column
+    // (centred, it sat over the description). 80% opacity: 30% read as a watermark.
+    lv_obj_align(w->lottie_widget, LV_ALIGN_TOP_RIGHT, 0, 0);
     lv_obj_set_style_opa(w->lottie_widget, LV_OPA_80, 0);
     lv_obj_move_background(w->lottie_widget);
 
@@ -661,14 +669,15 @@ void forecast_strip_set_color(forecast_strip_t *s, lv_color_t primary, lv_color_
 /**
  * @brief Derive a panel-legible primary from @p base and apply it uniformly to every
  *        day-column label (no dimmed tier).
- * @version 1
+ * v2: judged against the strip's real backdrop (fill over the picture under it).
+ * @version 2
  * @req REQ-WX-003
  * @req REQ-BG-002
  */
 void forecast_strip_set_contrast(forecast_strip_t *s, lv_color_t base)
 {
     lv_color_t primary, secondary;
-    derive_panel_colors(base, WX_STRIP_PANEL, &primary, &secondary);
+    derive_panel_colors(base, s->container, &primary, &secondary);
     (void)secondary;
     // Uniform: every day-column label (name, condition, hi/lo) gets the same
     // legible primary colour — no dimmed tier — so the strip reads cleanly.

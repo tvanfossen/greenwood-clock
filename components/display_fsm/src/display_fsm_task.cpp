@@ -34,6 +34,7 @@
 #include "sdcard.h"
 #include "nws.h"
 
+#include <inttypes.h>
 #include <string.h>
 #include <strings.h>
 #include <stdio.h>
@@ -487,6 +488,34 @@ static lv_color_t legible_over(lv_color_t user, const lv_image_dsc_t *img, const
     lv_color_t mean = ui_image_region_mean(img, a->x1, LV_MAX(a->y1, 0), a->x2 - a->x1 + 1,
                                            a->y2 - a->y1 + 1);
     return ui_legible(user, mean);
+}
+
+/**
+ * @brief The colour text on @p panel actually sits on: the panel's bg colour blended at its
+ *        bg opacity over the mean of the background picture under it (the screen colour
+ *        without a picture). Caller holds the LVGL lock.
+ * @version 1
+ * @req REQ-BG-002
+ * @return The composite backdrop colour.
+ */
+extern "C" lv_color_t display_fsm_panel_backdrop(lv_obj_t *panel)
+{
+    lv_color_t fill = lv_obj_get_style_bg_color(panel, LV_PART_MAIN);
+    lv_opa_t opa = lv_obj_get_style_bg_opa(panel, LV_PART_MAIN);
+    lv_obj_t *scr = DisplayFsm::get_screen();
+    lv_color_t under = scr ? lv_obj_get_style_bg_color(scr, LV_PART_MAIN) : lv_color_black();
+    if (s_bg_dsc && opa < LV_OPA_COVER) {
+        lv_obj_update_layout(panel);
+        lv_area_t a;
+        lv_obj_get_coords(panel, &a);
+        under = ui_image_region_mean(s_bg_dsc, LV_MAX(a.x1, 0), LV_MAX(a.y1, 0),
+                                     lv_area_get_width(&a), lv_area_get_height(&a));
+    }
+    lv_color_t backdrop = lv_color_mix(fill, under, opa);
+    ESP_LOGI(TAG, "panel backdrop: fill #%06" PRIX32 " opa %u over #%06" PRIX32 " -> #%06" PRIX32,
+             lv_color_to_u32(fill) & 0xFFFFFF, opa, lv_color_to_u32(under) & 0xFFFFFF,
+             lv_color_to_u32(backdrop) & 0xFFFFFF);
+    return backdrop;
 }
 
 /**

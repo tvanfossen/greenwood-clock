@@ -23,6 +23,7 @@ extern "C" {
  * Creates the event queue and FSM task. Must be called after
  * bsp_display_start_with_config() and LVGL FS driver init.
  * The FSM enters ClockFull state on startup.
+ * @version 1
  */
 void display_fsm_init(void);
 
@@ -34,6 +35,7 @@ void display_fsm_init(void);
  *
  * @param evt Pointer to event struct (copied into queue).
  * @return true if event was queued, false if queue full.
+ * @version 1
  */
 bool display_fsm_send_event(const display_event_t *evt);
 
@@ -41,6 +43,7 @@ bool display_fsm_send_event(const display_event_t *evt);
  * @brief Get the name of the current display state.
  *
  * @return Static string, e.g. "clock", "weather", "settings".
+ * @version 1
  */
 const char *display_fsm_get_state_name(void);
 
@@ -48,6 +51,7 @@ const char *display_fsm_get_state_name(void);
  * @brief Get the current display state ID.
  *
  * @return Current state enum value.
+ * @version 1
  */
 display_state_id_t display_fsm_get_state_id(void);
 
@@ -55,6 +59,7 @@ display_state_id_t display_fsm_get_state_id(void);
  * @brief Get the FSM's clock widget for external updates (color, etc.).
  *
  * @return Pointer to the ClockWidget, or NULL if not yet created.
+ * @version 1
  */
 struct clock_widget_t *display_fsm_get_clock(void);
 
@@ -70,6 +75,15 @@ struct clock_widget_t *display_fsm_get_clock(void);
 lv_color_t display_fsm_min_clock_color(const lv_image_dsc_t *behind);
 
 /**
+ * @brief The colour text on a translucent @p panel actually sits on: its bg colour at its bg
+ *        opacity over the background picture under it. Caller holds the LVGL lock.
+ * @version 1
+ * @req REQ-BG-002
+ * @return The composite backdrop colour.
+ */
+lv_color_t display_fsm_panel_backdrop(lv_obj_t *panel);
+
+/**
  * @brief Show or hide the clock background image, for screens whose own content covers the
  *        whole display (LVGL draws covered objects too). Caller holds the LVGL lock.
  * @version 1
@@ -81,6 +95,7 @@ void display_fsm_set_bg_visible(bool visible);
  * @brief Get the FSM's active screen for background/widget operations.
  *
  * @return Pointer to the LVGL screen object.
+ * @version 1
  */
 lv_obj_t *display_fsm_get_screen(void);
 
@@ -89,6 +104,7 @@ lv_obj_t *display_fsm_get_screen(void);
  *
  * Deletes the old background (if any), loads the new one from NVS path.
  * Safe to call from LVGL callbacks (handles its own locking).
+ * @version 1
  */
 void display_fsm_refresh_background(void);
 
@@ -97,6 +113,7 @@ void display_fsm_refresh_background(void);
  *
  * Updates the ClockWidget's text color from NVS.
  * Safe to call from LVGL callbacks (handles its own locking).
+ * @version 1
  */
 void display_fsm_refresh_text_color(void);
 
@@ -105,6 +122,7 @@ void display_fsm_refresh_text_color(void);
  *
  * No-op before display init (the backlight PWM is not configured during the boot
  * launch window). No LVGL lock needed.
+ * @version 1
  */
 void display_fsm_refresh_brightness(uint8_t percent);
 
@@ -133,6 +151,7 @@ bool display_fsm_load_lottie(const lottie_load_job_t *job);
  * The Lottie lives on the root screen and must be explicitly hidden
  * when non-ClockFull states are active, otherwise it bleeds through.
  * Caller must hold LVGL lock.
+ * @version 1
  */
 void display_fsm_show_clock_lottie(void);
 void display_fsm_hide_clock_lottie(void);
