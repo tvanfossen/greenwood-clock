@@ -23,6 +23,8 @@ idf_component_register(
         "src/text_roll.c"
         "src/image_decode.c"
         "src/ui_contrast.c"
+        "src/ui_theme.c"
+        "src/ui_theme_json.c"
         "src/astro_calc.c"
         "src/image_rotator.c"
         "src/json_layout.c"

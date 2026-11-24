@@ -1,6 +1,7 @@
 /**
  * @file ui_contrast.h
- * @version 1
+ * v2: OKLCH type and conversions; ui_legible_to takes the contrast target.
+ * @version 2
  * @brief Text-legibility helpers: WCAG contrast ratio, black/white pick and OKLCH lightness-adjusted legible colour.
  */
 // Text-legibility helpers. Two distinct problems, two tools:
@@ -26,6 +27,17 @@ extern "C" {
 // WCAG 2.x minimum contrast ratio for normal text (AA): ui_legible()'s target.
 #define UI_CONTRAST_AA 4.5f
 
+// An OKLCH colour: lightness 0..1, chroma (0 = grey, ~0.37 = gamut edge), hue in degrees.
+typedef struct {
+    float l;
+    float c;
+    float h;
+} ui_oklch_t;
+
+// The sRGB colour of an OKLCH colour (clamped to the gamut), and the reverse.
+lv_color_t ui_oklch_to_color(ui_oklch_t c);
+ui_oklch_t ui_color_to_oklch(lv_color_t c);
+
 // WCAG contrast ratio between two colours: 1.0 (none) .. 21.0 (black/white).
 float ui_contrast_ratio(lv_color_t a, lv_color_t b);
 
@@ -35,6 +47,9 @@ lv_color_t ui_text_on(lv_color_t bg);
 // `desired` if it clears AA against bg, else its OKLCH lightness minimally shifted
 // to clear it (hue/chroma kept).
 lv_color_t ui_legible(lv_color_t desired, lv_color_t bg);
+
+// The same, with any contrast target (e.g. 7.0 for WCAG AAA).
+lv_color_t ui_legible_to(lv_color_t desired, lv_color_t bg, float target);
 
 // Mean colour of a rectangular region of an image buffer (RGB565 or ARGB8888),
 // coords in BUFFER space. Pair with ui_legible() for legible text over an image:

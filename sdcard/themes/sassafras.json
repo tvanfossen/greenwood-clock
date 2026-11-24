@@ -1,0 +1,8 @@
+{
+  "$comment": "Cores from sassafras-class docs/design/design_master/tokens.json: ink = text.primary #2A2118, surface = bg.paper #FAF1D9, accent = accent.default #3D6B2E.",
+  "name": "Sassafras",
+  "ink": [0.255, 0.021, 66.6],
+  "surface": [0.959, 0.033, 89.8],
+  "accent": [0.479, 0.104, 138.6],
+  "contrast": 7.0
+}

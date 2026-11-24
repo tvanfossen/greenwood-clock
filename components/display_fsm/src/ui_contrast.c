@@ -1,7 +1,9 @@
 /**
  * @file ui_contrast.c
- * @version 1
- * @brief Text-legibility helpers: WCAG luminance/contrast, black/white pick, minimal OKLCH lightness shift and image-region mean colour.
+ * v2: OKLCH conversions public; the legibility target is a parameter (ui_legible_to).
+ * @version 2
+ * @brief Text-legibility helpers: WCAG luminance/contrast, black/white pick, OKLCH
+ *        conversions, minimal OKLCH lightness shift and image-region mean colour.
  */
 // Text-legibility helpers — see ui_contrast.h.
 
@@ -154,18 +156,20 @@ static float contrast_at(float L, float a, float b, lv_color_t bg)
 
 /**
  * @brief Smallest move of lightness from @p L toward @p end (0 or 1) that reaches
- *        UI_CONTRAST_AA against @p bg; @p L itself is known to fall short.
- * @version 1
+ *        @p target against @p bg; @p L itself is known to fall short.
+ * v2: the target is a parameter (was always UI_CONTRAST_AA).
+ * @version 2
  * @utility
  * @return Whether that direction reaches the target at all (@p out is set when it does).
  */
-static bool shift_toward(float L, float a, float b, lv_color_t bg, float end, float *out)
+static bool shift_toward(float L, float a, float b, lv_color_t bg, float end, float target,
+                         float *out)
 {
-    if (contrast_at(end, a, b, bg) < UI_CONTRAST_AA) return false;
+    if (contrast_at(end, a, b, bg) < target) return false;
     float fail = L, pass = end;
     for (int i = 0; i < LEGIBLE_STEPS; i++) {
         float mid = 0.5f * (fail + pass);
-        if (contrast_at(mid, a, b, bg) >= UI_CONTRAST_AA) pass = mid;
+        if (contrast_at(mid, a, b, bg) >= target) pass = mid;
         else fail = mid;
     }
     *out = pass;
@@ -173,28 +177,67 @@ static bool shift_toward(float L, float a, float b, lv_color_t bg, float end, fl
 }
 
 /**
- * @brief @p desired when it already reaches UI_CONTRAST_AA against @p bg; otherwise the same
- *        OKLCH hue and chroma with lightness moved only as far as AA needs, in whichever
- *        direction needs the smaller move (the extreme with the better contrast when neither
- *        reaches it).
+ * @brief @p desired when it already reaches @p target against @p bg; otherwise the same
+ *        OKLCH hue and chroma with lightness moved only as far as @p target needs, in
+ *        whichever direction needs the smaller move (the extreme with the better contrast
+ *        when neither reaches it).
+ * @version 1
+ * @req REQ-BG-002
+ * @return Legible text colour.
+ */
+lv_color_t ui_legible_to(lv_color_t desired, lv_color_t bg, float target)
+{
+    if (ui_contrast_ratio(desired, bg) >= target) return desired;
+    float L, a, b, up_L = 1.0f, down_L = 0.0f;
+    srgb_to_oklab(desired, &L, &a, &b);
+    bool up = shift_toward(L, a, b, bg, 1.0f, target, &up_L);
+    bool down = shift_toward(L, a, b, bg, 0.0f, target, &down_L);
+    float out;
+    if (up && down) out = (up_L - L <= L - down_L) ? up_L : down_L;
+    else if (up || down) out = up ? up_L : down_L;
+    else out = (contrast_at(1.0f, a, b, bg) >= contrast_at(0.0f, a, b, bg)) ? 1.0f : 0.0f;
+    return oklab_to_srgb(out, a, b);
+}
+
+/**
+ * @brief ui_legible_to() at WCAG AA.
+ * v3: delegates to ui_legible_to (the target became a parameter).
  * v2: minimal shift with pass-through (was: lightness always pushed to L <= 0.06 or >= 0.95,
  *     which turned a legible white black over a light background).
- * @version 2
+ * @version 3
  * @req REQ-BG-002
  * @return Legible text colour.
  */
 lv_color_t ui_legible(lv_color_t desired, lv_color_t bg)
 {
-    if (ui_contrast_ratio(desired, bg) >= UI_CONTRAST_AA) return desired;
-    float L, a, b, up_L = 1.0f, down_L = 0.0f;
-    srgb_to_oklab(desired, &L, &a, &b);
-    bool up = shift_toward(L, a, b, bg, 1.0f, &up_L);
-    bool down = shift_toward(L, a, b, bg, 0.0f, &down_L);
-    float target;
-    if (up && down) target = (up_L - L <= L - down_L) ? up_L : down_L;
-    else if (up || down) target = up ? up_L : down_L;
-    else target = (contrast_at(1.0f, a, b, bg) >= contrast_at(0.0f, a, b, bg)) ? 1.0f : 0.0f;
-    return oklab_to_srgb(target, a, b);
+    return ui_legible_to(desired, bg, UI_CONTRAST_AA);
+}
+
+/**
+ * @brief The sRGB colour of an OKLCH colour (channels clamped to the gamut).
+ * @version 1
+ * @req REQ-UI-003
+ * @return sRGB colour.
+ */
+lv_color_t ui_oklch_to_color(ui_oklch_t c)
+{
+    float hr = c.h * (3.14159265f / 180.0f);
+    return oklab_to_srgb(c.l, c.c * cosf(hr), c.c * sinf(hr));
+}
+
+/**
+ * @brief The OKLCH coordinates of an sRGB colour (hue in degrees, 0..360).
+ * @version 1
+ * @req REQ-UI-003
+ * @return OKLCH colour.
+ */
+ui_oklch_t ui_color_to_oklch(lv_color_t c)
+{
+    float L, a, b;
+    srgb_to_oklab(c, &L, &a, &b);
+    float h = atan2f(b, a) * (180.0f / 3.14159265f);
+    ui_oklch_t out = { L, sqrtf(a * a + b * b), h < 0.0f ? h + 360.0f : h };
+    return out;
 }
 
 // Add one pixel's 8-bit R/G/B to the running sums (RGB565 or ARGB/XRGB byte

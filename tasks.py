@@ -60,6 +60,7 @@ HOST_TESTS = {
     "leaf_field": ("leaf_field", "leaf_physics"),
     "bg_schedule": ("settings/bg_schedule_model",),
     "ui_contrast": ("ui_contrast",),
+    "ui_theme": ("ui_theme", "ui_theme_json", "ui_contrast", "cjson/cjson/cJSON"),
     "radar_frames": ("nws/src/nws_radar_frames",),
     "conditions_merge": ("nws/src/nws_conditions_merge",),
 }
@@ -71,6 +72,7 @@ HOST_TEST_INCLUDES = (
     REPO / "components" / "nws" / "src",
     REPO / "components" / "nws" / "include",
     REPO / "components" / "display_events" / "include",
+    REPO / "components" / "cjson" / "cjson",
     REPO / "tests" / "host" / "stubs",  # minimal lvgl.h for the pure display helpers
 )
 

@@ -472,6 +472,22 @@ requirements:
     subsystem: UI
     description: A browser UI served from /www shows status, current weather and forecast, and edits settings through the API.
     acceptance_criteria: http://greenwood-clock.local/www/ loads and saves settings.
+  REQ-UI-003:
+    name: One OKLCH colour theme
+    subsystem: UI
+    description: >-
+      Every colour the firmware and the web panel draw comes from one theme: three OKLCH core
+      colours (ink, surface, accent) and a contrast target, derived into named roles (surfaces,
+      border, text tiers, accents, error/warn, a near-white, a leaf palette, swatches). Text is
+      made legible against what is really behind it, keeping its hue and moving only its
+      lightness. Themes are JSON files in /sdcard/themes, chosen globally and per schedule
+      profile; a compiled-in base theme reproduces the original look. Colours that come from
+      images, GIFs and Lottie files are their own and are not themed.
+    acceptance_criteria: >-
+      Switching between the Greenwood and Sassafras themes recolours the clock at once and
+      every other screen (weather, radar, astronomy, ambient, photos, settings, alerts, the web
+      panel) on its next showing, with no colour left over from the previous theme; text on
+      every panel reads at the theme's contrast target where the backdrop allows it.
 
   # ---------------------------------------------------------------- TOOL
   REQ-TOOL-001:
