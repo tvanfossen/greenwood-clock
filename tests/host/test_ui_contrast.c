@@ -29,7 +29,7 @@ static int s_checks   = 0;
 /**
  * @brief True if @p a and @p b are the same colour.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Whether every channel matches.
  */
 static bool same(lv_color_t a, lv_color_t b)
@@ -40,7 +40,7 @@ static bool same(lv_color_t a, lv_color_t b)
 /**
  * @brief Colours that already meet the target are returned exactly.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void test_pass_through(void)
 {
@@ -54,7 +54,7 @@ static void test_pass_through(void)
 /**
  * @brief Black over the dark radar map becomes light enough, and no lighter than needed.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void test_black_over_dark(void)
 {
@@ -68,7 +68,7 @@ static void test_black_over_dark(void)
 /**
  * @brief White over a bright background darkens only as far as AA needs (not to black).
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void test_white_over_light(void)
 {
@@ -83,7 +83,7 @@ static void test_white_over_light(void)
 /**
  * @brief A dark red over a dark grey lightens but stays red (hue kept).
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void test_hue_kept(void)
 {
@@ -98,7 +98,7 @@ static void test_hue_kept(void)
 /**
  * @brief Run the ui_contrast tests; exit status is the failure count.
  * @version 1
- * @dg_internal
+ * @utility
  * @return 0 when every check passed.
  */
 int main(void)

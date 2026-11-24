@@ -39,7 +39,7 @@ typedef struct {
 /**
  * @brief Rotated kite vertices for leaf @p i.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void leaf_kite(const leaf_field_t *f, int i, leaf_kite_t *k)
 {

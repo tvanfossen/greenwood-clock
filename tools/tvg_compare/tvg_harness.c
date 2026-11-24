@@ -38,7 +38,7 @@ typedef Tvg_Animation *anim_t;
 /**
  * @brief Monotonic time in microseconds.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Microseconds.
  */
 static double now_us(void)

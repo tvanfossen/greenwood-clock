@@ -64,7 +64,7 @@ static unsigned char *decode_rgba(const uint8_t *png, size_t len, int *w, int *h
 /**
  * @brief Swizzle RGBA pixels into a stride-aligned BGRA (LVGL ARGB8888) buffer.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void swizzle_rgba_to_bgra(uint8_t *dst, uint32_t dstride,
                                  const unsigned char *raw, int w, int h)
@@ -86,7 +86,7 @@ static void swizzle_rgba_to_bgra(uint8_t *dst, uint32_t dstride,
 /**
  * @brief Allocate a SPIRAM image descriptor pointing at a ready pixel buffer.
  * @version 1
- * @dg_internal
+ * @utility
  * @return New descriptor, or NULL if allocation fails.
  */
 static lv_image_dsc_t *make_dsc(uint8_t *pixels, int w, int h,
@@ -113,7 +113,7 @@ static lv_image_dsc_t *make_dsc(uint8_t *pixels, int w, int h,
 /**
  * @brief Build a persistent 64-byte-aligned, cache-synced SPIRAM ARGB8888 descriptor from RGBA pixels.
  * @version 1
- * @dg_internal
+ * @utility
  * @return New descriptor, or NULL on allocation failure.
  */
 static lv_image_dsc_t *build_dsc_from_raw(const unsigned char *raw, int w, int h)
@@ -140,7 +140,7 @@ static lv_image_dsc_t *build_dsc_from_raw(const unsigned char *raw, int w, int h
 /**
  * @brief Pack RGBA pixels into a stride-aligned RGB565 buffer, dropping alpha.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void pack_rgba_to_rgb565(uint8_t *dst, uint32_t dstride,
                                 const unsigned char *raw, int w, int h)
@@ -162,7 +162,7 @@ static void pack_rgba_to_rgb565(uint8_t *dst, uint32_t dstride,
 /**
  * @brief Build a persistent 64-byte-aligned, cache-synced SPIRAM RGB565 descriptor from RGBA pixels (opaque images).
  * @version 1
- * @dg_internal
+ * @utility
  * @return New descriptor, or NULL on allocation failure.
  */
 static lv_image_dsc_t *build_dsc_rgb565(const unsigned char *raw, int w, int h)
@@ -213,7 +213,7 @@ lv_image_dsc_t *image_decode_png_buf(const uint8_t *png, size_t len)
 /**
  * @brief Get a file's size via ftell and rewind it to the start.
  * @version 1
- * @dg_internal
+ * @utility
  * @return File size in bytes, or a negative value on error.
  */
 static long file_size(FILE *f)
@@ -228,7 +228,7 @@ static long file_size(FILE *f)
 /**
  * @brief Read a whole file into a fresh SPIRAM buffer.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Buffer (caller frees with heap_caps_free) with *len_out set, or NULL on open/alloc/read failure.
  */
 static uint8_t *read_file_spiram(const char *path, size_t *len_out)
@@ -380,7 +380,7 @@ bool image_decode_save_raw_rgb565(const char *path, const lv_image_dsc_t *dsc)
 /**
  * @brief Average one 2x2 block of ARGB8888 pixels at @p p (row pitch @p stride bytes) into @p out.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void avg_2x2(const uint8_t *p, uint32_t stride, uint8_t *out)
 {

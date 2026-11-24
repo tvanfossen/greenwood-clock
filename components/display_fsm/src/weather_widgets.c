@@ -30,7 +30,7 @@ static const char *TAG = "weather_widgets";
  * @brief Derive a legible primary + a dimmed secondary text colour for @p base over the
  *        given (opaque-equivalent) panel colour. Secondary leans ~43% toward the panel.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void derive_panel_colors(lv_color_t base, uint32_t panel_hex,
                                 lv_color_t *primary, lv_color_t *secondary)
@@ -71,7 +71,7 @@ static const struct {
 /**
  * @brief Index into WX_CONDITIONS of the first entry whose keyword occurs in @p desc.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Matching index, or the last (mostly_cloudy) when @p desc is NULL or nothing matches.
  */
 static int condition_index(const char *desc)
@@ -90,7 +90,7 @@ static int condition_index(const char *desc)
  *        condition asset basename.
  * v2: the keyword table moved to file scope (WX_CONDITIONS) so the icon cache can walk it.
  * @version 2
- * @dg_internal
+ * @utility
  * @return Condition basename used to build the POSIX path (for stat), not an LVGL path;
  *         "mostly_cloudy" when @p desc is NULL or nothing matches.
  */
@@ -111,7 +111,7 @@ static const condition_asset_t WX_ASSET_ICON   = {"icons/weather", ".png"};
 /**
  * @brief Format the POSIX path for one asset candidate and report whether it exists.
  * @version 1
- * @dg_internal
+ * @utility
  * @return true when the file exists.
  */
 static bool asset_candidate(const condition_asset_t *a, const char *tod, const char *base,
@@ -239,14 +239,14 @@ struct weather_card_t {
 /**
  * @brief Convert degrees Celsius to Fahrenheit.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Temperature in Fahrenheit.
  */
 static float c_to_f(float c) { return c * 9.0f / 5.0f + 32.0f; }
 /**
  * @brief Convert km/h to mph.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Speed in mph.
  */
 static float kmh_to_mph(float k) { return k * 0.621371f; }
@@ -397,9 +397,11 @@ void weather_card_set_contrast(weather_card_t *w, lv_color_t base)
 }
 
 /**
- * @brief Refresh the card labels from current conditions (F / mph; dash for missing
- *        temperatures) and re-align them. Ignores NULL or invalid input.
- * @version 1
+ * @brief Refresh the card labels from current conditions (F / mph; "--" for missing
+ *        temperatures and humidity) and re-align them. Ignores NULL or invalid input.
+ * v2: "--" for missing values (the em dash is not in the font: it drew nothing); humidity too
+ *     (showed "-1%").
+ * @version 2
  * @req REQ-WX-002
  */
 void weather_card_update(weather_card_t *w, const nws_conditions_t *cond)
@@ -412,7 +414,7 @@ void weather_card_update(weather_card_t *w, const nws_conditions_t *cond)
     // "temperature" field; nws_conditions defaults to -999°C → -1766°F.
     // Treat anything below -200°C as "no data" and show a dash.
     if (cond->temp_c <= -200.0f) {
-        lv_label_set_text(w->lbl_temp, "—");
+        lv_label_set_text(w->lbl_temp, "--");
     } else {
         snprintf(buf, sizeof(buf), "%.0f", c_to_f(cond->temp_c));
         lv_label_set_text(w->lbl_temp, buf);
@@ -425,7 +427,7 @@ void weather_card_update(weather_card_t *w, const nws_conditions_t *cond)
 
     // Feels like
     if (cond->feels_like_c <= -200.0f) {
-        lv_label_set_text(w->lbl_feels, "Feels like —");
+        lv_label_set_text(w->lbl_feels, "Feels like --");
     } else {
         snprintf(buf, sizeof(buf), "Feels like %.0fF", c_to_f(cond->feels_like_c));
         lv_label_set_text(w->lbl_feels, buf);
@@ -437,7 +439,8 @@ void weather_card_update(weather_card_t *w, const nws_conditions_t *cond)
     lv_label_set_text(w->lbl_wind, buf);
 
     // Humidity
-    snprintf(buf, sizeof(buf), "Humidity %d%%", cond->humidity);
+    if (cond->humidity < 0) snprintf(buf, sizeof(buf), "Humidity --");
+    else snprintf(buf, sizeof(buf), "Humidity %d%%", cond->humidity);
     lv_label_set_text(w->lbl_humidity, buf);
 
     // Re-align after text changes
@@ -536,7 +539,7 @@ struct forecast_strip_t {
 /**
  * @brief Create one label in a forecast column.
  * @version 1
- * @dg_internal
+ * @utility
  * @return The label.
  */
 static lv_obj_t *strip_label(lv_obj_t *col, const lv_font_t *font, lv_align_t align, int32_t y,
@@ -553,7 +556,7 @@ static lv_obj_t *strip_label(lv_obj_t *col, const lv_font_t *font, lv_align_t al
 /**
  * @brief Create day column @p i: name, condition icon (text fallback), hi/lo.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void strip_create_column(forecast_strip_t *s, int i)
 {
@@ -704,7 +707,7 @@ static void strip_set_condition(forecast_strip_t *s, int day, const char *desc, 
  *        right in every case.
  * v2: adds the month/day after the weekday.
  * @version 2
- * @dg_internal
+ * @utility
  */
 static void strip_day_name(int day_idx, char *out, size_t out_sz)
 {
@@ -721,7 +724,7 @@ static void strip_day_name(int day_idx, char *out, size_t out_sz)
 /**
  * @brief Fill one column from a forecast period (night period @p p only for "Tonight").
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void strip_fill_day(forecast_strip_t *s, int day, const nws_forecast_t *fc, int i)
 {

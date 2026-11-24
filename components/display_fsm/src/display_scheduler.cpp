@@ -196,7 +196,7 @@ void DisplayScheduler::init(void)
 /**
  * @brief Find the config entry for @p state.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Matching StateConfig, or nullptr.
  */
 DisplayScheduler::StateConfig *DisplayScheduler::find_config(display_state_id_t state)

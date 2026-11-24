@@ -69,7 +69,7 @@ static void sched_save(void)
 /**
  * @brief A modal panel over everything (dimmed backdrop on the top layer).
  * @version 1
- * @dg_internal
+ * @utility
  * @return The panel; delete its parent (the backdrop) to close it.
  */
 static lv_obj_t *modal_panel(const char *title, int32_t w, int32_t h)
@@ -100,7 +100,7 @@ static lv_obj_t *modal_panel(const char *title, int32_t w, int32_t h)
 /**
  * @brief Close the modal that @p obj belongs to.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void modal_close(lv_obj_t *obj)
 {
@@ -127,7 +127,7 @@ static void choice_click_cb(lv_event_t *e)
 /**
  * @brief A modal list of @p n choices (@p current highlighted); @p cb gets the picked index.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void choice_popup(const char *title, const char *const *labels, int n, int current,
                          choice_cb_t cb)
@@ -164,7 +164,7 @@ static void grid_build_async(void *unused)
 /**
  * @brief Save, then rebuild the grid after the current event: the tapped button is part of it.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void grid_changed(void)
 {
@@ -224,7 +224,7 @@ static void slot_time_cb(lv_event_t *e)
 /**
  * @brief A grid button: @p text on @p color, calling @p cb with @p data when tapped.
  * @version 1
- * @dg_internal
+ * @utility
  * @return The button.
  */
 static lv_obj_t *grid_button(int32_t x, int32_t y, int32_t w, const char *text, uint32_t color,
@@ -332,7 +332,7 @@ static void modal_cancel_cb(lv_event_t *e)
 /**
  * @brief A text button in a modal panel.
  * @version 1
- * @dg_internal
+ * @utility
  * @return The button.
  */
 static lv_obj_t *panel_button(lv_obj_t *panel, const char *text, lv_align_t align, int32_t x,
@@ -541,7 +541,7 @@ static int       s_image_count;
 /**
  * @brief Write the profile's current settings into the value labels.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void profile_rows_refresh(void)
 {
@@ -564,7 +564,7 @@ static void profile_rows_refresh(void)
 /**
  * @brief Save and show a profile edit.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void profile_changed(void)
 {
@@ -590,7 +590,7 @@ static void image_chosen(int choice)
 /**
  * @brief List the PNG backgrounds on the SD card into s_images.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void images_scan(void)
 {
@@ -734,7 +734,7 @@ static void profile_delete_cb(lv_event_t *e)
 /**
  * @brief One settings row: a caption and a full-width value button calling @p cb.
  * @version 1
- * @dg_internal
+ * @utility
  * @return The value button's label.
  */
 static lv_obj_t *profile_row(lv_obj_t *cont, int row, const char *caption, lv_event_cb_t cb)
@@ -758,7 +758,7 @@ static lv_obj_t *profile_row(lv_obj_t *cont, int row, const char *caption, lv_ev
 /**
  * @brief The brightness row: a slider and a "Same as Settings" switch.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void brightness_row(lv_obj_t *cont)
 {

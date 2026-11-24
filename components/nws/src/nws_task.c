@@ -15,7 +15,7 @@ static nws_event_cb_t s_event_cb;
 /**
  * @brief Deliver @p evt through the registered event callback, if one is set.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void send_event(const display_event_t *evt)
 {
@@ -155,7 +155,7 @@ static bool alerts_changed(const nws_alerts_t *new_alerts)
 /**
  * @brief Record the alert count and first event name for later change detection.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void alerts_snapshot(const nws_alerts_t *alerts)
 {
@@ -213,7 +213,7 @@ static TickType_t seed_due_in(TickType_t t0, uint32_t interval_s, uint32_t due_i
 /**
  * @brief Send a payload-less display event of @p type.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void send_simple_event(display_event_type_t type)
 {
@@ -336,7 +336,7 @@ static void poll_alerts(float lat, float lon, TickType_t *now,
  *        has it; save it to the history (the newest overwrites its file, repairing one saved
  *        by an older build) and, for the newest, make it the cached image.
  * @version 1
- * @dg_internal
+ * @utility
  * @return ESP_OK (fetched or nothing to do) or the fetch error. @p new_latest is set when the
  *         cached image changed.
  */

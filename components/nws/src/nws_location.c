@@ -12,6 +12,8 @@
 static const char *TAG = "nws_loc";
 
 #define NWS_POINTS_URL_FMT  "https://api.weather.gov/points/%.4f,%.4f"
+// Stations for a forecast grid cell, nearest first (no lat/lon needed).
+#define NWS_GRID_STATIONS_URL_FMT  "https://api.weather.gov/gridpoints/%s/%d,%d/stations"
 
 // ---------------------------------------------------------------------------
 // NVS cache helpers
@@ -54,7 +56,7 @@ static bool location_cached(float lat, float lon, nws_location_t *out)
 /**
  * @brief settings_update mutator: copy the resolved office, grid and station from @p ctx into @p cfg.
  * @version 1
- * @dg_internal
+ * @utility
  * @return true (always save).
  */
 static bool location_cache_mutator(clock_settings_t *cfg, void *ctx)
@@ -205,7 +207,8 @@ static esp_err_t parse_points_response(const char *json_str, nws_location_t *out
 
 /**
  * @brief Resolve lat/lon to NWS office, grid and nearest station (NVS cache first, then /points).
- * @version 1
+ * v2: the /points URL (it carries lat/lon) is no longer logged.
+ * @version 2
  * @req REQ-WX-001
  * @return ESP_OK when resolved; ESP_ERR_HTTP_CONNECT or ESP_ERR_INVALID_RESPONSE on failure.
  */
@@ -223,7 +226,7 @@ esp_err_t nws_resolve_location(float lat, float lon, nws_location_t *out)
     // Fetch from NWS API
     char url[128];
     snprintf(url, sizeof(url), NWS_POINTS_URL_FMT, lat, lon);
-    ESP_LOGI(TAG, "resolving: %s", url);
+    ESP_LOGI(TAG, "resolving location via /points");   // the URL carries lat/lon: never log it
 
     char *json = nws_http_fetch_json(TAG, url);
     if (!json) {
@@ -243,4 +246,45 @@ esp_err_t nws_resolve_location(float lat, float lon, nws_location_t *out)
     }
 
     return err;
+}
+
+/**
+ * @brief Copy up to @p max station ids, in response order (nearest first), from a /stations
+ *        response's features into @p ids.
+ * @version 1
+ * @utility
+ * @return Number copied.
+ */
+static int station_ids_from_features(const cJSON *root, char ids[][8], int max)
+{
+    const cJSON *features = cJSON_GetObjectItemCaseSensitive(root, "features");
+    const cJSON *f;
+    int n = 0;
+    cJSON_ArrayForEach(f, features) {
+        if (n >= max) break;
+        const cJSON *props = cJSON_GetObjectItemCaseSensitive(f, "properties");
+        const cJSON *id = cJSON_GetObjectItemCaseSensitive(props, "stationIdentifier");
+        if (cJSON_IsString(id) && id->valuestring) snprintf(ids[n++], 8, "%s", id->valuestring);
+    }
+    return n;
+}
+
+/**
+ * @brief The observation stations for @p loc's forecast grid cell, nearest first (up to
+ *        @p max), for filling values the nearest station's observation lacks.
+ * @version 1
+ * @req REQ-WX-002
+ * @return Number of ids written to @p ids, or -1 if the list could not be fetched.
+ */
+int nws_nearby_stations(const nws_location_t *loc, char ids[][8], int max)
+{
+    char url[128];
+    snprintf(url, sizeof(url), NWS_GRID_STATIONS_URL_FMT, loc->office, loc->grid_x, loc->grid_y);
+    char *json = nws_http_fetch_json(TAG, url);
+    cJSON *root = json ? cJSON_Parse(json) : NULL;
+    free(json);
+    int n = root ? station_ids_from_features(root, ids, max) : -1;
+    cJSON_Delete(root);
+    ESP_LOGI(TAG, "nearby stations: %d", n);
+    return n;
 }

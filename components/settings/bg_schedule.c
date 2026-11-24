@@ -27,7 +27,7 @@ static SemaphoreHandle_t s_lock;
 /**
  * @brief Read the stored blob into @p out.
  * @version 1
- * @dg_internal
+ * @utility
  * @return ESP_OK, or why nothing valid was stored.
  */
 static esp_err_t read_stored(bg_schedule_t *out)
@@ -85,7 +85,7 @@ void bg_schedule_get(bg_schedule_t *out)
 /**
  * @brief Write @p s to NVS and commit.
  * @version 1
- * @dg_internal
+ * @utility
  * @return ESP_OK or the NVS error.
  */
 static esp_err_t write_stored(const bg_schedule_t *s)

@@ -428,7 +428,7 @@ void radar_view_predecode(const uint8_t *png_data, size_t len, time_t valid_ts)
 /**
  * @brief The overlay not currently shown (the crossfade target).
  * @version 1
- * @dg_internal
+ * @utility
  * @return The back overlay image.
  */
 static lv_obj_t *overlay_back(const radar_view_t *rv)
@@ -440,7 +440,7 @@ static lv_obj_t *overlay_back(const radar_view_t *rv)
  * @brief Show @p dsc on overlay @p img, scaled to fill the screen width (half-resolution
  *        loop frames draw at 2x, an exact PPA scale; full-resolution images at 1x).
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void overlay_set(lv_obj_t *img, const lv_image_dsc_t *dsc)
 {
@@ -452,7 +452,7 @@ static void overlay_set(lv_obj_t *img, const lv_image_dsc_t *dsc)
 /**
  * @brief Detach @p dsc from whichever overlay still shows it (before it is freed).
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void overlay_detach(radar_view_t *rv, const lv_image_dsc_t *dsc)
 {

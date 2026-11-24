@@ -168,7 +168,7 @@ static esp_err_t upload_receive_loop(httpd_req_t* req, FILE* f,
  *
  * @param filepath  Full file path whose parent directories are created.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void mkdirs(const char *filepath)
 {
@@ -192,7 +192,7 @@ static void mkdirs(const char *filepath)
  * @param filepath   Destination path.
  * @param total_out  Set to bytes received on success.
  * @version 1
- * @dg_internal
+ * @utility
  * @return ESP_OK or ESP_FAIL.
  */
 static esp_err_t upload_open_and_receive(httpd_req_t* req, const char* filepath,
@@ -662,7 +662,7 @@ static void http_api_configure_server(httpd_config_t* config)
 /**
  * @brief Look up the coredump data partition.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Partition handle, or NULL if the table has no coredump partition.
  */
 static const esp_partition_t *coredump_partition(void)
@@ -1746,7 +1746,7 @@ static esp_err_t ota_status_handler(httpd_req_t *req)
  *
  * @param path  File path whose extension is inspected.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Static MIME type string; "application/octet-stream" if unknown.
  */
 static const char *www_mime_type(const char *path)
@@ -2027,7 +2027,7 @@ static esp_err_t schedule_get_handler(httpd_req_t *req)
  * @param key   Field name to look up.
  * @param out   Destination; left unchanged if the field is absent or non-numeric.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void json_copy_u16(const cJSON *root, const char *key, uint16_t *out)
 {
@@ -2041,7 +2041,7 @@ static void json_copy_u16(const cJSON *root, const char *key, uint16_t *out)
  * @param root  Parsed JSON request body.
  * @param cfg   Settings to update in place.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void parse_schedule_fields(const cJSON *root, clock_settings_t *cfg)
 {
@@ -2062,7 +2062,7 @@ static void parse_schedule_fields(const cJSON *root, clock_settings_t *cfg)
  *
  * @param cfg  Settings holding the new schedule timings.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void notify_schedule_config(const clock_settings_t *cfg)
 {
@@ -2093,7 +2093,7 @@ typedef struct {
 /**
  * @brief settings_update mutator: merge the schedule fields of the JSON body into @p cfg.
  * @version 1
- * @dg_internal
+ * @utility
  * @return true (always save).
  */
 static bool schedule_mutator(clock_settings_t *cfg, void *ctx)
@@ -2304,7 +2304,7 @@ typedef struct {
  * @brief Merge brightness / text_color / background_image from @p root into @p cfg.
  * v2: records a brightness change so it is applied live (it was saved but never applied).
  * @version 2
- * @dg_internal
+ * @utility
  */
 static void settings_merge_blob_fields(const cJSON *root, clock_settings_t *cfg, settings_changes_t *ch)
 {
@@ -2328,7 +2328,7 @@ static void settings_merge_blob_fields(const cJSON *root, clock_settings_t *cfg,
 /**
  * @brief Parse "clock_anim" (Hummingbird / Snowfall / None) from @p root.
  * @version 1
- * @dg_internal
+ * @utility
  * @return false when present but unrecognised (caller rejects the request).
  */
 static bool settings_parse_anim(const cJSON *root, settings_changes_t *ch)
@@ -2344,7 +2344,7 @@ static bool settings_parse_anim(const cJSON *root, settings_changes_t *ch)
 /**
  * @brief Persist the clock-animation preference and switch to it live.
  * @version 1
- * @dg_internal
+ * @utility
  * @return ESP_OK, or the NVS error (logged).
  */
 static esp_err_t settings_apply_anim(clock_anim_t anim)
@@ -2368,7 +2368,7 @@ typedef struct {
 /**
  * @brief settings_update mutator: merge the POSTed blob fields; save only if one changed.
  * @version 1
- * @dg_internal
+ * @utility
  * @return true if a blob field (brightness / text_color / background_image) changed.
  */
 static bool settings_post_mutator(clock_settings_t *cfg, void *ctx)
@@ -2383,7 +2383,7 @@ static bool settings_post_mutator(clock_settings_t *cfg, void *ctx)
  * @brief Apply saved changes live: brightness, background, text colour, clock animation.
  * Replaces settings_persist_and_apply(): saving now happens atomically in settings_update().
  * @version 1
- * @dg_internal
+ * @utility
  * @return ESP_OK, or the clock-animation save error.
  */
 static esp_err_t settings_apply_live(const clock_settings_t *cfg, const settings_changes_t *ch)

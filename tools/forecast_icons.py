@@ -65,7 +65,7 @@ def render_icon(src, dst, size, frame=None):
 
 
 ## @brief Parse "tod/name=frame" overrides into a dict.
-## @dg_internal
+## @utility
 ## @version 1
 ## @return {"day/rain": 12, ...}
 def parse_overrides(items):

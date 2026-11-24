@@ -130,7 +130,7 @@ BAR_WIDTH = 40
 
 ## @brief Format a text progress bar with percent and MB done/total.
 ## @version 1
-## @dg_internal
+## @utility
 ## @return The rendered progress line.
 def _render_bar(done: int, total: int) -> str:
     pct = done / total if total else 0
@@ -143,7 +143,7 @@ def _render_bar(done: int, total: int) -> str:
 
 ## @brief Overwrite the current terminal line with the upload progress bar.
 ## @version 1
-## @dg_internal
+## @utility
 def print_progress(done: int, total: int) -> None:
     sys.stdout.write(ERASE_LINE + _render_bar(done, total))
     sys.stdout.flush()
@@ -192,7 +192,7 @@ class StatusPoller(threading.Thread):
 
     ## @brief Print the OTA state (coloured, with expected bytes or error text) only when it differs from the last one printed.
     ## @version 1
-    ## @dg_internal
+    ## @utility
     def _print_state_change(self, state: str, status: dict) -> None:
         if state == self._prev_state:
             return
@@ -273,7 +273,7 @@ def stream_firmware(
 
 ## @brief Parse the command line (firmware path, --host, --port, --token, --timeout).
 ## @version 1
-## @dg_internal
+## @utility
 ## @return The parsed argparse namespace.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(

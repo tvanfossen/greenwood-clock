@@ -32,7 +32,7 @@ static const char *TAG = "http_bg_sched";
 /**
  * @brief Parse "HH:MM" into minutes after midnight.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Minutes, or -1 if malformed.
  */
 static int parse_hhmm(const char *s)
@@ -45,7 +45,7 @@ static int parse_hhmm(const char *s)
 /**
  * @brief Fill the slot starts from the "slots" array.
  * @version 1
- * @dg_internal
+ * @utility
  * @return true if every entry parsed and the count is in range.
  */
 static bool parse_slots(const cJSON *arr, bg_schedule_t *s)
@@ -65,7 +65,7 @@ static bool parse_slots(const cJSON *arr, bg_schedule_t *s)
 /**
  * @brief Read an optional small integer override (null/absent = inherit).
  * @version 1
- * @dg_internal
+ * @utility
  * @return The value, or BG_INHERIT.
  */
 static int8_t opt_int(const cJSON *obj, const char *key)
@@ -77,7 +77,7 @@ static int8_t opt_int(const cJSON *obj, const char *key)
 /**
  * @brief Fill one profile from its JSON object.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void parse_profile(const cJSON *obj, bg_profile_t *p)
 {
@@ -95,7 +95,7 @@ static void parse_profile(const cJSON *obj, bg_profile_t *p)
 /**
  * @brief Fill the profiles from the "profiles" array.
  * @version 1
- * @dg_internal
+ * @utility
  * @return true if the count is in range.
  */
 static bool parse_profiles(const cJSON *arr, bg_schedule_t *s)
@@ -110,7 +110,7 @@ static bool parse_profiles(const cJSON *arr, bg_schedule_t *s)
 /**
  * @brief Fill the weekday grid from the "days" array (7 rows, Sunday first).
  * @version 1
- * @dg_internal
+ * @utility
  * @return true if there are 7 rows of slot_count numbers.
  */
 static bool parse_days(const cJSON *arr, bg_schedule_t *s)
@@ -131,7 +131,7 @@ static bool parse_days(const cJSON *arr, bg_schedule_t *s)
 /**
  * @brief Build a schedule from the request JSON.
  * @version 1
- * @dg_internal
+ * @utility
  * @return true if it parsed and validated.
  */
 static bool schedule_from_json(const cJSON *root, bg_schedule_t *s)
@@ -146,7 +146,7 @@ static bool schedule_from_json(const cJSON *root, bg_schedule_t *s)
 /**
  * @brief Add one profile object to @p arr.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void profile_to_json(cJSON *arr, const bg_profile_t *p)
 {
@@ -167,7 +167,7 @@ static void profile_to_json(cJSON *arr, const bg_profile_t *p)
 /**
  * @brief Render the schedule as JSON (same format POST accepts).
  * @version 1
- * @dg_internal
+ * @utility
  * @return New cJSON tree (caller deletes).
  */
 static cJSON *schedule_to_json(const bg_schedule_t *s)
@@ -212,7 +212,7 @@ static esp_err_t bg_schedule_get_handler(httpd_req_t *req)
 /**
  * @brief Receive the whole request body into a heap buffer (NUL-terminated).
  * @version 1
- * @dg_internal
+ * @utility
  * @return The body (caller frees), or NULL if empty, too large or interrupted.
  */
 static char *recv_body(httpd_req_t *req)

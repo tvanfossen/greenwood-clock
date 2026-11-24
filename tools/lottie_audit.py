@@ -26,7 +26,7 @@ BLANK_PX = 0.5
 
 
 ## @brief Collapse sorted frame numbers into "a-b" ranges.
-## @dg_internal
+## @utility
 ## @version 1
 ## @return Comma-separated ranges string.
 def ranges(frames):
@@ -74,7 +74,7 @@ def audit_file(path):
 
 
 ## @brief Expand CLI args into a sorted list of .json files.
-## @dg_internal
+## @utility
 ## @version 1
 ## @return List of Paths.
 def collect(args):
@@ -85,7 +85,7 @@ def collect(args):
 
 
 ## @brief Print one result row.
-## @dg_internal
+## @utility
 ## @version 1
 def report(res, root):
     name = str(res["path"].relative_to(root)) if root else str(res["path"])

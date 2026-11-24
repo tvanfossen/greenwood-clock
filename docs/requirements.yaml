@@ -103,6 +103,7 @@ requirements:
   REQ-NET-004:
     name: Robust SDIO transport to coprocessor
     subsystem: NET
+    status: vendored   # implemented in the vendored esp_hosted patch (not gated): coverage-exempt
     description: >-
       The host SDIO RX path rejects absurd lengths (> 32 KB) and drops, rather than
       asserting, when an RX buffer cannot be allocated. Implemented in the vendored

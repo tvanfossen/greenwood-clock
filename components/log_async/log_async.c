@@ -38,7 +38,7 @@ static atomic_uint     s_dropped;
 /**
  * @brief Forward a fully formatted line to the previous vprintf hook (printf-style shim).
  * @version 1
- * @dg_internal
+ * @utility
  * @return The previous hook's return value.
  */
 static int forward_prev(const char *fmt, ...)
@@ -54,7 +54,7 @@ static int forward_prev(const char *fmt, ...)
  * @brief True when this call must stay synchronous: no ring yet, ISR, scheduler not
  *        running, or the writer task itself (its own logging must not re-enqueue).
  * @version 1
- * @dg_internal
+ * @utility
  * @return true to bypass the ring buffer.
  */
 static bool must_log_sync(void)

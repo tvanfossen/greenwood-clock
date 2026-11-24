@@ -66,7 +66,7 @@ static esp_err_t accept_radar_png(const char *buf, size_t len,
  * @brief GET @p url (a radar request) with up to NWS_MAX_RETRIES attempts, 15 s each. The URL
  *        is never logged: it carries the device's location.
  * @version 1
- * @dg_internal
+ * @utility
  * @return malloc'd body (caller frees) with @p len set, or NULL.
  */
 static char *radar_get(const char *url, size_t *len)
@@ -125,7 +125,7 @@ esp_err_t nws_fetch_radar(float lat, float lon, int64_t id, uint8_t **png_buf,
 /**
  * @brief Read one query feature's id and validity into @p out (an open image has a null end).
  * @version 1
- * @dg_internal
+ * @utility
  * @return Whether the feature had an id and a start time.
  */
 static bool parse_raster(const cJSON *feature, nws_radar_raster_t *out)

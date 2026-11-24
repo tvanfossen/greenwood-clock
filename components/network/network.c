@@ -63,7 +63,7 @@ static const char* NTP_SERVERS[] = {
  * @param current_time  Timestamp to store.
  * @return ESP_OK on success.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static esp_err_t save_time_to_nvs(time_t current_time) {
     nvs_handle_t handle;
@@ -85,7 +85,7 @@ static esp_err_t save_time_to_nvs(time_t current_time) {
  * @brief Load the last saved timestamp from NVS and apply it as the system clock.
  * @return ESP_OK if a valid timestamp was found and applied.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static esp_err_t load_time_from_nvs(void) {
     nvs_handle_t handle;
@@ -124,7 +124,7 @@ static esp_err_t load_time_from_nvs(void) {
  * while the client is already running, so re-init on reconnect would PANIC.
  * Guard against that: if SNTP is already enabled, just force a resync.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void network_start_sntp(void) {
     if (esp_sntp_enabled()) {
@@ -147,7 +147,7 @@ static atomic_bool s_ever_got_ip = false;
  * @brief Handle IP_EVENT_STA_GOT_IP — update state, latch "has had an IP", and start SNTP.
  * v2: latch s_ever_got_ip for OTA confirmation (a later disconnect must not hide it).
  * @version 2
- * @dg_internal
+ * @utility
  */
 static void network_handle_got_ip(void) {
     ESP_LOGI(TAG, "Got IP, starting SNTP");
@@ -174,7 +174,7 @@ static void reconnect_timer_cb(void* arg) {
  * Never calls esp_wifi_connect() synchronously from the event task in a loop —
  * that is what caused the too-frequent retries with wrong credentials.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void schedule_reconnect(void) {
     if (!s_reconnect_timer) { esp_wifi_connect(); return; }   // fallback: timer not ready
@@ -196,7 +196,7 @@ static atomic_bool s_initial_connect_claimed = false;
 /**
  * @brief Start a connection attempt and log any immediate failure.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void network_connect_now(const char* why) {
     esp_err_t err = esp_wifi_connect();
@@ -232,7 +232,7 @@ static void network_try_initial_connect(const char* why) {
  * v2: initial connect goes through network_try_initial_connect() so a late STA_START
  *     and network_init() cannot both connect (review: double connect still possible).
  * @version 2
- * @dg_internal
+ * @utility
  */
 static void on_wifi_driver_event(int32_t ev_id, void* ev_data)
 {
@@ -299,7 +299,7 @@ static void on_wifi_disconnect(void* arg, esp_event_base_t ev_base,
 /**
  * @brief Initialise the TCP/IP stack, default event loop, and default STA netif.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void network_init_tcp_stack(void) {
     ESP_ERROR_CHECK(esp_netif_init());
@@ -310,7 +310,7 @@ static void network_init_tcp_stack(void) {
 /**
  * @brief Initialise the Wi-Fi driver with default configuration.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void network_init_wifi_driver(void) {
     wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -320,7 +320,7 @@ static void network_init_wifi_driver(void) {
 /**
  * @brief Register all event handler instances required for STA operation.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void network_register_event_handlers(void) {
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
@@ -334,7 +334,7 @@ static void network_register_event_handlers(void) {
 /**
  * @brief Create the event group and reconnect timer, configure storage/mode, and start Wi-Fi.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void network_configure_and_start(void) {
     s_wifi_event_group = xEventGroupCreate();
@@ -382,7 +382,7 @@ esp_err_t network_init_infrastructure(void) {
  * @param password  Network password; may be NULL for open networks.
  * v3: s_have_credentials is atomic (read from the event task).
  * @version 3
- * @dg_internal
+ * @utility
  */
 static void network_set_credentials(const char* ssid, const char* password) {
     wifi_config_t wcfg = {};
@@ -430,7 +430,7 @@ esp_err_t network_init(const char* ssid, const char* password) {
  * @param max_retries  Maximum poll attempts.
  * @return true if the clock synchronised within max_retries attempts.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static bool sntp_poll_until_synced(int max_retries) {
     int delay_ms = 1000;
@@ -499,7 +499,7 @@ void network_wait_for_time(void) {
  * @param ptr  Required non-NULL pointer (e.g. output buffer or SSID string).
  * @return ESP_OK if all preconditions pass.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static esp_err_t network_check_ready(const void* ptr) {
     if (!ptr) return ESP_ERR_INVALID_ARG;
@@ -519,7 +519,7 @@ static esp_err_t network_check_ready(const void* ptr) {
  * @param actual_out Set to the number of records actually returned.
  * @return Heap buffer on success, NULL on OOM.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static wifi_ap_record_t* network_fetch_scan_records(uint16_t ap_count, uint16_t* actual_out)
 {
@@ -540,7 +540,7 @@ static wifi_ap_record_t* network_fetch_scan_records(uint16_t ap_count, uint16_t*
  * @param src  Source raw records.
  * @param n    Number of entries to copy.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void network_copy_ap_records(wifi_ap_info_t* dst, const wifi_ap_record_t* src,
                                      uint16_t n)
@@ -560,7 +560,7 @@ static void network_copy_ap_records(wifi_ap_info_t* dst, const wifi_ap_record_t*
  * @param found     Set to the number of entries copied.
  * @return ESP_OK, ESP_ERR_NO_MEM on OOM, or ESP_OK with *found=0 if empty.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static esp_err_t network_scan_results(wifi_ap_info_t* ap_list, uint16_t max_aps,
                                        uint16_t* found)
@@ -593,7 +593,7 @@ static esp_err_t network_scan_results(wifi_ap_info_t* ap_list, uint16_t max_aps,
  * @param cfg  Scan configuration.
  * @version 1
  * @return ESP_OK when the scan completed, ESP_ERR_TIMEOUT, or the scan-start error.
- * @dg_internal
+ * @utility
  */
 static esp_err_t network_run_scan(const wifi_scan_config_t* cfg) {
     xEventGroupClearBits(s_wifi_event_group, SCAN_DONE_BIT);
@@ -624,7 +624,7 @@ static esp_err_t network_run_scan(const wifi_scan_config_t* cfg) {
  * @param saved    Receives the prior STA config.
  * @param had_cfg  Set true if the prior config was read successfully.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void scan_preempt_connect(wifi_config_t* saved, bool* had_cfg) {
     s_scanning = true;
@@ -638,7 +638,7 @@ static void scan_preempt_connect(wifi_config_t* saved, bool* had_cfg) {
 /**
  * @brief Restore the STA config saved by scan_preempt_connect() and reconnect.
  * @version 2
- * @dg_internal
+ * @utility
  */
 static void scan_resume_connect(wifi_config_t* saved, bool had_cfg) {
     // Non-const: esp_wifi_set_config() takes a mutable pointer (was a -Wdiscarded-qualifiers warning).
@@ -704,7 +704,7 @@ esp_err_t network_scan(wifi_ap_info_t* ap_list, uint16_t max_aps, uint16_t* foun
  * @return ESP_OK on successful initiation.
  * v2: record that credentials are set (UI connect path), so a later STA restart reconnects.
  * @version 2
- * @dg_internal
+ * @utility
  */
 static esp_err_t network_set_and_connect(const char* ssid, const char* password) {
     wifi_config_t wcfg = {};

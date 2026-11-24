@@ -31,7 +31,7 @@ typedef struct {
 /**
  * @brief Time derivative of the state (eqs. 5.1-5.3 with 4.7-4.9).
  * @version 1
- * @dg_internal
+ * @utility
  * @return d(state)/dt.
  */
 static leaf_vec_t leaf_deriv(const leaf_coeffs_t *k, float is, const leaf_vec_t *s)
@@ -56,7 +56,7 @@ static leaf_vec_t leaf_deriv(const leaf_coeffs_t *k, float is, const leaf_vec_t 
 /**
  * @brief s + k * d, component-wise.
  * @version 1
- * @dg_internal
+ * @utility
  * @return The combined vector.
  */
 static leaf_vec_t leaf_axpy(const leaf_vec_t *s, const leaf_vec_t *d, float k)

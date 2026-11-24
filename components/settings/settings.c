@@ -200,7 +200,7 @@ static SemaphoreHandle_t s_settings_mutex;
 /**
  * @brief Take the settings lock (no-op before settings_init()).
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void settings_lock(void)
 {
@@ -210,7 +210,7 @@ static void settings_lock(void)
 /**
  * @brief Release the settings lock (no-op before settings_init()).
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void settings_unlock(void)
 {

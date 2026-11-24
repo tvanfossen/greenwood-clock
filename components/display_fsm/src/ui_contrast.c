@@ -16,7 +16,7 @@
 /**
  * @brief Convert an sRGB channel (0..1) to linear light.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Linear channel value.
  */
 static float srgb_to_linear(float c)
@@ -28,7 +28,7 @@ static float srgb_to_linear(float c)
 /**
  * @brief Convert a linear channel to sRGB, clamped to 0..1.
  * @version 1
- * @dg_internal
+ * @utility
  * @return sRGB channel value.
  */
 static float linear_to_srgb(float c)
@@ -43,7 +43,7 @@ static float linear_to_srgb(float c)
 /**
  * @brief WCAG relative luminance of a colour.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Luminance in 0..1.
  */
 static float rel_luminance(lv_color_t c)
@@ -91,7 +91,7 @@ lv_color_t ui_text_on(lv_color_t bg)
 /**
  * @brief Cube a float.
  * @version 1
- * @dg_internal
+ * @utility
  * @return x * x * x.
  */
 static float cube(float x) { return x * x * x; }
@@ -99,7 +99,7 @@ static float cube(float x) { return x * x * x; }
 /**
  * @brief Convert an sRGB colour to OKLab (Ottosson's matrices).
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void srgb_to_oklab(lv_color_t c, float *L, float *a, float *b)
 {
@@ -119,7 +119,7 @@ static void srgb_to_oklab(lv_color_t c, float *L, float *a, float *b)
 /**
  * @brief Convert OKLab to an sRGB colour (channels clamped).
  * @version 1
- * @dg_internal
+ * @utility
  * @return sRGB colour.
  */
 static lv_color_t oklab_to_srgb(float L, float a, float b)
@@ -144,7 +144,7 @@ static lv_color_t oklab_to_srgb(float L, float a, float b)
 /**
  * @brief WCAG contrast against @p bg of the OKLab colour (@p L, @p a, @p b).
  * @version 1
- * @dg_internal
+ * @utility
  * @return Contrast ratio.
  */
 static float contrast_at(float L, float a, float b, lv_color_t bg)
@@ -156,7 +156,7 @@ static float contrast_at(float L, float a, float b, lv_color_t bg)
  * @brief Smallest move of lightness from @p L toward @p end (0 or 1) that reaches
  *        UI_CONTRAST_AA against @p bg; @p L itself is known to fall short.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Whether that direction reaches the target at all (@p out is set when it does).
  */
 static bool shift_toward(float L, float a, float b, lv_color_t bg, float end, float *out)
@@ -202,7 +202,7 @@ lv_color_t ui_legible(lv_color_t desired, lv_color_t bg)
 /**
  * @brief Add one RGB565 or BGRA pixel's 8-bit R/G/B to the running sums.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void accum_pixel(const uint8_t *row, int32_t xx, lv_color_format_t cf,
                         uint32_t *sr, uint32_t *sg, uint32_t *sb)
@@ -223,7 +223,7 @@ static void accum_pixel(const uint8_t *row, int32_t xx, lv_color_format_t cf,
 /**
  * @brief Clamp a region to the image bounds.
  * @version 1
- * @dg_internal
+ * @utility
  * @return true if a non-empty region remains, false otherwise.
  */
 static bool clamp_region(const lv_image_dsc_t *img,

@@ -40,7 +40,7 @@ void leaf_params_default(leaf_params_t *p, int screen_w_px, int screen_h_px)
 /**
  * @brief Give a leaf a new depth, I*, colour and a settled physical state at rest origin.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void leaf_randomise(leaf_field_t *f, leaf_t *lf)
 {
@@ -60,7 +60,7 @@ static void leaf_randomise(leaf_field_t *f, leaf_t *lf)
 /**
  * @brief Place a leaf's physics origin so its current pose lands at screen (x, y).
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void leaf_place(leaf_t *lf, float x_px, float y_px)
 {
@@ -106,7 +106,7 @@ void leaf_screen_pose(const leaf_field_t *f, int i, float *x_px, float *y_px, fl
 /**
  * @brief Respawn below-screen leaves at the top; wrap horizontal exits to the other side.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void leaf_recycle(leaf_field_t *f, leaf_t *lf)
 {

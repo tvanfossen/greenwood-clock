@@ -196,7 +196,7 @@ static void test_gentle_crossing_time(void)
 /**
  * @brief Count sway reversals of one swaying flake over @p seconds, starting at field time @p t0_s.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Number of sign changes of the per-frame horizontal displacement (|dx| > 0.01 px).
  */
 static int sway_reversals_from(double t0_s, float seconds)

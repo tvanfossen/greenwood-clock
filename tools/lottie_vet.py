@@ -119,7 +119,7 @@ def write_sheet(frames, res, out):
 
 
 ## @brief One table row.
-## @dg_internal
+## @utility
 ## @version 2
 ## @return Row text.
 def row(name, res):

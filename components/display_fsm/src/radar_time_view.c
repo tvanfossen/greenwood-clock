@@ -22,7 +22,7 @@ struct radar_time_view_t {
 /**
  * @brief Format @p ts as "h:mm AM" and its age as "now" / "40m ago".
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void format_when(time_t ts, struct tm *ti, char *when, size_t when_sz, char *age,
                         size_t age_sz)
@@ -41,7 +41,7 @@ static void format_when(time_t ts, struct tm *ti, char *when, size_t when_sz, ch
  * @brief Show the live time on the clock again (rolling after @p delay_ms) if this view held it.
  * v2: roll delay.
  * @version 2
- * @dg_internal
+ * @utility
  */
 static void release_clock(radar_time_view_t *tv, uint32_t delay_ms)
 {
@@ -53,7 +53,7 @@ static void release_clock(radar_time_view_t *tv, uint32_t delay_ms)
 /**
  * @brief Put @p text on the chip and show it.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void chip_text(radar_time_view_t *tv, const char *text)
 {

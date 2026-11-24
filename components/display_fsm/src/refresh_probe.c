@@ -13,7 +13,7 @@
 /**
  * @brief Close one refresh: count it if it rendered, and track the longest refresh.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void probe_refr_ready(refresh_probe_t *p, int64_t now)
 {

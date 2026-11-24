@@ -64,7 +64,7 @@ static QueueHandle_t s_loader_queue = NULL;
 /**
  * @brief Read a Lottie JSON file into a fresh SPIRAM buffer (off the LVGL lock).
  *
- * @dg_internal
+ * @utility
  * @version 1
  * @return Heap buffer (caller frees with heap_caps_free) with *size_out set, or NULL on open/alloc/read failure.
  */
@@ -107,7 +107,7 @@ static uint8_t *read_lottie_file(const char *path, size_t *size_out)
  * v3: target_fps caps the RENDER rate (lv_lottie_set_render_fps) at real-time playback.
  *     Stretching the duration by 60/target_fps played every Lottie at 1/3 speed (a 20 fps
  *     target turned the 8 s fog loop into 24 s, which looked static).
- * @dg_internal
+ * @utility
  * @version 3
  */
 static void apply_lottie_src(const lottie_load_job_t *job, const uint8_t *data, size_t size)
@@ -139,7 +139,7 @@ static void apply_lottie_src(const lottie_load_job_t *job, const uint8_t *data, 
 /**
  * @brief Persistent Lottie loader task: dequeue jobs, read the file off-lock, then parse/apply under the LVGL lock.
  *
- * @dg_internal
+ * @utility
  * @version 1
  */
 static void lottie_loader_task(void *arg)
@@ -172,7 +172,7 @@ static void lottie_loader_task(void *arg)
 /**
  * @brief Create the Lottie loader job queue and spawn the SPIRAM-stack loader task (idempotent).
  *
- * @dg_internal
+ * @utility
  * @version 1
  */
 static void lottie_loader_init(void)
@@ -202,7 +202,7 @@ static void lottie_loader_init(void)
  * @brief Map a C display_event_t onto the matching TinyFSM event and dispatch it to DisplayFsm.
  * v2: DISPLAY_EVT_RADAR_LOOP_LOAD is handled before dispatch (no FSM event).
  *
- * @dg_internal
+ * @utility
  * @version 2
  */
 static void dispatch_event(const display_event_t *evt)
@@ -288,7 +288,7 @@ static void dispatch_event(const display_event_t *evt)
 /**
  * @brief Check whether a path has a .gif extension (case-insensitive).
  *
- * @dg_internal
+ * @utility
  * @version 1
  * @return true if the path ends in .gif, false otherwise.
  */
@@ -301,7 +301,7 @@ static bool is_gif_path(const char *path)
 /**
  * @brief Translate an LVGL drive path ("A:/..", "B:/..") to a POSIX mount path.
  *
- * @dg_internal
+ * @utility
  * @version 1
  */
 static void bg_lvgl_to_fs_path(const char *lvgl_path, char *out, size_t out_sz)
@@ -333,7 +333,7 @@ static lv_image_dsc_t *s_bg_dsc = NULL;   // persistent decoded background (non-
  * v4: back to RGB565: the PPA ARGB path garbled partial redraws of the 1025 px wide
  *     (padded-stride) background on device.
  *
- * @dg_internal
+ * @utility
  * @version 4
  * @return Decoded descriptor, or NULL on failure (caller then skips the background).
  */
@@ -358,7 +358,7 @@ static lv_image_dsc_t *predecode_bg(const char *path)
  * Create a looping, screen-sized GIF background. Caller holds the LVGL lock;
  * this briefly drops it for the GIF decoder init, then re-locks.
  *
- * @dg_internal
+ * @utility
  * @version 1
  * @return The new GIF object.
  */
@@ -384,7 +384,7 @@ static lv_obj_t *create_gif_bg(lv_obj_t *scr, const char *path)
  * Create a static image background from a predecoded descriptor, or fall back
  * to LVGL's on-demand decode of the path.
  *
- * @dg_internal
+ * @utility
  * @version 1
  * @return The new image object, or NULL if no descriptor was decoded.
  */
@@ -409,7 +409,7 @@ static lv_obj_t *create_static_bg(lv_obj_t *scr, const char *path, lv_image_dsc_
 /**
  * @brief Center the background object, send it to the back, and make it non-scrollable and layout-ignored.
  *
- * @dg_internal
+ * @utility
  * @version 1
  */
 static void apply_bg_common_flags(lv_obj_t *obj)
@@ -423,7 +423,7 @@ static void apply_bg_common_flags(lv_obj_t *obj)
 /**
  * @brief Verify the background loaded; delete + null it out on failure. Publishes s_bg_img.
  *
- * @dg_internal
+ * @utility
  * @version 1
  */
 static void finalize_bg(lv_obj_t *obj, bool gif, const char *path)
@@ -442,7 +442,7 @@ static void finalize_bg(lv_obj_t *obj, bool gif, const char *path)
 /**
  * @brief Load the configured background (GIF or predecoded PNG) onto the screen, degrading gracefully on failure.
  *
- * @dg_internal
+ * @utility
  * @version 1
  */
 static void load_background(lv_obj_t *scr, const clock_settings_t *cfg)
@@ -473,7 +473,7 @@ static void load_background(lv_obj_t *scr, const clock_settings_t *cfg)
  * @brief @p user made legible (ui_legible: exact when it already reaches AA) over the mean
  *        of @p img in screen area @p a (images are top-down and screen-sized), or over the
  *        screen's own colour when there is no image (GIF background, failed decode).
- * @dg_internal
+ * @utility
  * @version 1
  * @return The colour to draw the text in.
  */
@@ -528,7 +528,7 @@ extern "C" lv_color_t display_fsm_min_clock_color(const lv_image_dsc_t *behind)
  * v2: minimal OKLCH adjustment against the background (was the exact colour everywhere,
  *     after the old extreme push had turned a chosen white black).
  *
- * @dg_internal
+ * @utility
  * @version 2
  * @req REQ-BG-002
  */
@@ -556,7 +556,7 @@ static void apply_clock_user_color(const clock_settings_t *cfg)
  *
  * MUST run in fsm_task — load_background() decodes with a deep stack outside the LVGL lock.
  *
- * @dg_internal
+ * @utility
  * v2: clock text uses the user's exact colour (legibility via label shadows), no bg sampling.
  * v3: takes the (effective) settings to apply instead of loading them.
  * v4: swaps after decoding the new image (it deleted the old one first: ~1.3 s of black
@@ -623,7 +623,7 @@ static int effective_settings(clock_settings_t *cfg, bg_profile_t *prof)
 /**
  * @brief Select the profile's animation (or the stored preference) if it changed.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void apply_profile_anim(const bg_profile_t *p)
 {
@@ -771,7 +771,7 @@ static void clock_tick_cb(TimerHandle_t timer)
  * Clean the active screen and build the persistent UI (clock, alert banner, dot
  * indicator, gesture handler) on lv_layer_top(). Returns the screen object.
  *
- * @dg_internal
+ * @utility
  * @version 1
  * @return The active screen object.
  */
@@ -827,7 +827,7 @@ static lv_obj_t *setup_screen_widgets(const clock_settings_t *cfg)
  *
  * Clock minute-tick poll (1s) + burn-in pixel jitter (10 min) timers.
  *
- * @dg_internal
+ * @utility
  * @version 1
  */
 static void start_periodic_timers(void)
@@ -857,7 +857,7 @@ static void start_periodic_timers(void)
  * where a heavy entry() builds too much under the lock.
  *
  * v2: a forecast update rescans the forecast icons off-lock before dispatch.
- * @dg_internal
+ * @utility
  * v3: clock text uses the user's exact colour (legibility via label shadows), no bg sampling.
  * v4: radar-loop frames decode off-lock, one per event (RadarOverlay::loop_step).
  * v5: background schedule: the minute tick and REFRESH_BG apply the active profile.
@@ -911,7 +911,7 @@ static void process_event(const display_event_t *evt)
 /**
  * @brief Block forever on the FSM event queue, processing each received event.
  *
- * @dg_internal
+ * @utility
  * @version 1
  */
 static void fsm_run_event_loop(void)
@@ -928,7 +928,7 @@ static void fsm_run_event_loop(void)
  * @brief FSM task entry: build the screen, background, animation and scheduler, start the FSM and timers, then run the event loop.
  *
  * v2: resolves the forecast icons off-lock before the first weather screen can be built.
- * @dg_internal
+ * @utility
  * v3: clock text uses the user's exact colour (legibility via label shadows), no bg sampling.
  * v4: starts from the effective settings (active background schedule profile applied).
  * v5: hooks the debug frame recorder to the display.

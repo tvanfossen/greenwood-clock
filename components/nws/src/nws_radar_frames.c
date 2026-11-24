@@ -10,7 +10,7 @@
 /**
  * @brief Index of the raster with the latest start in [@p oldest_ms, @p limit_ms].
  * @version 1
- * @dg_internal
+ * @utility
  * @return The index, or -1 if none.
  */
 static int latest_before(const nws_radar_raster_t *r, int n, int64_t limit_ms, int64_t oldest_ms)

@@ -84,7 +84,7 @@ static lv_obj_t *s_settings_root = nullptr;  // root container for all settings
 /**
  * @brief Delete every created sub-screen container and reset the navigation stack.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void destroy_all_subs(void)
 {
@@ -241,7 +241,7 @@ static void success_dismiss_cb(lv_timer_t *timer)
  *
  * Non-blocking — returns immediately so the LVGL task keeps rendering.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void show_success_and_pop(const char *msg)
 {
@@ -287,7 +287,7 @@ static void reboot_btn_cb(lv_event_t *e)
 /**
  * @brief Add a settings menu button that opens the given sub-screen when clicked.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void menu_add_item(lv_obj_t *list, const char *icon,
                            const char *label, settings_sub_screen_t sub)
@@ -344,7 +344,7 @@ static char s_wifi_password[64]      = "";
 /**
  * @brief settings_update mutator: store the selected SSID/password and mark Wi-Fi configured.
  * @version 1
- * @dg_internal
+ * @utility
  * @return true (always save).
  */
 static bool wifi_creds_mutator(clock_settings_t *cfg, void *)
@@ -358,7 +358,7 @@ static bool wifi_creds_mutator(clock_settings_t *cfg, void *)
 /**
  * @brief settings_update mutator: store the brightness percentage in @p ctx (uint8_t).
  * @version 1
- * @dg_internal
+ * @utility
  * @return true (always save).
  */
 static bool brightness_mutator(clock_settings_t *cfg, void *ctx)
@@ -370,7 +370,7 @@ static bool brightness_mutator(clock_settings_t *cfg, void *ctx)
 /**
  * @brief settings_update mutator: store "A:<filename>" (@p ctx) as the background image.
  * @version 1
- * @dg_internal
+ * @utility
  * @return true (always save).
  */
 static bool background_mutator(clock_settings_t *cfg, void *ctx)
@@ -382,7 +382,7 @@ static bool background_mutator(clock_settings_t *cfg, void *ctx)
 /**
  * @brief settings_update mutator: store the text colour in @p ctx (uint32_t 0xRRGGBB).
  * @version 1
- * @dg_internal
+ * @utility
  * @return true (always save).
  */
 static bool text_color_mutator(clock_settings_t *cfg, void *ctx)
@@ -395,7 +395,7 @@ static bool text_color_mutator(clock_settings_t *cfg, void *ctx)
 /**
  * @brief Append a network button (lock marker, SSID, RSSI) to the WiFi list, storing an lv_malloc'd SSID copy as user data.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void wifi_scan_add_network(const wifi_ap_info_t *ap)
 {
@@ -696,7 +696,7 @@ static lv_obj_t *create_sub_brightness(lv_obj_t *parent)
 /**
  * @brief Check whether a file extension is a supported background image (.png or .gif, case-insensitive).
  * @version 1
- * @dg_internal
+ * @utility
  * @return true if the extension is .png or .gif.
  */
 static bool bg_is_image_file(const char *ext)
@@ -962,7 +962,7 @@ static uint8_t *s_lottie_buf = nullptr;
 /**
  * @brief Create a centered Lottie widget and attach a shared 64-byte aligned SPIRAM render buffer.
  * @version 1
- * @dg_internal
+ * @utility
  * @return The Lottie widget, or nullptr if creation, render task start or buffer allocation fails.
  */
 static lv_obj_t *anim_create_widget(lv_obj_t *scr)
@@ -1002,7 +1002,7 @@ static lv_obj_t *anim_create_widget(lv_obj_t *scr)
 /**
  * @brief Queue an asynchronous Lottie file load for the widget via display_fsm_load_lottie().
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void anim_spawn_load_task(lv_obj_t *widget, const char *path)
 {
@@ -1019,7 +1019,7 @@ static void anim_spawn_load_task(lv_obj_t *widget, const char *path)
 /**
  * @brief Build the animation preview sub-screen: a Lottie preview if enabled and heap allows, otherwise an error label.
  * @version 1
- * @dg_internal
+ * @utility
  * @return The sub-screen container.
  */
 static lv_obj_t *create_sub_animation(lv_obj_t *parent)

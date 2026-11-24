@@ -37,7 +37,7 @@ typedef struct {
 /**
  * @brief Simulate one card and summarise its settled motion.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Regime summary.
  */
 static regime_t simulate(float i_star, float dt)

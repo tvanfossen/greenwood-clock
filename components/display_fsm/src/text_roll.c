@@ -23,7 +23,7 @@ static struct {
 /**
  * @brief Offset every rolled object by @p dy and set its opacity to @p opa.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void roll_place(int32_t dy, lv_opa_t opa)
 {
@@ -36,7 +36,7 @@ static void roll_place(int32_t dy, lv_opa_t opa)
 /**
  * @brief Put the objects at rest and let the caller set the new text (once per roll).
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void roll_swap(void)
 {

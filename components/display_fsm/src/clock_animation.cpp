@@ -89,7 +89,12 @@ protected:
      * @return true to continue with on_create().
      */
     virtual bool on_prepare() { return true; }
-    /** Create widgets; called with the LVGL lock held. Return false on failure. */
+    /**
+     * @brief Create widgets; called with the LVGL lock held.
+     * @version 1
+     * @utility
+     * @return false on failure.
+     */
     virtual bool on_create(lv_obj_t *scr) = 0;
     /**
      * @brief Post-create work (e.g. queue a file load). Default: nothing.
@@ -103,15 +108,25 @@ protected:
      * @utility
      */
     virtual void on_abort() {}
-    virtual void on_show() = 0;  /**< LVGL lock held. */
-    virtual void on_hide() = 0;  /**< LVGL lock held. */
+    /**
+     * @brief Show the animation; LVGL lock held.
+     * @version 1
+     * @utility
+     */
+    virtual void on_show() = 0;
+    /**
+     * @brief Hide the animation; LVGL lock held.
+     * @version 1
+     * @utility
+     */
+    virtual void on_hide() = 0;
 
 private:
     /**
      * @brief Run the prepare → create → created sequence with heap logging. The caller already
      *        holds the LVGL lock; the inner lock here is a recursive re-take.
      * @version 1
-     * @dg_internal
+     * @utility
      * @return true when the animation was created.
      */
     bool create(lv_obj_t *scr)
@@ -163,7 +178,7 @@ protected:
     /**
      * @brief Allocate and zero the SPIRAM render buffer (uncleared SPIRAM shows as noise).
      * @version 1
-     * @dg_internal
+     * @utility
      * @return true on success.
      */
     bool on_prepare() override
@@ -181,7 +196,7 @@ protected:
     /**
      * @brief Create the lottie widget bound to the render buffer.
      * @version 1
-     * @dg_internal
+     * @utility
      * @return true on success.
      */
     bool on_create(lv_obj_t *scr) override
@@ -204,7 +219,7 @@ protected:
     /**
      * @brief Free the render buffer after a failed create.
      * @version 1
-     * @dg_internal
+     * @utility
      */
     void on_abort() override
     {
@@ -215,7 +230,7 @@ protected:
     /**
      * @brief Queue the JSON parse on the shared loader task (needs a 64 KB stack).
      * @version 1
-     * @dg_internal
+     * @utility
      */
     void on_created() override
     {
@@ -229,7 +244,7 @@ protected:
     /**
      * @brief Unhide and resume at the target frame rate.
      * @version 1
-     * @dg_internal
+     * @utility
      */
     void on_show() override
     {
@@ -240,7 +255,7 @@ protected:
     /**
      * @brief Pause rendering and hide.
      * @version 1
-     * @dg_internal
+     * @utility
      */
     void on_hide() override
     {
@@ -280,7 +295,7 @@ protected:
     /**
      * @brief Create the effect's layer (starts hidden).
      * @version 1
-     * @dg_internal
+     * @utility
      * @return true on success.
      */
     bool on_create(lv_obj_t *scr) override
@@ -292,14 +307,14 @@ protected:
     /**
      * @brief Start the physics timer and unhide.
      * @version 1
-     * @dg_internal
+     * @utility
      */
     void on_show() override { ops_.set_running(view_, true); }
 
     /**
      * @brief Freeze the physics timer and hide.
      * @version 1
-     * @dg_internal
+     * @utility
      */
     void on_hide() override { ops_.set_running(view_, false); }
 
@@ -312,7 +327,7 @@ private:
 /**
  * @brief Type-erased snowfall_view_create.
  * @version 1
- * @dg_internal
+ * @utility
  * @return The view.
  */
 static void *snow_create(lv_obj_t *p, int n) { return snowfall_view_create(p, n); }
@@ -320,14 +335,14 @@ static void *snow_create(lv_obj_t *p, int n) { return snowfall_view_create(p, n)
 /**
  * @brief Type-erased snowfall_view_set_running.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void snow_run(void *v, bool r) { snowfall_view_set_running((snowfall_view_t *)v, r); }
 
 /**
  * @brief Type-erased leaf_view_create.
  * @version 1
- * @dg_internal
+ * @utility
  * @return The view.
  */
 static void *leaf_create(lv_obj_t *p, int n) { return leaf_view_create(p, n); }
@@ -335,7 +350,7 @@ static void *leaf_create(lv_obj_t *p, int n) { return leaf_view_create(p, n); }
 /**
  * @brief Type-erased leaf_view_set_running.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void leaf_run(void *v, bool r) { leaf_view_set_running((leaf_view_t *)v, r); }
 
@@ -355,7 +370,7 @@ static lv_obj_t *s_scr = nullptr;
 /**
  * @brief Map a preference value to its animation instance.
  * @version 2
- * @dg_internal
+ * @utility
  * @return Instance, or nullptr for CLOCK_ANIM_NONE / unavailable.
  */
 static ClockAnimation *instance_for(clock_anim_t anim)

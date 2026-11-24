@@ -42,7 +42,7 @@ struct json_layout_t {
 /**
  * @brief Parse a "#RRGGBB" string into an LVGL colour.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Parsed colour, or white if the string is missing or malformed.
  */
 static lv_color_t parse_color(const char *hex_str)
@@ -57,7 +57,7 @@ static lv_color_t parse_color(const char *hex_str)
 /**
  * @brief Map a font name (nunito_48/128/256, montserrat_14/20/24/32) to its LVGL font.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Matching font, or montserrat 24 for unknown or missing names.
  */
 static const lv_font_t *parse_font(const char *name)
@@ -173,7 +173,7 @@ static void setup_container(json_layout_t *jl, lv_obj_t *parent, const cJSON *ro
 /**
  * @brief Append @p obj to the layout's child list if non-NULL and there is room (16 max).
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void layout_add_child(json_layout_t *jl, lv_obj_t *obj)
 {

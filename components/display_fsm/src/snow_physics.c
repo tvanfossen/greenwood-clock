@@ -27,7 +27,7 @@
 /**
  * @brief Clamp @p v to [lo, hi].
  * @version 1
- * @dg_internal
+ * @utility
  * @return Clamped value.
  */
 static float clampf(float v, float lo, float hi)
@@ -103,7 +103,7 @@ float snow_px_per_m(const snow_params_t *p, float z_m)
 /**
  * @brief Derive drawn radius and depth-faded opacity from a flake's size and depth.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void flake_update_appearance(const snow_params_t *p, snow_flake_t *fl)
 {
@@ -117,7 +117,7 @@ static void flake_update_appearance(const snow_params_t *p, snow_flake_t *fl)
  * @brief Draw a fresh size, depth, speed and sway for a flake (position untouched).
  * v2: also seeds the vertical-jitter phase (now a per-flake accumulator).
  * @version 2
- * @dg_internal
+ * @utility
  */
 static void flake_randomise(snow_field_t *f, snow_flake_t *fl)
 {
@@ -159,7 +159,7 @@ int snow_field_init(snow_field_t *f, const snow_params_t *p, int count, uint32_t
 /**
  * @brief Respawn a flake above the top edge with new random properties.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void flake_respawn(snow_field_t *f, snow_flake_t *fl)
 {
@@ -171,7 +171,7 @@ static void flake_respawn(snow_field_t *f, snow_flake_t *fl)
 /**
  * @brief Wrap a flake horizontally so wind never empties one side of the screen.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void flake_wrap_x(const snow_params_t *p, snow_flake_t *fl)
 {
@@ -183,7 +183,7 @@ static void flake_wrap_x(const snow_params_t *p, snow_flake_t *fl)
 /**
  * @brief Advance a phase by omega * dt, wrapped into [0, 2pi) so it never loses float precision.
  * @version 1
- * @dg_internal
+ * @utility
  * @return The new phase.
  */
 static float phase_advance(float phase, float omega, float dt_s)

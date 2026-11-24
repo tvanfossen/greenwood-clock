@@ -38,6 +38,14 @@
 int nws_radar_rasters(float lat, float lon, nws_radar_raster_t *out, int max);
 
 /**
+ * @brief The observation stations for @p loc's forecast grid cell, nearest first.
+ * @version 1
+ * @req REQ-WX-002
+ * @return Number of ids written to @p ids (at most @p max), or -1 if the fetch failed.
+ */
+int nws_nearby_stations(const nws_location_t *loc, char ids[][8], int max);
+
+/**
  * @brief Fetch JSON from a URL with NWS-standard headers and retry logic.
  *
  * Up to NWS_MAX_RETRIES attempts with a linearly growing delay between them;

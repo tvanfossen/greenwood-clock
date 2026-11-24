@@ -53,7 +53,7 @@ void radar_loop_arm(void)
  * v2: frames are kept at half resolution (0.6 MB instead of 2.4 MB) and shown at 2x: four
  *     full frames took SPIRAM down to ~6 MB and a fifth decode failed (outofmem) on device.
  * @version 2
- * @dg_internal
+ * @utility
  * @return true if the frame was decoded.
  */
 static bool decode_frame(int i)

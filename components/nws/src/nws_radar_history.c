@@ -36,7 +36,7 @@ void nws_radar_history_path(time_t ts, char *out, size_t out_sz)
 /**
  * @brief Parse a history file name ("<epoch>.png") into its frame time.
  * @version 1
- * @dg_internal
+ * @utility
  * @return The frame time, or 0 if the name is not a history frame.
  */
 static time_t parse_frame_name(const char *name)
@@ -50,7 +50,7 @@ static time_t parse_frame_name(const char *name)
 /**
  * @brief qsort comparator: ascending frame time.
  * @version 1
- * @dg_internal
+ * @utility
  * @return <0, 0 or >0.
  */
 static int cmp_time(const void *a, const void *b)
@@ -62,7 +62,7 @@ static int cmp_time(const void *a, const void *b)
 /**
  * @brief Read up to RADAR_HIST_SCAN frame times from the history directory, ascending.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Number of frame times written to @p ts (0 if the directory is missing).
  */
 static int scan_frames(time_t *ts)
@@ -83,7 +83,7 @@ static int scan_frames(time_t *ts)
 /**
  * @brief Delete frames beyond the newest NWS_RADAR_HISTORY_MAX or older than the max age.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void prune_frames(time_t now)
 {
@@ -149,7 +149,7 @@ bool nws_radar_history_has(time_t ts)
 /**
  * @brief True if @p t is one of the @p n times in @p set.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Membership.
  */
 static bool in_set(time_t t, const time_t *set, int n)

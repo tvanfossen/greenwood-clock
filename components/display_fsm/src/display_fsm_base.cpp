@@ -203,7 +203,7 @@ void DisplayFsm::react(EvScheduleConfig const &)  { }
 /**
  * @brief Find a state's position in the carousel order.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Carousel index, or 0 (clock) if the state is not in the carousel.
  */
 static int carousel_index_of(display_state_id_t id)

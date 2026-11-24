@@ -19,7 +19,7 @@ static const char *TAG = "http_capture";
 /**
  * @brief Read an integer query parameter.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Its value, or @p def if absent.
  */
 static int query_int(const char *query, const char *key, int def)
@@ -55,7 +55,7 @@ static esp_err_t capture_post_handler(httpd_req_t *req)
 /**
  * @brief Stream a finished recording.
  * @version 1
- * @dg_internal
+ * @utility
  * @return The first send error, or ESP_OK.
  */
 static esp_err_t send_result(httpd_req_t *req, const frame_capture_result_t *r)

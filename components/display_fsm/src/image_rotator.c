@@ -62,7 +62,7 @@ struct image_rotator_t {
 /**
  * @brief Check whether a file name ends in .png (case-insensitive, at least one stem character).
  * @version 1
- * @dg_internal
+ * @utility
  * @return true for a PNG name, false otherwise.
  */
 static bool is_png(const char *name)
@@ -76,7 +76,7 @@ static bool is_png(const char *name)
 /**
  * @brief Convert an LVGL "A:/..." path to its /sdcard POSIX path; other paths are copied unchanged.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void lvgl_to_posix(const char *lvgl_path, char *out, size_t out_sz)
 {
@@ -91,7 +91,7 @@ static void lvgl_to_posix(const char *lvgl_path, char *out, size_t out_sz)
 /**
  * @brief Check that the file behind an LVGL path exists and is non-empty.
  * @version 1
- * @dg_internal
+ * @utility
  * @return true if the file exists with size > 0, false otherwise.
  */
 static bool file_exists(const char *lvgl_path)
@@ -106,7 +106,7 @@ static bool file_exists(const char *lvgl_path)
 /**
  * @brief Create the full-screen (1024x600) opaque black container that holds the rotating image.
  * @version 1
- * @dg_internal
+ * @utility
  * @return The new container.
  */
 static lv_obj_t *make_container(lv_obj_t *parent)

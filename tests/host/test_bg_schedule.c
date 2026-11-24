@@ -29,7 +29,7 @@ enum { SUN = 0, MON = 1, TUE = 2, SAT = 6 };
  * @brief The user's winter schedule: 07:00 morning, 12:00 afternoon, 17:00 current photo,
  *        22:00 night, the same profiles every day.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void winter_schedule(bg_schedule_t *s)
 {
@@ -142,7 +142,7 @@ static void test_validation(void)
 /**
  * @brief Run every test and report.
  * @version 1
- * @dg_internal
+ * @utility
  * @return 0 when every check passed, 1 otherwise.
  */
 /**

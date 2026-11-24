@@ -61,6 +61,7 @@ HOST_TESTS = {
     "bg_schedule": ("settings/bg_schedule_model",),
     "ui_contrast": ("ui_contrast",),
     "radar_frames": ("nws/src/nws_radar_frames",),
+    "conditions_merge": ("nws/src/nws_conditions_merge",),
 }
 
 #: Include directories for the host tests.
@@ -68,6 +69,8 @@ HOST_TEST_INCLUDES = (
     REPO / "components" / "display_fsm" / "include",
     REPO / "components" / "settings",
     REPO / "components" / "nws" / "src",
+    REPO / "components" / "nws" / "include",
+    REPO / "components" / "display_events" / "include",
     REPO / "tests" / "host" / "stubs",  # minimal lvgl.h for the pure display helpers
 )
 
@@ -571,7 +574,7 @@ FONTS_DIR = REPO / "components" / "fonts"
 
 
 ## @brief Copy `.line_height` / `.base_line` from the original font and mark the new font static_bitmap.
-## @dg_internal
+## @utility
 ## @version 1
 ## @return Patched C source text.
 def _patch_clock_font(src, original):

@@ -155,7 +155,7 @@ static void format_time(const struct tm *ti, char *buf_time, size_t time_sz,
 /**
  * @brief Place AM/PM beside the time for layout @p mode (baseline-aligned in FULL/MINIMIZED).
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void align_ampm(clock_widget_t *w, clock_mode_t mode)
 {
@@ -300,7 +300,7 @@ void clock_widget_full_area(lv_area_t *out)
 /**
  * @brief Move and resize the clock container to @p mode's geometry immediately, without animation.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void snap_to(clock_widget_t *w, clock_mode_t mode)
 {
@@ -426,7 +426,7 @@ void clock_widget_update(clock_widget_t *w, const struct tm *ti)
  * @brief @p t as a comparable minute: seconds dropped, DST resolved by mktime (live ticks
  *        carry tm_isdst 0, frame times from localtime_r the real flag).
  * @version 1
- * @dg_internal
+ * @utility
  * @return Epoch seconds of the minute.
  */
 static time_t minute_key(const struct tm *t)
@@ -454,7 +454,7 @@ static void roll_swap_cb(void *user)
  *        oldest frame). Instant mid-morph (the morph owns the labels) or when the minute does
  *        not change.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void roll_to(clock_widget_t *w, uint32_t delay_ms)
 {
@@ -500,7 +500,7 @@ void clock_widget_release(clock_widget_t *w, uint32_t delay_ms)
  * v2 of clock_widget_update's body (split out so a held time can be shown).
  * v3: records the time shown (the roll's direction).
  * @version 3
- * @dg_internal
+ * @utility
  */
 static void show_time(clock_widget_t *w, const struct tm *ti)
 {
@@ -552,7 +552,7 @@ static int         s_snap_last;   // slot used most recently (the other one is e
 /**
  * @brief True if @p buf is held by a snapshot cache slot (the cache then owns and frees it).
  * @version 1
- * @dg_internal
+ * @utility
  * @return Whether the buffer is cached.
  */
 static bool snap_is_cached(const lv_draw_buf_t *buf)
@@ -640,7 +640,7 @@ static void morph_appearance(clock_mode_t mode, int32_t ox, int32_t oy,
 /**
  * @brief Apply the inner label layout for @p mode (minimized for unknown modes).
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void apply_layout_for_mode(clock_widget_t *w, clock_mode_t mode)
 {
@@ -679,7 +679,7 @@ static void fade_opa_cb(void *var, int32_t v)
  * v2: does not destroy the snapshot if it is the morph snapshot cache.
  * v3: checks every cache slot (snap_is_cached).
  * @version 3
- * @dg_internal
+ * @utility
  */
 static void kill_fade(void)
 {
@@ -813,7 +813,7 @@ static void morph_done_cb(lv_anim_t *a)
 /**
  * @brief Return position and size of the clock container for @p mode.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void mode_geometry(clock_mode_t mode, int32_t *x, int32_t *y, int32_t *w, int32_t *h)
 {
@@ -851,7 +851,7 @@ static void apply_effective_color(clock_widget_t *w)
  * @brief Drop one cache slot, destroying its buffer unless a morph or crossfade still shows it
  *        (that owner then frees it, since it is no longer cached).
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void snap_slot_release(snap_slot_t *slot)
 {
@@ -864,7 +864,7 @@ static void snap_slot_release(snap_slot_t *slot)
  * @brief Drop every snapshot cache slot (see snap_slot_release).
  * v2: two colour-keyed slots.
  * @version 2
- * @dg_internal
+ * @utility
  */
 static void snap_cache_release(void)
 {
@@ -883,7 +883,7 @@ static void snap_cache_release(void)
  * v2: SNAP_CROP_MARGIN margin and SNAP_CROP_ALIGN width: a tight crop put the PPA scaled-edge
  *     artifacts on visible pixels (striped column and line along the edges, seen on device).
  * @version 2
- * @dg_internal
+ * @utility
  * @return The cropped buffer, or NULL on allocation failure.
  */
 static lv_draw_buf_t *snap_crop(clock_widget_t *w, const lv_draw_buf_t *full, lv_area_t *crop)

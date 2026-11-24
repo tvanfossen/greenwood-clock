@@ -1,30 +1,31 @@
 # .clew.yaml — this repository's declarations for clew (tvanfossen/clew).
 #
-# `guard:` configures the `clew-guard` pre-commit gate (doxygen-guard, absorbed
-# into clew v1.3.0). Everything outside `guard:` is clew's index declarations,
-# which the gate never reads.
-guard:
-  output_dir: .claude/tmp/clew-guard/
+# `guard:` configures the `clew-guard` pre-commit gate. `requirements:` is the catalog the
+# gate, the index and the wiki all read. Everything else is clew's index declarations, which
+# the gate never reads.
+requirements:
+  file: docs/requirements.yaml
+  format: yaml
+  # Implemented in vendored code, which the gate does not read (REQ-NET-004 lives in the
+  # esp_hosted patch): listed in the coverage report as exempt, not dropped.
+  exempt_status: [vendored]
 
+guard:
   validate:
     # Vendored / generated code only (vendored code is not held to the gate).
     exclude:
-      - "^build/"
-      - "^managed_components/"
-      - "^components/lvgl/"
-      - "^components/cjson/"
-      - "^components/espressif__"
-      - "^components/display_fsm/src/stb_image\\.h$"
-      - "^components/display_fsm/include/tinyfsm\\.hpp$"
-      - "^components/fonts/"
-      - "^components/images/"
-      - "^tools/lottie_gen/glyph_animator/"
-      - "^\\.venv/"
-      - "(^|/)\\.claude/"
-
-    # `@p` is doxygen's inline parameter-reference command, used throughout
-    # the existing C sources; clew-guard's vocabulary omits it.
-    extra_tags: ["p"]
+      - "build/**"
+      - "managed_components/**"
+      - "components/lvgl/**"
+      - "components/cjson/**"
+      - "re:^components/espressif__"
+      - "components/display_fsm/src/stb_image.h"
+      - "components/display_fsm/include/tinyfsm.hpp"
+      - "components/fonts/**"
+      - "components/images/**"
+      - "tools/lottie_gen/glyph_animator/**"
+      - ".venv/**"
+      - "re:(^|/)\\.claude/"
 
     presence:
       require_doxygen: true
@@ -43,9 +44,7 @@ guard:
       require_present: true
       require_increment_on_change: true
 
-  # Every function carries @req REQ-... from this catalog, or an honest exemption
-  # (@dg_internal private helper, @utility shared helper, @callback framework-called).
+  # Every function carries @req REQ-... from the catalog, or an honest exemption
+  # (@utility shared/private helper, @callback framework-called).
   impact:
-    requirements:
-      file: docs/requirements.yaml
-      format: yaml
+    report_dir: .claude/tmp/clew-guard/

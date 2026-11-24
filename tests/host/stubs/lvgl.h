@@ -16,6 +16,8 @@ typedef struct {
     uint8_t red;
 } lv_color_t;
 
+typedef uint8_t lv_dir_t;
+
 typedef enum {
     LV_COLOR_FORMAT_RGB565   = 0x12,
     LV_COLOR_FORMAT_ARGB8888 = 0x10,

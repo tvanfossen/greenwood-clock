@@ -39,7 +39,7 @@ struct particle_view_t {
 /**
  * @brief Number of particles, clamped to the scratch capacity.
  * @version 1
- * @dg_internal
+ * @utility
  * @return Particle count.
  */
 static int pv_count(const particle_view_t *v)
@@ -53,7 +53,7 @@ static int pv_count(const particle_view_t *v)
  * v2: also zeroes the display render/refresh counters.
  * v4: resets (and arms or disarms) the shared refresh probe.
  * @version 4
- * @dg_internal
+ * @utility
  */
 static void pv_stats_reset(particle_view_t *v, uint32_t now, bool armed)
 {
@@ -69,7 +69,7 @@ static void pv_stats_reset(particle_view_t *v, uint32_t now, bool armed)
  * v2: logs display render/refresh time and dirty areas per refresh.
  * v4: reads them from the refresh probe; also logs the longest refresh gap.
  * @version 4
- * @dg_internal
+ * @utility
  */
 static void pv_stats(particle_view_t *v, uint32_t now, int64_t cost_us)
 {

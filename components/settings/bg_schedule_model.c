@@ -32,7 +32,7 @@ void bg_schedule_defaults(bg_schedule_t *s)
 /**
  * @brief Whether a fixed-size char field holds a NUL-terminated string.
  * @version 1
- * @dg_internal
+ * @utility
  * @return true if terminated within @p n bytes.
  */
 static bool terminated(const char *str, size_t n)
@@ -43,7 +43,7 @@ static bool terminated(const char *str, size_t n)
 /**
  * @brief Whether one profile's strings are terminated and its overrides are in range.
  * @version 1
- * @dg_internal
+ * @utility
  * @return true if valid.
  */
 static bool profile_valid(const bg_profile_t *p)
@@ -57,7 +57,7 @@ static bool profile_valid(const bg_profile_t *p)
 /**
  * @brief Whether the slot starts are strictly ascending and before 24:00.
  * @version 1
- * @dg_internal
+ * @utility
  * @return true if valid.
  */
 static bool slots_valid(const bg_schedule_t *s)
@@ -73,7 +73,7 @@ static bool slots_valid(const bg_schedule_t *s)
 /**
  * @brief Whether every used grid entry names a defined profile.
  * @version 1
- * @dg_internal
+ * @utility
  * @return true if valid.
  */
 static bool grid_valid(const bg_schedule_t *s)

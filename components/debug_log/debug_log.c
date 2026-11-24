@@ -331,7 +331,7 @@ static esp_err_t debug_log_prepare_file(void)
 /**
  * @brief Write the test block to @p f and force a sync.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void debug_log_write_test_block(FILE* f, const struct timeval* tv)
 {

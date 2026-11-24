@@ -40,7 +40,7 @@ static int64_t       s_start_us;   /* recording start: arm (now) or the state ch
  *        LVGL swaps buf_act on the last flush, so at RENDER_READY the finished frame is the
  *        other buffer.
  * @version 1
- * @dg_internal
+ * @utility
  * @return The finished frame's draw buffer, or NULL.
  */
 static lv_draw_buf_t *finished_frame(const lv_display_t *disp)
@@ -65,7 +65,7 @@ lv_draw_buf_t *frame_capture_shown_buffer(void)
 /**
  * @brief Copy one RGB565 frame at half resolution (every other pixel of every other row).
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void copy_half(const lv_draw_buf_t *fb, uint16_t *dst)
 {

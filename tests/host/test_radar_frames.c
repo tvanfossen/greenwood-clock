@@ -31,7 +31,7 @@ static int s_checks   = 0;
  * @brief Fill @p r with images every @p step_s seconds, the newest (open) starting at
  *        @p newest_s, @p n in all, newest last.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void rasters(nws_radar_raster_t *r, int n, int64_t newest_s, int step_s)
 {
@@ -46,7 +46,7 @@ static void rasters(nws_radar_raster_t *r, int n, int64_t newest_s, int step_s)
 /**
  * @brief Images every 7 min: the newest is kept and the rest spaced >= 9 min, oldest first.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void test_spacing(void)
 {
@@ -65,7 +65,7 @@ static void test_spacing(void)
 /**
  * @brief The cap keeps the newest frames.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void test_cap(void)
 {
@@ -80,7 +80,7 @@ static void test_cap(void)
 /**
  * @brief Input order does not matter; nothing older than the max age.
  * @version 1
- * @dg_internal
+ * @utility
  */
 static void test_unsorted_and_stale(void)
 {
@@ -99,7 +99,7 @@ static void test_unsorted_and_stale(void)
 /**
  * @brief Run the radar frame tests; exit status is the failure count.
  * @version 1
- * @dg_internal
+ * @utility
  * @return 0 when every check passed.
  */
 int main(void)
