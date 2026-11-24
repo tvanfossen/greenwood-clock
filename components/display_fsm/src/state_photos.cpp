@@ -61,13 +61,19 @@ void PhotoSlideshow::decode_next()
 
 // UNDER lock: swap to the decoded descriptor (fast).
 /**
- * @brief Under the LVGL lock: swap the decoded photo in.
- * @version 1
+ * @brief Under the LVGL lock: swap the decoded photo in and colour the minimized clock for it.
+ * v2: the clock's colour is judged against the photo behind it.
+ * @version 2
  * @req REQ-PHOTO-001
+ * @req REQ-BG-002
  */
 void PhotoSlideshow::present()
 {
-    if (s_rotator) image_rotator_present(s_rotator);
+    if (!s_rotator) return;
+    image_rotator_present(s_rotator);
+    const lv_image_dsc_t *photo = image_rotator_shown_dsc(s_rotator);
+    clock_widget_t *clk = get_clock();
+    if (clk && photo) clock_widget_set_minimized_color(clk, display_fsm_min_clock_color(photo));
 }
 
 // OFF-lock: decode the NEXT image ahead of time so the next advance is instant.
@@ -81,10 +87,6 @@ void PhotoSlideshow::prefetch()
     if (s_rotator) image_rotator_prefetch_next(s_rotator);
 }
 
-// UNDER lock: sample the shown photo directly behind the minimized clock and set
-// a legible (OKLCH) clock colour — the photo is the one bright/variable bg where
-// a fixed white washes out. The photo buffer is vertically flipped (stb decode),
-// like the clock background, so screen-Y maps to buffer-Y as h-1-y.
 /**
  * @brief Enter: minimize the clock and create the rotator; with no photos show a "No photos" panel, otherwise start the 7 s advance timer and post the first advance.
  * @version 1

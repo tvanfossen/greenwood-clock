@@ -1,20 +1,33 @@
 /**
  * @file nws_radar.c
- * @version 1
- * @brief Fetch radar imagery from the NOAA ImageServer and the Kp index from SWPC.
+ * @version 2
+ * @brief Fetch radar imagery (by image id) and its image list from the NOAA ImageServer, and the
+ *        Kp index from SWPC.
  */
 
 #include "nws_internal.h"
 #include "esp_heap_caps.h"
+#include "nws_radar_frames.h"
 
 static const char *TAG = "nws_radar";
 
-// NOAA ArcGIS ImageServer — base reflectivity, transparent PNG
-#define NWS_RADAR_URL_FMT \
+// NOAA ArcGIS ImageServer (time-enabled) — base reflectivity. Each image is fetched by its id
+// (lock-raster mosaic rule): without one the server returns a default view that lags behind,
+// and a time request for the newest returns the previous image.
+#define NWS_RADAR_BASE \
     "https://mapservices.weather.noaa.gov/eventdriven/rest/services/" \
-    "radar/radar_base_reflectivity_time/ImageServer/exportImage" \
-    "?bbox=%.4f,%.4f,%.4f,%.4f" \
-    "&bboxSR=4326&size=1024,600&format=png32&transparent=true&f=image"
+    "radar/radar_base_reflectivity_time/ImageServer"
+#define NWS_RADAR_URL_FMT \
+    NWS_RADAR_BASE "/exportImage?bbox=%.4f,%.4f,%.4f,%.4f" \
+    "&bboxSR=4326&size=1024,600&format=png32&transparent=true&f=image" \
+    "&mosaicRule=%%7B%%22mosaicMethod%%22%%3A%%22esriMosaicLockRaster%%22" \
+    "%%2C%%22lockRasterIds%%22%%3A%%5B%lld%%5D%%7D"
+// The images covering the bbox, with their validity (epoch ms).
+#define NWS_RADAR_QUERY_FMT \
+    NWS_RADAR_BASE "/query?where=1%%3D1&geometry=%.4f,%.4f,%.4f,%.4f" \
+    "&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects" \
+    "&outFields=objectid,idp_validtime,idp_validendtime&returnGeometry=false&f=json"
+#define RADAR_BBOX_HALF_DEG 2.0f   /* 4-degree box centred on the location */
 
 #define NWS_KP_URL \
     "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json"
@@ -50,31 +63,14 @@ static esp_err_t accept_radar_png(const char *buf, size_t len,
 }
 
 /**
- * @brief Fetch a 1024x600 transparent base-reflectivity PNG covering a 4-degree
- *        box centred on @p lat / @p lon.
- *
- * Up to NWS_MAX_RETRIES attempts (15 s timeout each); a non-PNG response or an
- * abort/rate-limit result stops retrying.
+ * @brief GET @p url (a radar request) with up to NWS_MAX_RETRIES attempts, 15 s each. The URL
+ *        is never logged: it carries the device's location.
  * @version 1
- * @req REQ-RADAR-001
- * @return ESP_OK with a SPIRAM buffer in @p png_buf (caller frees), ESP_ERR_NO_MEM,
- *         or ESP_ERR_HTTP_CONNECT when no valid PNG was obtained.
+ * @dg_internal
+ * @return malloc'd body (caller frees) with @p len set, or NULL.
  */
-esp_err_t nws_fetch_radar(float lat, float lon, uint8_t **png_buf, size_t *png_len)
+static char *radar_get(const char *url, size_t *len)
 {
-    *png_buf = NULL;
-    *png_len = 0;
-
-    // 4-degree bbox centered on location
-    float lon_min = lon - 2.0f;
-    float lat_min = lat - 2.0f;
-    float lon_max = lon + 2.0f;
-    float lat_max = lat + 2.0f;
-
-    char url[512];
-    snprintf(url, sizeof(url), NWS_RADAR_URL_FMT,
-             lon_min, lat_min, lon_max, lat_max);
-
     esp_http_client_config_t cfg = {
         .url                   = url,
         .transport_type        = HTTP_TRANSPORT_OVER_SSL,
@@ -83,31 +79,95 @@ esp_err_t nws_fetch_radar(float lat, float lon, uint8_t **png_buf, size_t *png_l
         .user_agent            = NWS_USER_AGENT,
         .max_redirection_count = 3,
     };
-
     for (int attempt = 0; attempt < NWS_MAX_RETRIES; attempt++) {
         if (attempt > 0) {
             ESP_LOGW(TAG, "radar retry %d/%d", attempt + 1, NWS_MAX_RETRIES);
             vTaskDelay(pdMS_TO_TICKS(NWS_RETRY_DELAY_MS * attempt));
         }
-
-        size_t len = 0;
         http_attempt_result_t result;
-        char *buf = http_request_execute(&cfg, &result, &len);
-
-        if (result == HTTP_ATTEMPT_OK && buf && len > 0) {
-            esp_err_t r = accept_radar_png(buf, len, png_buf, png_len);
-            free(buf);
-            if (r == ESP_OK || r == ESP_ERR_NO_MEM) return r;
-            break;  // not a PNG — not retryable
-        }
-
-        bool stop = (result == HTTP_ATTEMPT_ABORT || result == HTTP_ATTEMPT_RATE_LIMIT);
+        char *buf = http_request_execute(&cfg, &result, len);
+        if (result == HTTP_ATTEMPT_OK && buf && *len > 0) return buf;
         free(buf);
-        if (stop) break;
+        if (result == HTTP_ATTEMPT_ABORT || result == HTTP_ATTEMPT_RATE_LIMIT) break;
     }
+    ESP_LOGE(TAG, "radar request failed after %d attempts", NWS_MAX_RETRIES);
+    return NULL;
+}
 
-    ESP_LOGE(TAG, "radar fetch failed after %d attempts", NWS_MAX_RETRIES);
-    return ESP_ERR_HTTP_CONNECT;
+/**
+ * @brief Fetch radar image @p id (from nws_radar_rasters) as a 1024x600 transparent
+ *        base-reflectivity PNG for a 4-degree box centred on @p lat / @p lon.
+ * v2: by image id (the no-time default view lagged behind the newest image); retries shared
+ *     with the image list query (radar_get).
+ * @version 2
+ * @req REQ-RADAR-001
+ * @req REQ-RADAR-003
+ * @return ESP_OK with a SPIRAM buffer in @p png_buf (caller frees), ESP_ERR_NO_MEM,
+ *         ESP_FAIL if the response is not a PNG, or ESP_ERR_HTTP_CONNECT.
+ */
+esp_err_t nws_fetch_radar(float lat, float lon, int64_t id, uint8_t **png_buf,
+                          size_t *png_len)
+{
+    *png_buf = NULL;
+    *png_len = 0;
+    char url[512];
+    snprintf(url, sizeof(url), NWS_RADAR_URL_FMT, lon - RADAR_BBOX_HALF_DEG,
+             lat - RADAR_BBOX_HALF_DEG, lon + RADAR_BBOX_HALF_DEG, lat + RADAR_BBOX_HALF_DEG,
+             (long long)id);
+    size_t len = 0;
+    char *buf = radar_get(url, &len);
+    if (!buf) return ESP_ERR_HTTP_CONNECT;
+    esp_err_t r = accept_radar_png(buf, len, png_buf, png_len);
+    free(buf);
+    return r;
+}
+
+/**
+ * @brief Read one query feature's id and validity into @p out (an open image has a null end).
+ * @version 1
+ * @dg_internal
+ * @return Whether the feature had an id and a start time.
+ */
+static bool parse_raster(const cJSON *feature, nws_radar_raster_t *out)
+{
+    const cJSON *attr = cJSON_GetObjectItemCaseSensitive(feature, "attributes");
+    const cJSON *id = cJSON_GetObjectItemCaseSensitive(attr, "objectid");
+    const cJSON *start = cJSON_GetObjectItemCaseSensitive(attr, "idp_validtime");
+    const cJSON *end = cJSON_GetObjectItemCaseSensitive(attr, "idp_validendtime");
+    if (!cJSON_IsNumber(start) || !cJSON_IsNumber(id)) return false;
+    out->id = (int64_t)id->valuedouble;
+    out->start_ms = (int64_t)start->valuedouble;
+    out->end_ms = cJSON_IsNumber(end) ? (int64_t)end->valuedouble : out->start_ms;
+    return true;
+}
+
+/**
+ * @brief List the radar images the server holds for a 4-degree box centred on @p lat /
+ *        @p lon, with their validity, into @p out (at most @p max, server order).
+ * @version 1
+ * @req REQ-RADAR-003
+ * @return Number listed, or -1 if the query failed.
+ */
+int nws_radar_rasters(float lat, float lon, nws_radar_raster_t *out, int max)
+{
+    char url[512];
+    snprintf(url, sizeof(url), NWS_RADAR_QUERY_FMT, lon - RADAR_BBOX_HALF_DEG,
+             lat - RADAR_BBOX_HALF_DEG, lon + RADAR_BBOX_HALF_DEG, lat + RADAR_BBOX_HALF_DEG);
+    size_t len = 0;
+    char *json = radar_get(url, &len);
+    cJSON *root = json ? cJSON_Parse(json) : NULL;
+    free(json);
+    const cJSON *features = cJSON_GetObjectItemCaseSensitive(root, "features");
+    int n = cJSON_IsArray(features) ? 0 : -1;
+    const cJSON *f;
+    cJSON_ArrayForEach(f, features) {
+        if (n >= max) break;
+        if (parse_raster(f, &out[n])) n++;
+    }
+    cJSON_Delete(root);
+    if (n < 0) ESP_LOGE(TAG, "radar image list: no features in the response");
+    else ESP_LOGI(TAG, "radar image list: %d image(s)", n);
+    return n;
 }
 
 /**

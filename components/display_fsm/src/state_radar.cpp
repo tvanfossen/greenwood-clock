@@ -20,12 +20,24 @@ static const char *TAG = "state_radar";
 radar_view_t *RadarOverlay::s_rv = nullptr;
 
 /**
+ * @brief Clock-settled callback: hide the clock background the radar view now covers.
+ * @version 1
+ * @callback
+ */
+static void hide_bg(void)
+{
+    display_fsm_set_bg_visible(false);
+}
+
+/**
  * @brief Enter the radar state: tint the minimized clock for legibility over the
  *        basemap, minimize it, create the radar view at the configured location,
  *        apply the staged overlay and fade it in, then start loading the radar loop.
  * v2: clock uses the user's exact colour; no background sampling before minimizing.
  * v3: arms the radar loop and posts its first off-lock load.
- * @version 3
+ * v4: the clock's colour is judged against the map.
+ * v5: hides the clock background once the radar view has faded in over it.
+ * @version 5
  * @req REQ-RADAR-001
  * @req REQ-DISP-001
  */
@@ -33,7 +45,7 @@ void RadarOverlay::entry()
 {
     set_state_info(DISPLAY_STATE_RADAR, "radar");
 
-    minimize_clock();
+    minimize_clock(radar_view_map_dsc());   // the map, not the clock bg, is behind the clock
 
     // Get device location from settings
     clock_settings_t cfg;
@@ -45,6 +57,9 @@ void RadarOverlay::entry()
     if (s_rv) {
         radar_view_apply_radar(s_rv);
         fade_in(radar_view_container(s_rv));
+        // The fade and the clock's morph share a duration: once the clock settles the map
+        // covers the screen, and the background under it is only redraw cost.
+        clock_widget_when_settled(get_clock(), hide_bg);
         radar_loop_arm();
         display_event_t evt = {};
         evt.type = DISPLAY_EVT_RADAR_LOOP_LOAD;
@@ -56,12 +71,14 @@ void RadarOverlay::entry()
 /**
  * @brief Leave the radar state: destroy the radar view, then stop the loop and free its frames.
  * v2: stops the radar loop.
- * @version 2
+ * v3: shows the clock background again first.
+ * @version 3
  * @req REQ-RADAR-001
  * @req REQ-DISP-001
  */
 void RadarOverlay::exit()
 {
+    display_fsm_set_bg_visible(true);
     if (s_rv) { radar_view_destroy(s_rv); s_rv = NULL; }
     radar_loop_stop();
     ESP_LOGI(TAG, "RadarOverlay: exit");

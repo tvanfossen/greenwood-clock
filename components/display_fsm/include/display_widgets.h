@@ -216,7 +216,7 @@ const lv_image_dsc_t *radar_view_map_dsc(void);
 
 // Two-phase radar overlay: predecode runs without LVGL lock (~500ms),
 // apply_radar runs with LVGL lock (instant pointer swap).
-void radar_view_predecode(const uint8_t *png_data, size_t len);
+void radar_view_predecode(const uint8_t *png_data, size_t len, time_t valid_ts);
 void radar_view_apply_radar(radar_view_t *rv);
 // Crossfade the overlay to one radar-loop frame (taken at ts) over fade_ms; `newest` is the
 // most recent frame; caller holds the LVGL lock.

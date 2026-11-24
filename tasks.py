@@ -59,12 +59,16 @@ HOST_TESTS = {
     "leaf_physics": ("leaf_physics",),
     "leaf_field": ("leaf_field", "leaf_physics"),
     "bg_schedule": ("settings/bg_schedule_model",),
+    "ui_contrast": ("ui_contrast",),
+    "radar_frames": ("nws/src/nws_radar_frames",),
 }
 
 #: Include directories for the host tests.
 HOST_TEST_INCLUDES = (
     REPO / "components" / "display_fsm" / "include",
     REPO / "components" / "settings",
+    REPO / "components" / "nws" / "src",
+    REPO / "tests" / "host" / "stubs",  # minimal lvgl.h for the pure display helpers
 )
 
 #: Log slot → URL path. Slot 0 is the live file and goes through the API so the

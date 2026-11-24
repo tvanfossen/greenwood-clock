@@ -15,6 +15,7 @@ extern "C" {
 
 #include <stdint.h>
 #include "display_events.h"
+#include "lvgl.h"
 
 /**
  * @brief Initialize the display FSM.
@@ -56,6 +57,25 @@ display_state_id_t display_fsm_get_state_id(void);
  * @return Pointer to the ClockWidget, or NULL if not yet created.
  */
 struct clock_widget_t *display_fsm_get_clock(void);
+
+/**
+ * @brief The minimized clock's colour over @p behind (a screen's own content under the
+ *        minimized clock: radar map, photo), or over the background picture when NULL: the
+ *        user's colour, its OKLCH lightness minimally shifted when it would not be legible.
+ *        Caller holds the LVGL lock.
+ * @version 1
+ * @req REQ-BG-002
+ * @return The colour.
+ */
+lv_color_t display_fsm_min_clock_color(const lv_image_dsc_t *behind);
+
+/**
+ * @brief Show or hide the clock background image, for screens whose own content covers the
+ *        whole display (LVGL draws covered objects too). Caller holds the LVGL lock.
+ * @version 1
+ * @req REQ-DISP-004
+ */
+void display_fsm_set_bg_visible(bool visible);
 
 /**
  * @brief Get the FSM's active screen for background/widget operations.

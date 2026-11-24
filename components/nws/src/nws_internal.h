@@ -15,6 +15,7 @@
 #include "esp_heap_caps.h"
 #include "esp_crt_bundle.h"
 #include "cJSON.h"
+#include "nws_radar_frames.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
@@ -27,6 +28,14 @@
 #define NWS_READ_TIMEOUT_MS     10000
 #define NWS_MAX_RETRIES         3
 #define NWS_RETRY_DELAY_MS      5000
+
+/**
+ * @brief List the radar images the server holds for the 4-degree box around @p lat / @p lon.
+ * @version 1
+ * @req REQ-RADAR-003
+ * @return Number written to @p out (at most @p max), or -1 if the query failed.
+ */
+int nws_radar_rasters(float lat, float lon, nws_radar_raster_t *out, int max);
 
 /**
  * @brief Fetch JSON from a URL with NWS-standard headers and retry logic.

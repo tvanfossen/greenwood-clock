@@ -59,6 +59,7 @@ static float            s_kp_index;
 // Cached radar PNG (SPIRAM-allocated, swapped on each successful fetch)
 static uint8_t         *s_radar_png     = NULL;
 static size_t           s_radar_png_len = 0;
+static time_t           s_radar_ts      = 0;      // valid time of s_radar_png
 
 // Previous alert state for change detection
 static int              s_prev_alert_count;
@@ -104,6 +105,17 @@ const uint8_t *nws_get_radar_png(size_t *len_out)
 {
     if (len_out) *len_out = s_radar_png_len;
     return s_radar_png;
+}
+
+/**
+ * @brief When the cached radar image is valid from.
+ * @version 1
+ * @req REQ-RADAR-001
+ * @return Epoch seconds, or 0 if none cached.
+ */
+time_t nws_get_radar_ts(void)
+{
+    return s_radar_ts;
 }
 
 // Precipitation detection via PNG size heuristic.
@@ -315,12 +327,58 @@ static void poll_alerts(float lat, float lon, TickType_t *now,
     poll_stagger(now);
 }
 
+#define RADAR_RASTERS_MAX   32         /* images listed per query (the server holds ~16) */
+#define RADAR_FRAME_GAP_S   (5 * 60)   /* every server image (~6-8 min apart), so the set stays
+                                          stable as new images arrive: 1-2 fetches per poll */
+
 /**
- * @brief If due (10 min), fetch radar, swap it into the cached PNG buffer and emit
- *        DISPLAY_EVT_RADAR_READY on success, count the attempt/failure and stagger.
+ * @brief Fetch loop frame @p r unless the SD history (for the @p newest: the cache) already
+ *        has it; save it to the history (the newest overwrites its file, repairing one saved
+ *        by an older build) and, for the newest, make it the cached image.
+ * @version 1
+ * @dg_internal
+ * @return ESP_OK (fetched or nothing to do) or the fetch error. @p new_latest is set when the
+ *         cached image changed.
+ */
+static esp_err_t fetch_frame(float lat, float lon, const nws_radar_raster_t *r, bool newest,
+                             bool *new_latest)
+{
+    time_t ts = (time_t)(r->start_ms / 1000);
+    bool on_sd = nws_radar_history_has(ts);
+    bool needed = newest ? (s_radar_ts != ts || !s_radar_png) : !on_sd;
+    if (!needed) return ESP_OK;
+    uint8_t *png = NULL;
+    size_t len = 0;
+    esp_err_t err = nws_fetch_radar(lat, lon, r->id, &png, &len);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "radar frame %lld: %s", (long long)ts, esp_err_to_name(err));
+        return err;
+    }
+    if (!on_sd || newest) nws_radar_history_save(png, len, ts);   // the newest overwrites
+    if (!newest) {
+        free(png);
+        return ESP_OK;
+    }
+    free(s_radar_png);              // swap cached radar buffer
+    s_radar_png     = png;
+    s_radar_png_len = len;
+    s_radar_ts      = ts;
+    *new_latest = true;
+    ESP_LOGI(TAG, "radar cached: %zu bytes, valid from %lld", len, (long long)ts);
+    return ESP_OK;
+}
+
+/**
+ * @brief If due (10 min): list the server's radar images, pick the loop's frames (newest,
+ *        then >= 5 min apart, i.e. every server image, over the last 70 min), fetch the
+ *        ones not yet on the SD history (all of them after boot), drop the rest from it,
+ *        and emit DISPLAY_EVT_RADAR_READY when the newest image changed. Counts the
+ *        attempt/failure and staggers.
  * v2: also writes each fetched image to the SD radar history (the radar loop); the fetch
  *     rate is unchanged.
- * @version 2
+ * v3: frames by their valid time, each fetched by image id (the default view lagged and
+ *     returned the same image twice), and the past hour backfilled.
+ * @version 3
  * @req REQ-RADAR-001
  * @req REQ-RADAR-003
  * @req REQ-WX-004
@@ -330,19 +388,25 @@ static void poll_radar(float lat, float lon, TickType_t *now,
 {
     if (!poll_due(*now, *last, RADAR_INTERVAL_S)) return;
     st->attempted++;
-    uint8_t *png_buf = NULL;
-    size_t   png_len = 0;
-    esp_err_t err = nws_fetch_radar(lat, lon, &png_buf, &png_len);
-    if (err == ESP_OK && png_buf) {
-        free(s_radar_png);              // swap cached radar buffer
-        s_radar_png     = png_buf;
-        s_radar_png_len = png_len;
-        ESP_LOGI(TAG, "radar cached: %zu bytes", png_len);
-        nws_radar_history_save(png_buf, png_len);
-        send_simple_event(DISPLAY_EVT_RADAR_READY);
-    } else {
+    nws_radar_raster_t all[RADAR_RASTERS_MAX], pick[NWS_RADAR_HISTORY_MAX];
+    int n = nws_radar_rasters(lat, lon, all, RADAR_RASTERS_MAX);
+    int k = n > 0 ? nws_radar_pick(all, n, (int64_t)time(NULL), RADAR_FRAME_GAP_S,
+                                   NWS_RADAR_HISTORY_MAX_AGE_S, pick, NWS_RADAR_HISTORY_MAX)
+                  : 0;
+    bool failed = (k == 0);
+    bool new_latest = false;
+    // Drop the frames the loop no longer uses first: saving prunes to the newest
+    // NWS_RADAR_HISTORY_MAX, which would otherwise delete the backfilled older frames.
+    time_t keep[NWS_RADAR_HISTORY_MAX];
+    for (int i = 0; i < k; i++) keep[i] = (time_t)(pick[i].start_ms / 1000);
+    if (k > 0) nws_radar_history_keep(keep, k);
+    for (int i = k - 1; i >= 0; i--) {   // newest first: the screen gets it before the backfill
+        if (fetch_frame(lat, lon, &pick[i], i == k - 1, &new_latest) != ESP_OK) failed = true;
+    }
+    if (new_latest) send_simple_event(DISPLAY_EVT_RADAR_READY);
+    if (failed) {
         st->failed++;
-        ESP_LOGW(TAG, "radar fetch failed: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "radar: %d of %d image(s) picked, some fetch failed", k, n);
     }
     *last = xTaskGetTickCount();
     poll_stagger(now);
@@ -428,7 +492,8 @@ static void apply_backoff(const poll_stats_t *st, int *streak)
  * v2: the forecast's first fetch shares cycle 1 with conditions (sequential, right after
  *     it), so the forecast strip is populated for the first weather screen instead of
  *     showing "---" for ~3 min after boot. Alerts/radar/Kp keep their stagger.
- * @version 2
+ * v3: no lat/lon in the log (the device location is private).
+ * @version 3
  * @callback
  * @req REQ-WX-004
  * @req REQ-WX-003
@@ -439,8 +504,8 @@ static void nws_task_fn(void *arg)
     float lat = s_location.lat;
     float lon = s_location.lon;
 
-    ESP_LOGI(TAG, "task started: lat=%.4f lon=%.4f office=%s station=%s",
-             lat, lon, s_location.office, s_location.station);
+    // Never log lat/lon: the device location is private (secrets.h).
+    ESP_LOGI(TAG, "task started: office=%s station=%s", s_location.office, s_location.station);
 
     vTaskDelay(pdMS_TO_TICKS(INITIAL_DELAY_S * 1000));  // let WiFi + C6 SDIO settle
 
@@ -484,7 +549,8 @@ static void nws_task_fn(void *arg)
 /**
  * @brief Store the event callback, clear cached data, resolve the NWS location
  *        and start the polling task (12 KB stack, priority 3).
- * @version 1
+ * v2: no lat/lon in the log (the device location is private).
+ * @version 2
  * @req REQ-WX-001
  * @req REQ-WX-004
  * @return ESP_OK when the task started; the nws_resolve_location() error if the
@@ -493,8 +559,7 @@ static void nws_task_fn(void *arg)
  */
 esp_err_t nws_init(float lat, float lon, nws_event_cb_t event_cb)
 {
-    ESP_LOGI(TAG, "init: lat=%.4f lon=%.4f cb=%s", lat, lon,
-             event_cb ? "set" : "NULL");
+    ESP_LOGI(TAG, "init: cb=%s", event_cb ? "set" : "NULL");   // no lat/lon: location is private
     s_event_cb = event_cb;
 
     memset(&s_conditions, 0, sizeof(s_conditions));

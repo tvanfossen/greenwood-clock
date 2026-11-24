@@ -1,7 +1,7 @@
 /**
  * @file ui_contrast.c
  * @version 1
- * @brief Text-legibility helpers: WCAG luminance/contrast, black/white pick, OKLCH lightness push and image-region mean colour.
+ * @brief Text-legibility helpers: WCAG luminance/contrast, black/white pick, minimal OKLCH lightness shift and image-region mean colour.
  */
 // Text-legibility helpers — see ui_contrast.h.
 
@@ -139,32 +139,62 @@ static lv_color_t oklab_to_srgb(float L, float a, float b)
                          (uint8_t)(linear_to_srgb(bl) * 255.0f + 0.5f));
 }
 
-// The single text-colour method: keep the desired colour's hue/chroma and drive
-// its OKLCH lightness STRONGLY away from the background — near-white over a dark
-// bg, near-black over a light one. We deliberately go to the extreme rather than
-// stopping at the first tone that scrapes past a contrast ratio: against a very
-// dark panel the ratio is met early at a washed MID-grey (luminance ~0.33 already
-// clears 7:1), so threshold-stopping left panel text grey, not light — while over
-// a bright photo the same ratio is unreachable so it fell through to black. That
-// asymmetry made the clock black on the home screen but only mid-grey when
-// minimized over panels. Pushing to the extreme makes it consistently strong:
-// clearly light over dark, clearly dark over light, hue preserved.
+#define LEGIBLE_STEPS 16   /* bisection steps on OKLCH L: 2^-16 is far below one 8-bit step */
+
 /**
- * @brief Keep @p desired's OKLCH hue/chroma but push its lightness to the extreme away from @p bg: L <= 0.06 over a light bg, L >= 0.95 over a dark one.
+ * @brief WCAG contrast against @p bg of the OKLab colour (@p L, @p a, @p b).
  * @version 1
+ * @dg_internal
+ * @return Contrast ratio.
+ */
+static float contrast_at(float L, float a, float b, lv_color_t bg)
+{
+    return ui_contrast_ratio(oklab_to_srgb(L, a, b), bg);
+}
+
+/**
+ * @brief Smallest move of lightness from @p L toward @p end (0 or 1) that reaches
+ *        UI_CONTRAST_AA against @p bg; @p L itself is known to fall short.
+ * @version 1
+ * @dg_internal
+ * @return Whether that direction reaches the target at all (@p out is set when it does).
+ */
+static bool shift_toward(float L, float a, float b, lv_color_t bg, float end, float *out)
+{
+    if (contrast_at(end, a, b, bg) < UI_CONTRAST_AA) return false;
+    float fail = L, pass = end;
+    for (int i = 0; i < LEGIBLE_STEPS; i++) {
+        float mid = 0.5f * (fail + pass);
+        if (contrast_at(mid, a, b, bg) >= UI_CONTRAST_AA) pass = mid;
+        else fail = mid;
+    }
+    *out = pass;
+    return true;
+}
+
+/**
+ * @brief @p desired when it already reaches UI_CONTRAST_AA against @p bg; otherwise the same
+ *        OKLCH hue and chroma with lightness moved only as far as AA needs, in whichever
+ *        direction needs the smaller move (the extreme with the better contrast when neither
+ *        reaches it).
+ * v2: minimal shift with pass-through (was: lightness always pushed to L <= 0.06 or >= 0.95,
+ *     which turned a legible white black over a light background).
+ * @version 2
  * @req REQ-BG-002
  * @return Legible text colour.
  */
 lv_color_t ui_legible(lv_color_t desired, lv_color_t bg)
 {
-    float L, a, b, bgL, bga, bgb;
+    if (ui_contrast_ratio(desired, bg) >= UI_CONTRAST_AA) return desired;
+    float L, a, b, up_L = 1.0f, down_L = 0.0f;
     srgb_to_oklab(desired, &L, &a, &b);
-    srgb_to_oklab(bg, &bgL, &bga, &bgb);
-
-    // Over a light bg cap lightness very low (dark text); over a dark bg floor it
-    // very high (light text). max()/min() so an already-more-extreme desired stays.
-    float target_L = (bgL > 0.5f) ? fminf(L, 0.06f) : fmaxf(L, 0.95f);
-    return oklab_to_srgb(target_L, a, b);
+    bool up = shift_toward(L, a, b, bg, 1.0f, &up_L);
+    bool down = shift_toward(L, a, b, bg, 0.0f, &down_L);
+    float target;
+    if (up && down) target = (up_L - L <= L - down_L) ? up_L : down_L;
+    else if (up || down) target = up ? up_L : down_L;
+    else target = (contrast_at(1.0f, a, b, bg) >= contrast_at(0.0f, a, b, bg)) ? 1.0f : 0.0f;
+    return oklab_to_srgb(target, a, b);
 }
 
 // Add one pixel's 8-bit R/G/B to the running sums (RGB565 or ARGB/XRGB byte

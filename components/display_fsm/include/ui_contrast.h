@@ -9,10 +9,9 @@
 //    contrast against a known solid background. The guaranteed-optimal binary
 //    choice (e.g. alert-banner text over a severity colour).
 //
-//  - ui_legible(desired, bg): keep a *hue* but raise its perceptual lightness
-//    (OKLCH L) until it clears the WCAG AA threshold against bg, falling back
-//    to ui_text_on() if even that cannot. Use for coloured accent text on a
-//    known panel colour.
+//  - ui_legible(desired, bg): the desired colour unchanged when it already clears
+//    WCAG AA against bg; otherwise the same OKLCH hue/chroma with its lightness
+//    moved only as far as AA needs.
 //
 // Neither can guarantee legibility over an *image* (varying luminance) — there,
 // use a semi-opaque backing chip or a text outline instead.
@@ -24,9 +23,7 @@
 extern "C" {
 #endif
 
-// WCAG 2.x minimum contrast ratio for normal text (AA). Used by ui_text_on().
-// ui_legible() does NOT threshold on a ratio — it pushes lightness to the extreme
-// (see ui_contrast.c) so text is strongly light/dark, never a washed mid-tone.
+// WCAG 2.x minimum contrast ratio for normal text (AA): ui_legible()'s target.
 #define UI_CONTRAST_AA 4.5f
 
 // WCAG contrast ratio between two colours: 1.0 (none) .. 21.0 (black/white).
@@ -35,9 +32,8 @@ float ui_contrast_ratio(lv_color_t a, lv_color_t b);
 // Black or white, whichever contrasts more with bg.
 lv_color_t ui_text_on(lv_color_t bg);
 
-// `desired`, with its OKLCH-L driven to the extreme away from bg's lightness —
-// near-white over a dark bg, near-black over a light one — keeping its hue/chroma.
-// Strongly light/dark, never a washed mid-tone.
+// `desired` if it clears AA against bg, else its OKLCH lightness minimally shifted
+// to clear it (hue/chroma kept).
 lv_color_t ui_legible(lv_color_t desired, lv_color_t bg);
 
 // Mean colour of a rectangular region of an image buffer (RGB565 or ARGB8888),

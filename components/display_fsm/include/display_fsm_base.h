@@ -57,16 +57,21 @@ protected:
 
     // Helpers for concrete states
     /**
-     * @brief Switch the clock widget to minimized mode and hide the clock animation.
-     * @version 1
+     * @brief Switch the clock widget to minimized mode and hide the clock animation. The
+     *        minimized colour is judged against @p behind (the state's own content under the
+     *        clock, e.g. the radar map) or the background picture when NULL, before the morph
+     *        so it recolours straight to it.
+     * v2: samples what is behind the minimized clock (minimal OKLCH adjustment).
+     * @version 2
      * @req REQ-CLOCK-002
      * @req REQ-ANIM-001
+     * @req REQ-BG-002
      */
-    void minimize_clock() {
-        // set_mode resets the minimized colour to the bg-image-sampled default
-        // (correct for weather/astro/ambient, which show the clock bg behind the
-        // clock). Radar and Photos override it from their own background sample.
-        if (s_clock) clock_widget_set_mode(s_clock, CLOCK_MODE_MINIMIZED);
+    void minimize_clock(const lv_image_dsc_t *behind = nullptr) {
+        if (s_clock) {
+            clock_widget_set_minimized_base_color(s_clock, display_fsm_min_clock_color(behind));
+            clock_widget_set_mode(s_clock, CLOCK_MODE_MINIMIZED);
+        }
         display_fsm_hide_clock_lottie();
     }
     /**

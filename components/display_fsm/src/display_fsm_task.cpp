@@ -470,14 +470,66 @@ static void load_background(lv_obj_t *scr, const clock_settings_t *cfg)
 }
 
 /**
- * @brief Apply the user's text colour to the clock in every mode; the clock widget's label
- *        shadows keep it legible over any background.
- *
- * Replaces apply_clock_bg_contrast(), which legibility-adjusted the colour against the
- * background (OKLCH), so a chosen white could render black ("colour resets to black").
- *
+ * @brief @p user made legible (ui_legible: exact when it already reaches AA) over the mean
+ *        of @p img in screen area @p a (images are top-down and screen-sized), or over the
+ *        screen's own colour when there is no image (GIF background, failed decode).
  * @dg_internal
  * @version 1
+ * @return The colour to draw the text in.
+ */
+static lv_color_t legible_over(lv_color_t user, const lv_image_dsc_t *img, const lv_area_t *a)
+{
+    if (!img) {
+        lv_obj_t *scr = DisplayFsm::get_screen();
+        return ui_legible(user, scr ? lv_obj_get_style_bg_color(scr, LV_PART_MAIN)
+                                    : lv_color_black());
+    }
+    lv_color_t mean = ui_image_region_mean(img, a->x1, LV_MAX(a->y1, 0), a->x2 - a->x1 + 1,
+                                           a->y2 - a->y1 + 1);
+    return ui_legible(user, mean);
+}
+
+/**
+ * @brief Show or hide the clock background image (no-op without one). A screen whose own
+ *        content covers the whole display hides it: LVGL still draws covered objects (on the
+ *        radar screen, ~18% of every redraw). Caller holds the LVGL lock.
+ * @version 1
+ * @req REQ-DISP-004
+ */
+extern "C" void display_fsm_set_bg_visible(bool visible)
+{
+    if (!s_bg_img) return;
+    if (visible) lv_obj_remove_flag(s_bg_img, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(s_bg_img, LV_OBJ_FLAG_HIDDEN);
+}
+
+/**
+ * @brief The minimized clock's colour over @p behind (a screen's own content under the
+ *        minimized clock: radar map, photo), or over the background picture when NULL.
+ *        Caller holds the LVGL lock.
+ * @version 1
+ * @req REQ-BG-002
+ * @return The user's colour, minimally adjusted for contrast.
+ */
+extern "C" lv_color_t display_fsm_min_clock_color(const lv_image_dsc_t *behind)
+{
+    clock_widget_t *clk = DisplayFsm::get_clock();
+    lv_color_t user = clk ? clock_widget_user_color(clk) : lv_color_white();
+    lv_area_t ma;
+    clock_widget_min_area(&ma);
+    return legible_over(user, behind ? behind : s_bg_dsc, &ma);
+}
+
+/**
+ * @brief Apply the user's text colour to the clock: exact where it is legible, its OKLCH
+ *        lightness minimally shifted where not, judged against what is behind each layout
+ *        (the full clock's and the minimized clock's area of the background picture). The
+ *        label shadows add to that.
+ * v2: minimal OKLCH adjustment against the background (was the exact colour everywhere,
+ *     after the old extreme push had turned a chosen white black).
+ *
+ * @dg_internal
+ * @version 2
  * @req REQ-BG-002
  */
 static void apply_clock_user_color(const clock_settings_t *cfg)
@@ -490,8 +542,10 @@ static void apply_clock_user_color(const clock_settings_t *cfg)
                                     cfg->text_color & 0xFF);
     lvgl_port_lock(0);
     clock_widget_set_user_color(clk, user);
-    clock_widget_set_minimized_base_color(clk, user);
-    clock_widget_set_color(clk, user);
+    lv_area_t fa;
+    clock_widget_full_area(&fa);
+    clock_widget_set_color(clk, legible_over(user, s_bg_dsc, &fa));
+    clock_widget_set_minimized_base_color(clk, display_fsm_min_clock_color(NULL));
     lvgl_port_unlock();
 }
 
@@ -807,7 +861,8 @@ static void start_periodic_timers(void)
  * v3: clock text uses the user's exact colour (legibility via label shadows), no bg sampling.
  * v4: radar-loop frames decode off-lock, one per event (RadarOverlay::loop_step).
  * v5: background schedule: the minute tick and REFRESH_BG apply the active profile.
- * @version 5
+ * v6: passes the radar image's valid time to the predecode.
+ * @version 6
  */
 static void process_event(const display_event_t *evt)
 {
@@ -818,7 +873,7 @@ static void process_event(const display_event_t *evt)
     if (evt->type == DISPLAY_EVT_RADAR_READY) {
         size_t rlen = 0;
         const uint8_t *rpng = nws_get_radar_png(&rlen);
-        if (rpng && rlen > 0) radar_view_predecode(rpng, rlen);
+        if (rpng && rlen > 0) radar_view_predecode(rpng, rlen, nws_get_radar_ts());
     }
     if (evt->type == DISPLAY_EVT_FORECAST_UPDATE) {
         forecast_icons_rescan();   // SD stat()s off-lock; the strip update below only reads the cache

@@ -268,7 +268,8 @@ void radar_view_preload_map(void)
  * v3: no container fill when the basemap covers the screen.
  * v4: the time is shown by a radar_time_view (chip or dial) instead of a label.
  * v5: no progress bar (the clock's time roll shows the loop's direction).
- * @version 5
+ * v6: no centre coordinates in the log (the device location is private).
+ * @version 6
  * @req REQ-RADAR-001
  * @return The new view, or NULL if allocation failed.
  */
@@ -350,7 +351,7 @@ radar_view_t *radar_view_create(lv_obj_t *parent, float lat, float lon)
     rv->time_view = radar_time_view_create(rv->container, RADAR_TIME_STYLE);
     radar_time_view_message(rv->time_view, "Radar loading...");
 
-    ESP_LOGI(TAG, "RadarView created (center=%.3f,%.3f)", lat, lon);
+    ESP_LOGI(TAG, "RadarView created");   // no centre: the device location is private
     return rv;
 }
 
@@ -392,10 +393,11 @@ lv_obj_t *radar_view_container(const radar_view_t *rv)
  * @brief Decode a radar PNG to top-down (north-up) ARGB8888 off the LVGL lock and
  *        stage it as the pending overlay, replacing any unconsumed pending one.
  * v2: no flip; decode is pinned top-down (the old flip undid stb's accidental bottom-up decode).
- * @version 2
+ * v3: stamped with the image's valid time (@p valid_ts), not the decode time.
+ * @version 3
  * @req REQ-RADAR-001
  */
-void radar_view_predecode(const uint8_t *png_data, size_t len)
+void radar_view_predecode(const uint8_t *png_data, size_t len, time_t valid_ts)
 {
     if (!png_data || len == 0) return;
 
@@ -416,7 +418,7 @@ void radar_view_predecode(const uint8_t *png_data, size_t len)
     if (s_pending_radar_dsc)    heap_caps_free(s_pending_radar_dsc);
     s_pending_radar_pixels = (uint8_t *)dsc->data;
     s_pending_radar_dsc    = dsc;
-    time(&s_pending_radar_ts);
+    s_pending_radar_ts     = valid_ts;   // the image's valid time, not when it was decoded
 
     ESP_LOGI(TAG, "Radar staged: %lux%lu (%lu bytes)",
              (unsigned long)dsc->header.w, (unsigned long)dsc->header.h,

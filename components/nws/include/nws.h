@@ -119,18 +119,20 @@ esp_err_t nws_fetch_forecast(const nws_location_t *loc, nws_forecast_t *out);
 esp_err_t nws_fetch_alerts(float lat, float lon, nws_alerts_t *out);
 
 /**
- * @brief Fetch radar image from NOAA ImageServer.
+ * @brief Fetch radar image @p id (an image listed by the server) from the NOAA ImageServer.
  *
  * Returns a transparent RGBA PNG in a SPIRAM-allocated buffer.
  * Caller must free() the buffer.
  *
  * @param lat       Center latitude
  * @param lon       Center longitude
+ * @param id        Server image id
  * @param png_buf   Output: SPIRAM-allocated PNG data
  * @param png_len   Output: length of PNG data
  * @return ESP_OK on success
  */
-esp_err_t nws_fetch_radar(float lat, float lon, uint8_t **png_buf, size_t *png_len);
+esp_err_t nws_fetch_radar(float lat, float lon, int64_t id, uint8_t **png_buf,
+                          size_t *png_len);
 
 /**
  * @brief Fetch current Kp index from NOAA SWPC.
@@ -157,6 +159,11 @@ float                   nws_get_kp_index(void);
 const uint8_t *nws_get_radar_png(size_t *len_out);
 
 /**
+ * @brief When the cached radar image (nws_get_radar_png) is valid from (epoch s), or 0.
+ */
+time_t nws_get_radar_ts(void);
+
+/**
  * @brief Check if cached radar data shows precipitation.
  * Uses PNG size heuristic (>20KB = precipitation present).
  * @return true if radar data exists and indicates precipitation.
@@ -164,14 +171,20 @@ const uint8_t *nws_get_radar_png(size_t *len_out);
 bool nws_radar_has_precipitation(void);
 
 /** Radar history frames kept on the SD card for the radar loop (newest N, max age). */
-#define NWS_RADAR_HISTORY_MAX        6
+#define NWS_RADAR_HISTORY_MAX        8
 #define NWS_RADAR_HISTORY_MAX_AGE_S  (70 * 60)
 
 /**
- * @brief Write a fetched radar PNG to the SD history (stamped now) and prune old frames.
- *        NWS task only; skipped before SNTP time or without an SD card.
+ * @brief Write a fetched radar PNG to the SD history as the frame valid at @p ts and prune
+ *        old frames. NWS task only; skipped before SNTP time or without an SD card.
  */
-void nws_radar_history_save(const uint8_t *png, size_t len);
+void nws_radar_history_save(const uint8_t *png, size_t len, time_t ts);
+
+/** @brief Whether the history holds the frame valid at @p ts. */
+bool nws_radar_history_has(time_t ts);
+
+/** @brief Delete every history frame whose time is not among the @p n in @p keep. */
+void nws_radar_history_keep(const time_t *keep, int n);
 
 /**
  * @brief List history frame times within the max age, ascending, at most @p max.

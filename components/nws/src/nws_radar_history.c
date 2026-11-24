@@ -1,10 +1,9 @@
 /**
  * @file nws_radar_history.c
- * @version 1
- * @brief Radar history on the SD card: each fetched radar PNG is also written to
- *        /sdcard/radar/<epoch>.png, the newest NWS_RADAR_HISTORY_MAX within
- *        NWS_RADAR_HISTORY_MAX_AGE_S are kept. The radar screen loops them; no extra
- *        downloads are made. Runs on the NWS task (save) and the FSM task (list), never
+ * @version 2
+ * @brief Radar history on the SD card: the loop's frames as /sdcard/radar/<valid epoch>.png,
+ *        the newest NWS_RADAR_HISTORY_MAX within NWS_RADAR_HISTORY_MAX_AGE_S kept. The
+ *        radar screen loops them. Runs on the NWS task (save) and the FSM task (list), never
  *        under the LVGL lock.
  */
 #include "nws.h"
@@ -101,15 +100,17 @@ static void prune_frames(time_t now)
 }
 
 /**
- * @brief Write one fetched radar PNG as a history frame stamped with the current time, then
- *        prune. Skipped (logged) before SNTP time is set or if the SD card is unavailable.
- * @version 1
+ * @brief Write one fetched radar PNG as the history frame valid at @p ts, then prune. Skipped
+ *        (logged) before SNTP time is set or if the SD card is unavailable.
+ * v2: stamped with the image's valid time (was the fetch time, ~10 min late and the same
+ *     image twice when the server had nothing newer).
+ * @version 2
  * @req REQ-RADAR-003
  */
-void nws_radar_history_save(const uint8_t *png, size_t len)
+void nws_radar_history_save(const uint8_t *png, size_t len, time_t ts)
 {
     time_t now = time(NULL);
-    if (!png || len == 0 || now < TIME_VALID_EPOCH) {
+    if (!png || len == 0 || now < TIME_VALID_EPOCH || ts < TIME_VALID_EPOCH) {
         ESP_LOGW(TAG, "not saved: %s", now < TIME_VALID_EPOCH ? "no wall-clock time yet" : "empty PNG");
         return;
     }
@@ -118,7 +119,7 @@ void nws_radar_history_save(const uint8_t *png, size_t len)
         return;
     }
     char path[48];
-    nws_radar_history_path(now, path, sizeof(path));
+    nws_radar_history_path(ts, path, sizeof(path));
     FILE *f = fopen(path, "wb");
     size_t wrote = f ? fwrite(png, 1, len, f) : 0;
     if (f) fclose(f);
@@ -129,6 +130,53 @@ void nws_radar_history_save(const uint8_t *png, size_t len)
     }
     prune_frames(now);
     ESP_LOGI(TAG, "saved %s (%zu B)", path, len);
+}
+
+/**
+ * @brief Whether the history holds the frame valid at @p ts.
+ * @version 1
+ * @req REQ-RADAR-003
+ * @return true if its file exists.
+ */
+bool nws_radar_history_has(time_t ts)
+{
+    char path[48];
+    struct stat st;
+    nws_radar_history_path(ts, path, sizeof(path));
+    return stat(path, &st) == 0;
+}
+
+/**
+ * @brief True if @p t is one of the @p n times in @p set.
+ * @version 1
+ * @dg_internal
+ * @return Membership.
+ */
+static bool in_set(time_t t, const time_t *set, int n)
+{
+    for (int i = 0; i < n; i++) {
+        if (set[i] == t) return true;
+    }
+    return false;
+}
+
+/**
+ * @brief Delete every history frame whose time is not among the @p n in @p keep (frames the
+ *        loop no longer uses, and old fetch-time-stamped ones).
+ * @version 1
+ * @req REQ-RADAR-003
+ */
+void nws_radar_history_keep(const time_t *keep, int n)
+{
+    time_t ts[RADAR_HIST_SCAN];
+    int count = scan_frames(ts);
+    for (int i = 0; i < count; i++) {
+        if (in_set(ts[i], keep, n)) continue;
+        char path[48];
+        nws_radar_history_path(ts[i], path, sizeof(path));
+        if (remove(path) != 0) ESP_LOGW(TAG, "drop %s failed: errno %d", path, errno);
+        else ESP_LOGI(TAG, "dropped %s (not a loop frame)", path);
+    }
 }
 
 /**
