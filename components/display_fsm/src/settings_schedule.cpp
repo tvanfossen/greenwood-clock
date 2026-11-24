@@ -3,12 +3,13 @@
  * @version 1
  * @brief Settings: the background schedule editor. A week grid (days x time slots) whose cells
  *        name the profile shown then; slot times, profiles and each profile's settings
- *        (background image, text colour, brightness, clock animation, each "same as Settings"
+ *        (background image, theme, brightness, clock animation, each "same as Settings"
  *        when not set) are edited here. Every change is saved at once and applied.
  */
 #include "settings_ui.h"
 #include "display_fsm.h"
 #include "ui_theme.h"
+#include "theme_store.h"
 
 #include <cstdio>
 #include <cstring>
@@ -541,7 +542,7 @@ lv_obj_t *create_sub_sched_profiles(lv_obj_t *parent)
 // Profile screen
 // ============================================================================
 
-enum { ROW_IMAGE, ROW_COLOR, ROW_BRIGHTNESS, ROW_ANIM, ROW_COUNT };
+enum { ROW_IMAGE, ROW_THEME, ROW_BRIGHTNESS, ROW_ANIM, ROW_COUNT };
 static lv_obj_t *s_row_value[ROW_COUNT];   // value buttons' labels (brightness: the slider)
 static lv_obj_t *s_inherit_bright;         // "Same as Settings" switch for brightness
 static char      s_images[MAX_CHOICES][64];
@@ -549,7 +550,8 @@ static int       s_image_count;
 
 /**
  * @brief Write the profile's current settings into the value labels.
- * @version 1
+ * v2: themes replace the text colour (theme names, theme roles, theme events).
+ * @version 2
  * @utility
  */
 static void profile_rows_refresh(void)
@@ -557,11 +559,7 @@ static void profile_rows_refresh(void)
     const bg_profile_t *p = &s_edit.profiles[s_profile];
     const char *img = strrchr(p->image, '/');
     lv_label_set_text(s_row_value[ROW_IMAGE], p->image[0] ? (img ? img + 1 : p->image) : INHERIT_TEXT);
-    const char *color = p->text_color == BG_INHERIT_COLOR ? INHERIT_TEXT : "Custom";
-    for (int i = 0; i < NUM_COLOR_PRESETS; i++) {
-        if (COLOR_PRESETS[i].color == p->text_color) color = COLOR_PRESETS[i].name;
-    }
-    lv_label_set_text(s_row_value[ROW_COLOR], color);
+    lv_label_set_text(s_row_value[ROW_THEME], p->theme[0] ? theme_store_name(p->theme) : INHERIT_TEXT);
     lv_label_set_text(s_row_value[ROW_ANIM],
                       p->anim == BG_INHERIT ? INHERIT_TEXT : clock_anim_name((clock_anim_t)p->anim));
     bool inherit = p->brightness == BG_INHERIT;
@@ -639,33 +637,35 @@ static void image_row_cb(lv_event_t *e)
 }
 
 /**
- * @brief Colour picked (0 = same as Settings).
+ * @brief Theme picked (0 = same as Settings, else an index + 1 into the theme cache).
  * @version 1
  * @callback
  */
-static void color_chosen(int choice)
+static void theme_chosen(int choice)
 {
-    s_edit.profiles[s_profile].text_color =
-        choice == 0 ? BG_INHERIT_COLOR : COLOR_PRESETS[choice - 1].color;
+    bg_profile_t *p = &s_edit.profiles[s_profile];
+    const theme_entry_t *t = theme_store_entry(choice - 1);
+    if (choice == 0 || !t) p->theme[0] = '\0';
+    else strlcpy(p->theme, t->stem, sizeof(p->theme));
     profile_changed();
 }
 
 /**
- * @brief Colour row tapped: pick a preset.
+ * @brief Theme row tapped: pick an installed theme.
  * @version 1
  * @callback
  */
-static void color_row_cb(lv_event_t *e)
+static void theme_row_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
-    const char *labels[MAX_CHOICES];
+    const char *labels[THEME_STORE_MAX + 1];
     labels[0] = INHERIT_TEXT;
-    int current = 0;
-    for (int i = 0; i < NUM_COLOR_PRESETS; i++) {
-        labels[i + 1] = COLOR_PRESETS[i].name;
-        if (COLOR_PRESETS[i].color == s_edit.profiles[s_profile].text_color) current = i + 1;
+    int current = 0, n = theme_store_count();
+    for (int i = 0; i < n; i++) {
+        labels[i + 1] = theme_store_entry(i)->name;
+        if (strcmp(theme_store_entry(i)->stem, s_edit.profiles[s_profile].theme) == 0) current = i + 1;
     }
-    choice_popup("Text colour", labels, NUM_COLOR_PRESETS + 1, current, color_chosen);
+    choice_popup("Theme", labels, n + 1, current, theme_chosen);
 }
 
 /**
@@ -791,10 +791,11 @@ static void brightness_row(lv_obj_t *cont)
 }
 
 /**
- * @brief Build the profile screen: background, text colour, brightness and clock animation,
+ * @brief Build the profile screen: background, theme, brightness and clock animation,
  *        each "Same as Settings" until set; "Delete profile" when it is not the last one.
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: a Theme row (was Text colour); colours from the theme roles.
+ * @version 3
  * @req REQ-BG-004
  * @req REQ-UI-001
  * @return The sub-screen container.
@@ -803,7 +804,7 @@ lv_obj_t *create_sub_sched_profile(lv_obj_t *parent)
 {
     lv_obj_t *cont = make_sub_container(parent, s_edit.profiles[s_profile].name);
     s_row_value[ROW_IMAGE] = profile_row(cont, ROW_IMAGE, "Background", image_row_cb);
-    s_row_value[ROW_COLOR] = profile_row(cont, ROW_COLOR, "Text colour", color_row_cb);
+    s_row_value[ROW_THEME] = profile_row(cont, ROW_THEME, "Theme", theme_row_cb);
     brightness_row(cont);
     s_row_value[ROW_ANIM] = profile_row(cont, ROW_ANIM, "Clock animation", anim_row_cb);
     if (s_edit.profile_count > 1) {

@@ -26,9 +26,9 @@ extern "C" {
 #define BG_SCHED_SLOTS     4            /**< Time-of-day slots (shared start times). */
 #define BG_SCHED_PROFILES  8            /**< Profiles a schedule can reference. */
 #define BG_SCHED_DAYS      7            /**< Weekdays, struct tm order (0 = Sunday). */
-#define BG_SCHED_VERSION   1            /**< Stored layout version. */
+#define BG_SCHED_VERSION   2            /**< Stored layout version (2: theme replaced text_color). */
 #define BG_INHERIT         (-1)         /**< Inherit marker for small integer fields. */
-#define BG_INHERIT_COLOR   0xFFFFFFFFu  /**< Inherit marker for the text colour. */
+#define BG_THEME_LEN       16           /**< Theme name field: a file stem in /sdcard/themes. */
 #define BG_MINUTES_PER_DAY (24 * 60)
 #define BG_SCHED_ANIM_COUNT 4           /**< clock_anim_t values (asserted in bg_schedule.c). */
 
@@ -36,7 +36,7 @@ extern "C" {
 typedef struct {
     char     name[24];     /**< Shown in the settings screen. */
     char     image[96];    /**< LVGL path ("A:/backgrounds/x.png"); "" = inherit. */
-    uint32_t text_color;   /**< 0xRRGGBB, or BG_INHERIT_COLOR. */
+    char     theme[BG_THEME_LEN]; /**< Theme file stem ("greenwood-night"); "" = inherit. */
     int8_t   brightness;   /**< 0..100 %, or BG_INHERIT. */
     int8_t   anim;         /**< clock_anim_t value, or BG_INHERIT. */
 } bg_profile_t;
@@ -50,6 +50,15 @@ typedef struct {
     uint8_t      grid[BG_SCHED_DAYS][BG_SCHED_SLOTS];  /**< Profile index per weekday and slot. */
     bg_profile_t profiles[BG_SCHED_PROFILES];
 } bg_schedule_t;
+
+/**
+ * @brief Whether @p name can name a theme file: 1..BG_THEME_LEN-1 characters, each a
+ *        lower-case letter, a digit or '-' (so it can never leave the themes folder).
+ * @version 1
+ * @req REQ-UI-003
+ * @return true if valid.
+ */
+bool bg_theme_name_valid(const char *name);
 
 /**
  * @brief One all-day slot showing profile 0 ("Default"), which inherits everything, so the

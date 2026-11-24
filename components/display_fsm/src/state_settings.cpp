@@ -28,10 +28,12 @@ extern "C" {
 #include "network.h"
 #include "settings.h"
 #include "sdcard.h"
-#include "display_fsm.h"    // display_fsm_refresh_background, display_fsm_refresh_text_color
+#include "display_fsm.h"    // display_fsm_refresh_background, display_fsm_refresh_theme
 #include "ui_theme.h"
+#include "theme_store.h"
 #include "bsp/display.h"    // bsp_display_brightness_set
 #include "clock_anim_pref.h"  // clock_anim_pref_get/set
+#include "theme_pref.h"       // theme_pref_get/set
 }
 
 #include <cstring>
@@ -56,7 +58,7 @@ static lv_obj_t *create_sub_menu(lv_obj_t *parent);
 static lv_obj_t *create_sub_wifi(lv_obj_t *parent);
 static lv_obj_t *create_sub_brightness(lv_obj_t *parent);
 static lv_obj_t *create_sub_background(lv_obj_t *parent);
-static lv_obj_t *create_sub_text_color(lv_obj_t *parent);
+static lv_obj_t *create_sub_theme(lv_obj_t *parent);
 static lv_obj_t *create_sub_animation(lv_obj_t *parent);
 static lv_obj_t *create_sub_clock_anim(lv_obj_t *parent);
 static lv_obj_t *create_sub_about(lv_obj_t *parent);
@@ -67,7 +69,7 @@ static const sub_creator_fn_t SUB_CREATORS[SUB_MAX] = {
     [SUB_WIFI]       = create_sub_wifi,
     [SUB_BRIGHTNESS] = create_sub_brightness,
     [SUB_BACKGROUND] = create_sub_background,
-    [SUB_TEXT_COLOR]  = create_sub_text_color,
+    [SUB_THEME]       = create_sub_theme,
     [SUB_ANIMATION]  = create_sub_animation,
     [SUB_CLOCK_ANIM] = create_sub_clock_anim,
     [SUB_ABOUT]      = create_sub_about,
@@ -302,7 +304,8 @@ static void menu_add_item(lv_obj_t *list, const char *icon,
 /**
  * @brief Build the top-level settings menu list, including the reboot button.
  * v2: adds the background schedule editor.
- * @version 2
+ * v3: themes replace the text colour (theme names, theme roles, theme events).
+ * @version 3
  * @req REQ-UI-001
  * @return The sub-screen container.
  */
@@ -319,7 +322,7 @@ static lv_obj_t *create_sub_menu(lv_obj_t *parent)
     menu_add_item(list, LV_SYMBOL_IMAGE,    "Brightness",        SUB_BRIGHTNESS);
     menu_add_item(list, LV_SYMBOL_IMAGE,    "Background Image",  SUB_BACKGROUND);
     menu_add_item(list, LV_SYMBOL_LIST,     "Background Schedule", SUB_SCHEDULE);
-    menu_add_item(list, LV_SYMBOL_EDIT,     "Text Color",        SUB_TEXT_COLOR);
+    menu_add_item(list, LV_SYMBOL_EDIT,     "Theme",             SUB_THEME);
     menu_add_item(list, LV_SYMBOL_LOOP,     "Clock Animation",   SUB_CLOCK_ANIM);
     menu_add_item(list, LV_SYMBOL_PLAY,     "Animation Preview", SUB_ANIMATION);
     menu_add_item(list, LV_SYMBOL_SETTINGS, "About",             SUB_ABOUT);
@@ -378,18 +381,6 @@ static bool brightness_mutator(clock_settings_t *cfg, void *ctx)
 static bool background_mutator(clock_settings_t *cfg, void *ctx)
 {
     snprintf(cfg->background_image, sizeof(cfg->background_image), "A:%s", (const char *)ctx);
-    return true;
-}
-
-/**
- * @brief settings_update mutator: store the text colour in @p ctx (uint32_t 0xRRGGBB).
- * @version 1
- * @utility
- * @return true (always save).
- */
-static bool text_color_mutator(clock_settings_t *cfg, void *ctx)
-{
-    cfg->text_color = *(const uint32_t *)ctx;
     return true;
 }
 
@@ -820,82 +811,63 @@ static lv_obj_t *create_sub_background(lv_obj_t *parent)
 }
 
 // ============================================================================
-// Text color settings
+// Theme picker
 // ============================================================================
 
-const color_preset_t COLOR_PRESETS[] = {
-    {0x000000, "Black"},
-    {0xFFFFFF, "White"},
-    {0xFF0000, "Red"},
-    {0x00FF00, "Green"},
-    {0x0000FF, "Blue"},
-    {0xFFFF00, "Yellow"},
-    {0x00FFFF, "Cyan"},
-    {0xFF00FF, "Magenta"},
-    {0xFF8800, "Orange"},
-    {0x7A1E1E, "Dim red (night)"},
-    {0x8A5A1E, "Dim amber (night)"},
-    {0x5A5A5A, "Dim grey (night)"},
-};
-const int NUM_COLOR_PRESETS = 12;
-static_assert(sizeof(COLOR_PRESETS) / sizeof(COLOR_PRESETS[0]) == 12, "NUM_COLOR_PRESETS");
-
 /**
- * @brief Color button handler: save the chosen text color to NVS, refresh the clock text color and show success.
- * v2: atomic read-modify-write via settings_update (no lost concurrent writes).
- * @version 2
+ * @brief Theme button handler: store the chosen theme (an index into the theme cache) as the
+ *        global theme, re-apply it and show success.
+ * @version 1
  * @callback
  * @req REQ-UI-001
+ * @req REQ-UI-003
  */
-static void color_select_cb(lv_event_t *e)
+static void theme_select_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    uint32_t color_value = (uint32_t)(uintptr_t)lv_event_get_user_data(e);
-    ESP_LOGI(TAG, "Text color selected: 0x%06lX", color_value);
+    const theme_entry_t *t = theme_store_entry((int)(intptr_t)lv_event_get_user_data(e));
+    if (!t) return;
+    char stem[BG_THEME_LEN];
+    strlcpy(stem, t->stem, sizeof(stem));
+    ESP_LOGI(TAG, "Theme selected: %s", stem);
 
-    lvgl_port_unlock();
-    esp_err_t err = settings_update(text_color_mutator, &color_value);
+    lvgl_port_unlock();   // NVS write off the LVGL lock
+    esp_err_t err = theme_pref_set(stem);
     lvgl_port_lock(0);
 
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Color save failed: %d", (int)err);
+        ESP_LOGE(TAG, "Theme save failed: %s", esp_err_to_name(err));
         return;
     }
-    ESP_LOGI(TAG, "Text color saved: 0x%06lX", color_value);
-    display_fsm_refresh_text_color();
-    show_success_and_pop("Text color updated!");
+    display_fsm_refresh_theme();
+    show_success_and_pop("Theme updated!");
 }
 
 /**
- * @brief Build the text color preset list with the currently saved color focused.
+ * @brief Build the list of installed themes with the current global theme focused.
  * @version 1
  * @req REQ-UI-001
+ * @req REQ-UI-003
  * @return The sub-screen container.
  */
-static lv_obj_t *create_sub_text_color(lv_obj_t *parent)
+static lv_obj_t *create_sub_theme(lv_obj_t *parent)
 {
-    lv_obj_t *cont = make_sub_container(parent, "Text Color");
-
-    clock_settings_t cfg;
-    uint32_t current_color = 0xFFFFFF;
-    if (settings_load(&cfg) == ESP_OK) {
-        current_color = cfg.text_color;
-    }
+    lv_obj_t *cont = make_sub_container(parent, "Theme");
+    char current[BG_THEME_LEN];
+    theme_pref_get(current);
 
     lv_obj_t *list = lv_list_create(cont);
     lv_obj_set_size(list, 700, 380);
     lv_obj_align(list, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_text_font(list, &lv_font_montserrat_20, 0);
 
-    for (int i = 0; i < NUM_COLOR_PRESETS; i++) {
-        lv_obj_t *btn = lv_list_add_button(list, LV_SYMBOL_BULLET, COLOR_PRESETS[i].name);
-        lv_obj_add_event_cb(btn, color_select_cb, LV_EVENT_CLICKED,
-                            (void *)(uintptr_t)COLOR_PRESETS[i].color);
-        if (COLOR_PRESETS[i].color == current_color) {
-            lv_obj_add_state(btn, LV_STATE_FOCUSED);
-        }
+    for (int i = 0; i < theme_store_count(); i++) {
+        const theme_entry_t *t = theme_store_entry(i);
+        lv_obj_t *btn = lv_list_add_button(list, LV_SYMBOL_BULLET, t->name);
+        lv_obj_add_event_cb(btn, theme_select_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        if (strcmp(t->stem, current) == 0) lv_obj_add_state(btn, LV_STATE_CHECKED);
     }
-
+    if (theme_store_count() == 0) lv_list_add_text(list, "No themes in /sdcard/themes");
     return cont;
 }
 

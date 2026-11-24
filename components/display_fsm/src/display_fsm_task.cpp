@@ -18,6 +18,7 @@
 #include "ui_contrast.h"
 #include "ui_theme.h"
 #include "ui_theme_lvgl.h"
+#include "theme_store.h"
 #include "clock_animation.h"
 
 #include "esp_log.h"
@@ -32,6 +33,7 @@
 #include "freertos/timers.h"
 #include "freertos/idf_additions.h"
 #include "settings.h"
+#include "theme_pref.h"
 #include "time_sync.h"
 #include "sdcard.h"
 #include "nws.h"
@@ -206,7 +208,8 @@ static void lottie_loader_init(void)
  * v2: DISPLAY_EVT_RADAR_LOOP_LOAD is handled before dispatch (no FSM event).
  *
  * @utility
- * @version 2
+ * v3: themes replace the text colour (theme names, theme roles, theme events).
+ * @version 3
  */
 static void dispatch_event(const display_event_t *evt)
 {
@@ -277,6 +280,7 @@ static void dispatch_event(const display_event_t *evt)
             break;
         }
         case DISPLAY_EVT_REFRESH_BG:
+        case DISPLAY_EVT_REFRESH_THEME:
         case DISPLAY_EVT_PHOTO_ADVANCE:
         case DISPLAY_EVT_RADAR_LOOP_LOAD:
             // Handled in process_event before dispatch; nothing to do here.
@@ -473,24 +477,26 @@ static void load_background(lv_obj_t *scr, const clock_settings_t *cfg)
 }
 
 /**
- * @brief @p user made legible (ui_legible: exact when it already reaches AA) over the mean
- *        of @p img in screen area @p a (images are top-down and screen-sized), or over the
- *        screen's own colour when there is no image (GIF background, failed decode).
+ * @brief @p user made legible at the theme's text target (exact when it already reaches it)
+ *        over the mean of @p img in screen area @p a (images are top-down and screen-sized),
+ *        or over the screen's own colour when there is no image (GIF background, failed
+ *        decode).
  * @utility
+ * v3: the theme's contrast target (was AA).
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * @version 3
  * @return The colour to draw the text in.
  */
 static lv_color_t legible_over(lv_color_t user, const lv_image_dsc_t *img, const lv_area_t *a)
 {
-    if (!img) {
-        lv_obj_t *scr = DisplayFsm::get_screen();
-        return ui_legible(user, scr ? lv_obj_get_style_bg_color(scr, LV_PART_MAIN)
-                                    : ui_theme_color(UI_ROLE_SCREEN));
+    lv_obj_t *scr = DisplayFsm::get_screen();
+    lv_color_t behind = scr ? lv_obj_get_style_bg_color(scr, LV_PART_MAIN)
+                            : ui_theme_color(UI_ROLE_SCREEN);
+    if (img) {
+        behind = ui_image_region_mean(img, a->x1, LV_MAX(a->y1, 0), a->x2 - a->x1 + 1,
+                                      a->y2 - a->y1 + 1);
     }
-    lv_color_t mean = ui_image_region_mean(img, a->x1, LV_MAX(a->y1, 0), a->x2 - a->x1 + 1,
-                                           a->y2 - a->y1 + 1);
-    return ui_legible(user, mean);
+    return ui_legible_to(user, behind, ui_theme_target(UI_ROLE_TEXT));
 }
 
 /**
@@ -562,19 +568,18 @@ extern "C" lv_color_t display_fsm_min_clock_color(const lv_image_dsc_t *behind)
  *        label shadows add to that.
  * v2: minimal OKLCH adjustment against the background (was the exact colour everywhere,
  *     after the old extreme push had turned a chosen white black).
+ * v3: the ink is the current theme's (was the settings / profile text colour).
  *
  * @utility
- * @version 2
+ * @version 3
  * @req REQ-BG-002
  */
-static void apply_clock_user_color(const clock_settings_t *cfg)
+static void apply_clock_user_color(void)
 {
     clock_widget_t *clk = DisplayFsm::get_clock();
-    if (!clk || !cfg) return;
+    if (!clk) return;
 
-    lv_color_t user = lv_color_make((cfg->text_color >> 16) & 0xFF,
-                                    (cfg->text_color >> 8) & 0xFF,
-                                    cfg->text_color & 0xFF);
+    lv_color_t user = ui_oklch_to_color(ui_theme_get()->ink);
     lvgl_port_lock(0);
     clock_widget_set_user_color(clk, user);
     lv_area_t fa;
@@ -596,7 +601,8 @@ static void apply_clock_user_color(const clock_settings_t *cfg)
  * v3: takes the (effective) settings to apply instead of loading them.
  * v4: swaps after decoding the new image (it deleted the old one first: ~1.3 s of black
  *     screen at every background change, seen on device with the schedule).
- * @version 4
+ * v5: themes replace the text colour (theme names, theme roles, theme events).
+ * @version 5
  */
 static void reload_background(const clock_settings_t *cfg)
 {
@@ -627,7 +633,7 @@ static void reload_background(const clock_settings_t *cfg)
         lvgl_port_unlock();
         if (old_dsc) image_decode_free(old_dsc);   // its object is gone
     }
-    apply_clock_user_color(cfg);
+    apply_clock_user_color();
 }
 
 static int          s_bg_profile = -1;   // schedule profile last applied (-1: none yet)
@@ -635,8 +641,9 @@ static clock_anim_t s_bg_anim = CLOCK_ANIM_COUNT;   // animation last applied by
 
 /**
  * @brief Effective settings: the global settings with the active schedule profile's
- *        overrides (image, text colour, brightness) applied.
- * @version 1
+ *        overrides (image, brightness) applied; its theme is applied by apply_theme.
+ * v2: no text colour (the theme carries it).
+ * @version 2
  * @req REQ-BG-004
  * @return Active profile index; the profile is copied to @p prof when non-NULL.
  */
@@ -649,7 +656,6 @@ static int effective_settings(clock_settings_t *cfg, bg_profile_t *prof)
     bg_profile_t p;
     int idx = bg_schedule_active(&ti, &p);
     if (p.image[0]) strlcpy(cfg->background_image, p.image, sizeof(cfg->background_image));
-    if (p.text_color != BG_INHERIT_COLOR) cfg->text_color = p.text_color;
     if (p.brightness != BG_INHERIT) cfg->brightness = (uint8_t)p.brightness;
     if (prof) *prof = p;
     return idx;
@@ -668,10 +674,39 @@ static void apply_profile_anim(const bg_profile_t *p)
     clock_animation_select(anim);
 }
 
+static char s_theme_stem[BG_THEME_LEN] = "";   // theme file last installed ("" = none yet)
+
+/**
+ * @brief Install the effective theme (the profile's when it names one, else the global
+ *        preference) unless it is already installed (always when @p force). Loads the file
+ *        off the LVGL lock, falling back to the built-in theme. fsm_task only.
+ * @version 1
+ * @req REQ-UI-003
+ * @req REQ-BG-004
+ */
+static void apply_theme(const bg_profile_t *p, bool force)
+{
+    char stem[BG_THEME_LEN];
+    if (p && p->theme[0]) strlcpy(stem, p->theme, sizeof(stem));
+    else theme_pref_get(stem);
+    if (!force && strcmp(stem, s_theme_stem) == 0) return;
+
+    ui_theme_t t;
+    bool ok = theme_store_load(stem, &t);
+    lvgl_port_lock(0);
+    ui_theme_set(ok ? &t : NULL);
+    ui_theme_lvgl_refresh();
+    lvgl_port_unlock();
+    strlcpy(s_theme_stem, stem, sizeof(s_theme_stem));
+    ESP_LOGI(TAG, "theme '%s' -> %s%s", stem, ui_theme_get()->name,
+             ok ? "" : " (file missing or invalid: built-in theme)");
+}
+
 /**
  * @brief Apply the active schedule profile when it changed (or always when @p force):
- *        background, text colour, brightness and clock animation. fsm_task only (decodes).
- * @version 1
+ *        theme, background, brightness and clock animation. fsm_task only (decodes).
+ * v2: the profile's theme (was its text colour).
+ * @version 2
  * @req REQ-BG-004
  */
 static void apply_bg_profile(bool force)
@@ -680,9 +715,11 @@ static void apply_bg_profile(bool force)
     bg_profile_t p;
     int idx = effective_settings(&cfg, &p);
     if (!force && idx == s_bg_profile) return;
-    ESP_LOGI(TAG, "bg profile %d -> %d '%s' (image '%s', brightness %u%%)", s_bg_profile, idx,
-             p.name, cfg.background_image, cfg.brightness);
+    ESP_LOGI(TAG, "bg profile %d -> %d '%s' (image '%s', brightness %u%%, theme '%s')",
+             s_bg_profile, idx, p.name, cfg.background_image, cfg.brightness,
+             p.theme[0] ? p.theme : "global");
     s_bg_profile = idx;
+    apply_theme(&p, force);
     reload_background(&cfg);
     display_fsm_refresh_brightness(cfg.brightness);
     apply_profile_anim(&p);
@@ -808,10 +845,11 @@ static void clock_tick_cb(TimerHandle_t timer)
  *
  * @utility
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: no settings parameter (the clock takes the theme's colour).
+ * @version 3
  * @return The active screen object.
  */
-static lv_obj_t *setup_screen_widgets(const clock_settings_t *cfg)
+static lv_obj_t *setup_screen_widgets(void)
 {
     lvgl_port_lock(0);
 
@@ -829,16 +867,10 @@ static lv_obj_t *setup_screen_widgets(const clock_settings_t *cfg)
     lv_obj_t *top = lv_layer_top();
     lv_obj_clear_flag(top, LV_OBJ_FLAG_CLICKABLE);  // pass-through clicks
 
-    clock_widget_t *cw = clock_widget_create(top);
+    clock_widget_t *cw = clock_widget_create(top);   // in the theme's text colour
     if (cw) {
-        lv_color_t color = lv_color_make(
-            (cfg->text_color >> 16) & 0xFF,
-            (cfg->text_color >>  8) & 0xFF,
-             cfg->text_color        & 0xFF);
-        clock_widget_set_color(cw, color);
         DisplayFsm::set_clock(cw);
-        ESP_LOGI(TAG, "ClockWidget created on layer_top, color=0x%06lX",
-                 (unsigned long)cfg->text_color);
+        ESP_LOGI(TAG, "ClockWidget created on layer_top");
     } else {
         ESP_LOGE(TAG, "Failed to create ClockWidget");
     }
@@ -899,7 +931,8 @@ static void start_periodic_timers(void)
  * v4: radar-loop frames decode off-lock, one per event (RadarOverlay::loop_step).
  * v5: background schedule: the minute tick and REFRESH_BG apply the active profile.
  * v6: passes the radar image's valid time to the predecode.
- * @version 6
+ * v7: themes replace the text colour (theme names, theme roles, theme events).
+ * @version 7
  */
 static void process_event(const display_event_t *evt)
 {
@@ -917,6 +950,15 @@ static void process_event(const display_event_t *evt)
     }
     if (evt->type == DISPLAY_EVT_REFRESH_BG) {
         apply_bg_profile(true);   // settings or schedule changed: re-apply the effective profile
+        return;   // not a state event — no FSM dispatch
+    }
+    if (evt->type == DISPLAY_EVT_REFRESH_THEME) {
+        clock_settings_t cfg;
+        bg_profile_t prof;
+        effective_settings(&cfg, &prof);
+        theme_store_rescan();
+        apply_theme(&prof, true);
+        apply_clock_user_color();
         return;   // not a state event — no FSM dispatch
     }
     if (evt->type == DISPLAY_EVT_CLOCK_UPDATE) {
@@ -969,7 +1011,8 @@ static void fsm_run_event_loop(void)
  * v3: clock text uses the user's exact colour (legibility via label shadows), no bg sampling.
  * v4: starts from the effective settings (active background schedule profile applied).
  * v5: hooks the debug frame recorder to the display.
- * @version 5
+ * v6: installs the effective theme (and lists the installed ones) before building widgets.
+ * @version 6
  */
 static void fsm_task(void *arg)
 {
@@ -979,12 +1022,14 @@ static void fsm_task(void *arg)
     clock_settings_t cfg;
     bg_profile_t prof;
     s_bg_profile = effective_settings(&cfg, &prof);   // global settings + active schedule profile
+    theme_store_rescan();          // SD listing off-lock; the theme menus read the cache
+    apply_theme(&prof, true);      // before any widget is built, so all draw with it
 
-    lv_obj_t *scr = setup_screen_widgets(&cfg);
+    lv_obj_t *scr = setup_screen_widgets();
 
     // Background + Lottie manage their own LVGL lock.
     load_background(scr, &cfg);
-    apply_clock_user_color(&cfg);
+    apply_clock_user_color();
     clock_animation_init(scr);   // user-selected clock animation (hummingbird / snowfall / none)
     s_bg_anim = clock_anim_pref_get();
     apply_profile_anim(&prof);
@@ -1184,25 +1229,18 @@ extern "C" void display_fsm_refresh_brightness(uint8_t percent)
 }
 
 /**
- * @brief Reload the text colour from settings and apply it to the clock widget.
- *
- * v2: applies the same derivation as boot (apply_clock_bg_contrast, now apply_clock_user_color).
- *     It used to set the raw colour, so a colour set live looked different after every
- *     reboot/OTA, where the boot path legibility-adjusted it (white over a bright area
- *     turned black), which read as "the colour resets to black".
- * v3: clock text uses the user's exact colour (legibility via label shadows), no bg sampling.
- * v4: the active background schedule profile may override the colour (effective settings).
- * @version 4
- * @req REQ-BG-002
+ * @brief Request a theme re-apply (the global preference or the active profile's changed, or
+ *        a theme file was added) by enqueueing DISPLAY_EVT_REFRESH_THEME for fsm_task, which
+ *        reads the files off the LVGL lock. Callable from LVGL callbacks and HTTP handlers.
+ * @version 1
+ * @req REQ-UI-003
  */
-extern "C" void display_fsm_refresh_text_color(void)
+extern "C" void display_fsm_refresh_theme(void)
 {
-    if (!DisplayFsm::get_clock()) return;
-
-    clock_settings_t cfg;
-    effective_settings(&cfg, NULL);
-
-    apply_clock_user_color(&cfg);   // takes the LVGL lock itself
-    ESP_LOGI(TAG, "Text color refreshed: 0x%06lX (background-contrast adjusted)",
-             (unsigned long)cfg.text_color);
+    display_event_t evt;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = DISPLAY_EVT_REFRESH_THEME;
+    if (!display_fsm_send_event(&evt)) {
+        ESP_LOGW(TAG, "refresh_theme: failed to enqueue");
+    }
 }

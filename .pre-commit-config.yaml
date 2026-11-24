@@ -26,3 +26,14 @@ repos:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+
+  # UI colours come from the theme (ui_theme roles, REQ-UI-003): no colour literal in the
+  # firmware UI or the web panel outside the theme's own files.
+  - repo: local
+    hooks:
+      - id: no-stray-colours
+        name: no stray colours (use ui_theme roles)
+        language: pygrep
+        entry: 'lv_color_(hex|make|white|black)\(|lv_palette_(main|lighten|darken)\(|#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b'
+        files: ^(main/|components/(display_fsm|http_api|lottie)/|sdcard/www/)
+        exclude: ^components/display_fsm/(src/(ui_theme|ui_theme_json|ui_theme_lvgl|ui_contrast)\.c|src/stb_image\.h|include/tinyfsm\.hpp)$

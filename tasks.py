@@ -310,6 +310,24 @@ def set_anim(c, name, host=DEFAULT_HOST):
         print(body.decode(errors="replace"))
 
 
+## @brief Set the global UI theme (a file stem in /sdcard/themes, e.g. greenwood, sassafras);
+## with no name, list the installed themes and show the current one.
+## @req REQ-TOOL-001
+## @req REQ-UI-003
+## @version 1
+@task(help={"host": "Device host or IP", "name": "Theme file stem (omit to list)"})
+def set_theme(c, name=None, host=DEFAULT_HOST):
+    if name is None:
+        for path in ("/api/themes", "/api/theme"):
+            body = _request(host, path)
+            if body is not None:
+                print(body.decode(errors="replace"))
+        return
+    body = _request(host, "/api/settings", method="POST", payload={"theme": name})
+    if body is not None:
+        print(body.decode(errors="replace"))
+
+
 ## @brief Stream live device logs over UDP (Ctrl+C to stop).
 ## @req REQ-TOOL-001
 ## @version 1
@@ -619,6 +637,26 @@ def gen_fonts(c):
         print(
             f"{name}: {out.stat().st_size:,} B (metrics from {original}, static_bitmap)"
         )
+
+
+## @brief Upload sdcard/themes/*.json (the UI themes) to the device SD card. Apply a pushed
+## theme with `inv settings` / the settings screen; the device lists themes on each re-apply.
+## @req REQ-TOOL-002
+## @req REQ-UI-003
+## @version 1
+@task(help={"host": "Device host or IP"})
+def push_themes(c, host=DEFAULT_HOST):
+    _push_staging_tree(c, "themes", "*.json", host)
+
+
+## @brief Upload sdcard/www/* (the web control panel) to the device SD card.
+## @req REQ-TOOL-002
+## @req REQ-UI-002
+## @version 1
+@task(help={"host": "Device host or IP"})
+def push_www(c, host=DEFAULT_HOST):
+    for pattern in ("*.html", "*.js", "*.css"):
+        _push_staging_tree(c, "www", pattern, host)
 
 
 ## @brief Upload sdcard/icons/** (forecast icons) to the device SD card.

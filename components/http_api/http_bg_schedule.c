@@ -1,6 +1,7 @@
 /**
  * @file http_bg_schedule.c
- * @version 1
+ * v2: a profile names a theme (was a text colour).
+ * @version 2
  * @brief GET/POST /api/bg_schedule: the background schedule as JSON.
  *
  * Format (GET returns it, POST replaces the whole schedule):
@@ -8,7 +9,7 @@
  *   "slots":    ["07:00", "12:00", "17:00", "22:00"],            // shared start times
  *   "profiles": [{"name": "Winter morning",
  *                 "image": "A:/backgrounds/winter_morning.png",   // "" or absent = inherit
- *                 "text_color": "#203040",                        // null/absent = inherit
+ *                 "theme": "greenwood-night",                     // null/absent = inherit
  *                 "brightness": 40,                               // null/absent = inherit
  *                 "anim": 2}],                                    // clock_anim_t; null = inherit
  *   "days":     [[0,1,2,3], ... 7 rows, Sunday first]            // profile index per slot
@@ -75,19 +76,21 @@ static int8_t opt_int(const cJSON *obj, const char *key)
 }
 
 /**
- * @brief Fill one profile from its JSON object.
- * @version 1
+ * @brief Fill one profile from its JSON object (an invalid theme name is kept, so the
+ *        schedule fails validation and the POST is rejected).
+ * v2: "theme" (was "text_color").
+ * @version 2
  * @utility
  */
 static void parse_profile(const cJSON *obj, bg_profile_t *p)
 {
     const char *name  = cJSON_GetStringValue(cJSON_GetObjectItem(obj, "name"));
     const char *image = cJSON_GetStringValue(cJSON_GetObjectItem(obj, "image"));
-    const char *color = cJSON_GetStringValue(cJSON_GetObjectItem(obj, "text_color"));
+    const char *theme = cJSON_GetStringValue(cJSON_GetObjectItem(obj, "theme"));
     snprintf(p->name, sizeof(p->name), "%s", name ? name : "");
     snprintf(p->image, sizeof(p->image), "%s", image ? image : "");
-    p->text_color = (color && color[0] == '#') ? (uint32_t)strtoul(color + 1, NULL, 16)
-                                               : BG_INHERIT_COLOR;
+    snprintf(p->theme, sizeof(p->theme), "%s", theme ? theme : "");
+    if (theme && !bg_theme_name_valid(theme)) p->theme[0] = '?';   // invalid: refuse the POST
     p->brightness = opt_int(obj, "brightness");
     p->anim = opt_int(obj, "anim");
 }
@@ -145,7 +148,8 @@ static bool schedule_from_json(const cJSON *root, bg_schedule_t *s)
 
 /**
  * @brief Add one profile object to @p arr.
- * @version 1
+ * v2: "theme" (was "text_color").
+ * @version 2
  * @utility
  */
 static void profile_to_json(cJSON *arr, const bg_profile_t *p)
@@ -153,10 +157,8 @@ static void profile_to_json(cJSON *arr, const bg_profile_t *p)
     cJSON *o = cJSON_CreateObject();
     cJSON_AddStringToObject(o, "name", p->name);
     cJSON_AddStringToObject(o, "image", p->image);
-    char hex[8];
-    snprintf(hex, sizeof(hex), "#%06lX", (unsigned long)(p->text_color & 0xFFFFFF));
-    if (p->text_color == BG_INHERIT_COLOR) cJSON_AddNullToObject(o, "text_color");
-    else cJSON_AddStringToObject(o, "text_color", hex);
+    if (p->theme[0]) cJSON_AddStringToObject(o, "theme", p->theme);
+    else cJSON_AddNullToObject(o, "theme");
     if (p->brightness == BG_INHERIT) cJSON_AddNullToObject(o, "brightness");
     else cJSON_AddNumberToObject(o, "brightness", p->brightness);
     if (p->anim == BG_INHERIT) cJSON_AddNullToObject(o, "anim");

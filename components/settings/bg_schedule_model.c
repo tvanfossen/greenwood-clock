@@ -1,6 +1,7 @@
 /**
  * @file bg_schedule_model.c
- * @version 2
+ * v3: a profile names a theme (was a text colour); theme-name validation.
+ * @version 3
  * @brief Background schedule model: defaults, validation, slot/profile resolution and the
  *        editor's edits (slots, profiles, cells).
  *        Pure C (no ESP-IDF), covered by tests/host/test_bg_schedule.c.
@@ -12,7 +13,8 @@
 /**
  * @brief One all-day slot showing profile 0 ("Default"), which inherits everything, so the
  *        clock looks exactly as it does without a schedule.
- * @version 1
+ * v2: the theme inherits by being empty (memset), no colour marker.
+ * @version 2
  * @req REQ-BG-004
  */
 void bg_schedule_defaults(bg_schedule_t *s)
@@ -22,7 +24,6 @@ void bg_schedule_defaults(bg_schedule_t *s)
     s->slot_count = 1;
     s->profile_count = 1;
     for (int i = 0; i < BG_SCHED_PROFILES; i++) {
-        s->profiles[i].text_color = BG_INHERIT_COLOR;
         s->profiles[i].brightness = BG_INHERIT;
         s->profiles[i].anim = BG_INHERIT;
     }
@@ -41,8 +42,26 @@ static bool terminated(const char *str, size_t n)
 }
 
 /**
- * @brief Whether one profile's strings are terminated and its overrides are in range.
+ * @brief Whether @p name can name a theme file.
  * @version 1
+ * @req REQ-UI-003
+ * @return true if valid.
+ */
+bool bg_theme_name_valid(const char *name)
+{
+    size_t n = name ? strnlen(name, BG_THEME_LEN) : 0;
+    bool ok = n > 0 && n < BG_THEME_LEN;
+    for (size_t i = 0; ok && i < n; i++) {
+        char c = name[i];
+        ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
+    }
+    return ok;
+}
+
+/**
+ * @brief Whether one profile's strings are terminated and its overrides are in range.
+ * v2: the theme is empty (inherit) or a valid theme name (was a colour range check).
+ * @version 2
  * @utility
  * @return true if valid.
  */
@@ -51,7 +70,8 @@ static bool profile_valid(const bg_profile_t *p)
     bool ok = terminated(p->name, sizeof(p->name)) && terminated(p->image, sizeof(p->image));
     ok = ok && (p->brightness == BG_INHERIT || (p->brightness >= 0 && p->brightness <= 100));
     ok = ok && (p->anim == BG_INHERIT || (p->anim >= 0 && p->anim < BG_SCHED_ANIM_COUNT));
-    return ok && (p->text_color == BG_INHERIT_COLOR || p->text_color <= 0xFFFFFFu);
+    return ok && terminated(p->theme, sizeof(p->theme)) &&
+           (p->theme[0] == '\0' || bg_theme_name_valid(p->theme));
 }
 
 /**
@@ -176,7 +196,8 @@ bool bg_schedule_set_slot_start(bg_schedule_t *s, int i, int minute)
 
 /**
  * @brief Append a profile named @p name that inherits every setting.
- * @version 1
+ * v2: themes replace the text colour (theme names, theme roles, theme events).
+ * @version 2
  * @req REQ-BG-004
  * @return Its index, or -1 at BG_SCHED_PROFILES profiles.
  */
@@ -187,7 +208,6 @@ int bg_schedule_add_profile(bg_schedule_t *s, const char *name)
     bg_profile_t *p = &s->profiles[i];
     memset(p, 0, sizeof(*p));
     strncpy(p->name, name, sizeof(p->name) - 1);
-    p->text_color = BG_INHERIT_COLOR;
     p->brightness = BG_INHERIT;
     p->anim = BG_INHERIT;
     return i;

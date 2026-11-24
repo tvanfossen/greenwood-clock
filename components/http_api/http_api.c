@@ -6,6 +6,7 @@
 // components/http_api/http_api.c
 
 #include "http_bg_schedule.h"
+#include "http_theme.h"
 #include "http_frame_capture.h"
 #include "frame_capture.h"
 #include "http_api.h"
@@ -34,6 +35,7 @@
 #include "lvgl.h"
 #include "esp_lvgl_port.h"
 #include "clock_anim_pref.h"
+#include "theme_pref.h"
 #include "clock_animation.h"
 #include <string.h>
 #include <unistd.h>
@@ -1070,13 +1072,15 @@ static void http_api_register_display_handlers(httpd_handle_t srv)
  * @param srv  Running httpd server handle.
  * v2: also the background schedule endpoints.
  * v3: also the debug frame-capture endpoints.
- * @version 3
+ * v4: also the theme endpoints.
+ * @version 4
  * @req REQ-API-001
  */
 static void http_api_register_handlers(httpd_handle_t srv)
 {
     http_frame_capture_register(srv);
     http_bg_schedule_register(srv);   // before the display handlers' www catch-all
+    http_theme_register(srv);
     http_api_register_file_handlers(srv);
     http_api_register_ota_handlers(srv);
     http_api_register_debug_handlers(srv);
@@ -2268,9 +2272,11 @@ static esp_err_t assets_upload_handler(httpd_req_t *req)
 
 /**
  * @brief Get device settings. GET /api/settings
- *        → {"brightness":N,"text_color":"#rrggbb","background_image":"A:/..","clock_anim":"Snowfall"}
- * @version 2
+ *        → {"brightness":N,"theme":"greenwood","background_image":"A:/..","clock_anim":"Snowfall"}
+ * v3: "theme" (the global theme file name) replaces "text_color".
+ * @version 3
  * @req REQ-ANIM-001
+ * @req REQ-UI-003
  * @return ESP_OK.
  * @req REQ-API-002
  */
@@ -2278,13 +2284,14 @@ static esp_err_t settings_get_handler(httpd_req_t *req)
 {
     clock_settings_t cfg;
     settings_load(&cfg);
+    char theme[BG_THEME_LEN];
+    theme_pref_get(theme);
 
     char response[384];
     snprintf(response, sizeof(response),
-             "{\"brightness\":%u,\"text_color\":\"#%06lx\",\"background_image\":\"%s\","
+             "{\"brightness\":%u,\"theme\":\"%s\",\"background_image\":\"%s\","
              "\"clock_anim\":\"%s\"}\n",
-             cfg.brightness, (unsigned long)cfg.text_color, cfg.background_image,
-             clock_anim_name(clock_anim_pref_get()));
+             cfg.brightness, theme, cfg.background_image, clock_anim_name(clock_anim_pref_get()));
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
@@ -2295,15 +2302,17 @@ static esp_err_t settings_get_handler(httpd_req_t *req)
 typedef struct {
     bool brightness;
     bool bg;
-    bool text_color;
     bool anim;
     clock_anim_t anim_value;
+    bool theme;
+    char theme_value[BG_THEME_LEN];
 } settings_changes_t;
 
 /**
- * @brief Merge brightness / text_color / background_image from @p root into @p cfg.
+ * @brief Merge brightness / background_image from @p root into @p cfg.
+ * v3: no text_color (themes replaced it).
  * v2: records a brightness change so it is applied live (it was saved but never applied).
- * @version 2
+ * @version 3
  * @utility
  */
 static void settings_merge_blob_fields(const cJSON *root, clock_settings_t *cfg, settings_changes_t *ch)
@@ -2313,11 +2322,6 @@ static void settings_merge_blob_fields(const cJSON *root, clock_settings_t *cfg,
         j->valueint >= 0 && j->valueint <= 100) {
         cfg->brightness = (uint8_t)j->valueint;
         ch->brightness = true;
-    }
-    if ((j = cJSON_GetObjectItem(root, "text_color")) && cJSON_IsString(j) &&
-        j->valuestring[0] == '#' && strlen(j->valuestring) == 7) {
-        cfg->text_color = (uint32_t)strtoul(j->valuestring + 1, NULL, 16);
-        ch->text_color = true;
     }
     if ((j = cJSON_GetObjectItem(root, "background_image")) && cJSON_IsString(j)) {
         strlcpy(cfg->background_image, j->valuestring, sizeof(cfg->background_image));
@@ -2339,6 +2343,23 @@ static bool settings_parse_anim(const cJSON *root, settings_changes_t *ch)
     ch->anim = ch->anim_value != CLOCK_ANIM_COUNT;
     if (!ch->anim) ESP_LOGW(TAG, "Settings: unknown clock_anim '%s'", j->valuestring);
     return ch->anim;
+}
+
+/**
+ * @brief Parse "theme" (a theme file name) from @p root.
+ * @version 1
+ * @utility
+ * @req REQ-UI-003
+ * @return false when present but not a valid theme name (caller rejects the request).
+ */
+static bool settings_parse_theme(const cJSON *root, settings_changes_t *ch)
+{
+    const cJSON *j = cJSON_GetObjectItem(root, "theme");
+    if (!j || !cJSON_IsString(j)) return true;
+    ch->theme = bg_theme_name_valid(j->valuestring);
+    if (ch->theme) strlcpy(ch->theme_value, j->valuestring, sizeof(ch->theme_value));
+    else ESP_LOGW(TAG, "Settings: invalid theme name '%s'", j->valuestring);
+    return ch->theme;
 }
 
 /**
@@ -2367,42 +2388,48 @@ typedef struct {
 
 /**
  * @brief settings_update mutator: merge the POSTed blob fields; save only if one changed.
- * @version 1
  * @utility
- * @return true if a blob field (brightness / text_color / background_image) changed.
+ * v2: no text_color.
+ * @version 2
+ * @return true if a blob field (brightness / background_image) changed.
  */
 static bool settings_post_mutator(clock_settings_t *cfg, void *ctx)
 {
     settings_post_ctx_t *pc = (settings_post_ctx_t *)ctx;
     settings_merge_blob_fields(pc->root, cfg, pc->ch);
     pc->saved = *cfg;
-    return pc->ch->brightness || pc->ch->bg || pc->ch->text_color;
+    return pc->ch->brightness || pc->ch->bg;
 }
 
 /**
- * @brief Apply saved changes live: brightness, background, text colour, clock animation.
+ * @brief Apply saved changes live: brightness, background, theme, clock animation.
  * Replaces settings_persist_and_apply(): saving now happens atomically in settings_update().
- * @version 1
+ * v2: the theme (saved to its own key, re-applied by fsm_task) instead of a text colour.
+ * @version 2
  * @utility
- * @return ESP_OK, or the clock-animation save error.
+ * @req REQ-UI-003
+ * @return ESP_OK, or the clock-animation / theme save error.
  */
 static esp_err_t settings_apply_live(const clock_settings_t *cfg, const settings_changes_t *ch)
 {
     if (ch->brightness) display_fsm_refresh_brightness(cfg->brightness);
     if (ch->bg) display_fsm_refresh_background();
-    if (ch->text_color) display_fsm_refresh_text_color();
+    esp_err_t err = ch->theme ? theme_pref_set(ch->theme_value) : ESP_OK;
+    if (ch->theme && err == ESP_OK) display_fsm_refresh_theme();
     esp_err_t anim_err = ch->anim ? settings_apply_anim(ch->anim_value) : ESP_OK;
-    ESP_LOGI(TAG, "Settings updated: brightness=%u text_color=#%06lx bg=%s anim=%s",
-             cfg->brightness, (unsigned long)cfg->text_color, cfg->background_image,
+    ESP_LOGI(TAG, "Settings updated: brightness=%u theme=%s bg=%s anim=%s", cfg->brightness,
+             ch->theme ? ch->theme_value : "(unchanged)", cfg->background_image,
              ch->anim ? clock_anim_name(ch->anim_value) : "(unchanged)");
-    return anim_err;
+    return err != ESP_OK ? err : anim_err;
 }
 
 /**
- * @brief Update settings. POST /api/settings with any of brightness, text_color,
+ * @brief Update settings. POST /api/settings with any of brightness, theme,
  *        background_image, clock_anim. Changes take effect immediately.
  * v3: atomic read-modify-write via settings_update; invalid clock_anim still saves nothing.
- * @version 3
+ * v4: "theme" replaces "text_color"; an invalid theme name saves nothing either.
+ * @version 4
+ * @req REQ-UI-003
  * @req REQ-ANIM-001
  * @return ESP_OK on success; ESP_FAIL after sending a 4xx/5xx.
  * @req REQ-API-002
@@ -2423,7 +2450,8 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
     }
 
     settings_changes_t ch = {0};
-    bool anim_ok = settings_parse_anim(root, &ch);   // validate before saving anything
+    bool anim_ok = settings_parse_anim(root, &ch) &&   // validate before saving anything
+                   settings_parse_theme(root, &ch);
     esp_err_t err = ESP_ERR_INVALID_ARG;
     if (anim_ok) {
         settings_post_ctx_t pc = {.root = root, .ch = &ch};
@@ -2433,7 +2461,7 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
     cJSON_Delete(root);
     if (err != ESP_OK) {
         httpd_resp_send_err(req, anim_ok ? HTTPD_500_INTERNAL_SERVER_ERROR : HTTPD_400_BAD_REQUEST,
-                            anim_ok ? "Failed to save settings" : "Unknown clock_anim");
+                            anim_ok ? "Failed to save settings" : "Unknown clock_anim or theme");
         return ESP_FAIL;
     }
     httpd_resp_set_type(req, "application/json");

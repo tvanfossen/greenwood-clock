@@ -37,7 +37,8 @@ typedef struct {
     uint32_t clock_update_ms;
     uint32_t weather_update_ms;
     char background_image[128];  // Path to background image (A:/file.gif = /sdcard/file.gif, B:/file.png = /spiffs/file.png)
-    uint32_t text_color;  // Text color as RGB888 (0xRRGGBB format) for main clock screen
+    uint32_t text_color;  // UNUSED since themes (theme_pref); kept so the blob layout, and with it
+                          // WiFi, survives (a SETTINGS_VERSION bump resets everything)
 
     // Features
     bool enable_weather;
@@ -69,6 +70,7 @@ typedef struct {
 /**
  * @brief Initialize NVS and settings system
  * @return ESP_OK on success
+ * @version 1
  */
 esp_err_t settings_init(void);
 
@@ -76,6 +78,7 @@ esp_err_t settings_init(void);
  * @brief Load settings from NVS (or use defaults if not found)
  * @param out Pointer to settings structure to fill
  * @return ESP_OK on success
+ * @version 1
  */
 esp_err_t settings_load(clock_settings_t* out);
 
@@ -83,12 +86,14 @@ esp_err_t settings_load(clock_settings_t* out);
  * @brief Save settings to NVS
  * @param in Pointer to settings structure to save
  * @return ESP_OK on success
+ * @version 1
  */
 esp_err_t settings_save(const clock_settings_t* in);
 
 /**
  * @brief Reset settings to factory defaults
  * @return ESP_OK on success
+ * @version 1
  */
 esp_err_t settings_reset(void);
 
@@ -110,12 +115,14 @@ typedef bool (*settings_mutator_t)(clock_settings_t *cfg, void *ctx);
  * @param fn   Mutator applied to the loaded settings.
  * @param ctx  Passed to @p fn.
  * @return ESP_OK (also when @p fn chose not to save), ESP_ERR_INVALID_ARG, or the save error.
+ * @version 1
  */
 esp_err_t settings_update(settings_mutator_t fn, void *ctx);
 
 /**
  * @brief Get pointer to default settings (read-only)
  * @return Pointer to default settings structure
+ * @version 1
  */
 const clock_settings_t* settings_get_defaults(void);
 

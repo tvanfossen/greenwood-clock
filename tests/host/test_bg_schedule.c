@@ -1,8 +1,9 @@
 /**
  * @file test_bg_schedule.c
- * @version 2
+ * @version 3
  * @brief Host tests for the background schedule model: defaults, slot/profile resolution
- *        (including the slot that wraps past midnight), validation and the editor's edits.
+ *        (including the slot that wraps past midnight), validation, theme names and the
+ *        editor's edits.
  */
 #include "bg_schedule_model.h"
 
@@ -28,7 +29,8 @@ enum { SUN = 0, MON = 1, TUE = 2, SAT = 6 };
 /**
  * @brief The user's winter schedule: 07:00 morning, 12:00 afternoon, 17:00 current photo,
  *        22:00 night, the same profiles every day.
- * @version 1
+ * v2: no text colour marker (the theme inherits by being empty).
+ * @version 2
  * @utility
  */
 static void winter_schedule(bg_schedule_t *s)
@@ -43,7 +45,6 @@ static void winter_schedule(bg_schedule_t *s)
     }
     for (int i = 1; i < 4; i++) {
         snprintf(s->profiles[i].name, sizeof(s->profiles[i].name), "p%d", i);
-        s->profiles[i].text_color = BG_INHERIT_COLOR;
         s->profiles[i].brightness = BG_INHERIT;
         s->profiles[i].anim = BG_INHERIT;
     }
@@ -51,7 +52,8 @@ static void winter_schedule(bg_schedule_t *s)
 
 /**
  * @brief Defaults are one all-day slot showing profile 0, which inherits every setting.
- * @version 1
+ * v2: checks the theme inherits.
+ * @version 2
  * @req REQ-BG-004
  */
 static void test_defaults(void)
@@ -62,7 +64,7 @@ static void test_defaults(void)
     CHECK(s.slot_count == 1 && s.profile_count == 1, "slots %u profiles %u", s.slot_count,
           s.profile_count);
     CHECK(s.profiles[0].image[0] == '\0', "default profile inherits the image");
-    CHECK(s.profiles[0].text_color == BG_INHERIT_COLOR, "inherits text colour");
+    CHECK(s.profiles[0].theme[0] == '\0', "inherits the theme");
     CHECK(s.profiles[0].brightness == BG_INHERIT && s.profiles[0].anim == BG_INHERIT,
           "inherits brightness and animation");
     CHECK(bg_schedule_profile_at(&s, MON, 0) == 0, "midnight -> 0");
@@ -201,7 +203,8 @@ static void test_set_slot_start(void)
 
 /**
  * @brief A new profile inherits everything and is named; at the maximum it is refused.
- * @version 1
+ * v2: checks the theme inherits.
+ * @version 2
  * @req REQ-BG-004
  */
 static void test_add_profile(void)
@@ -211,7 +214,7 @@ static void test_add_profile(void)
     int i = bg_schedule_add_profile(&s, "Night");
     CHECK(i == 4 && s.profile_count == 5, "added as profile 4, got %d", i);
     CHECK(strcmp(s.profiles[4].name, "Night") == 0, "named");
-    CHECK(s.profiles[4].image[0] == '\0' && s.profiles[4].text_color == BG_INHERIT_COLOR &&
+    CHECK(s.profiles[4].image[0] == '\0' && s.profiles[4].theme[0] == '\0' &&
               s.profiles[4].brightness == BG_INHERIT && s.profiles[4].anim == BG_INHERIT,
           "inherits everything");
     while (s.profile_count < BG_SCHED_PROFILES) bg_schedule_add_profile(&s, "x");
@@ -257,9 +260,39 @@ static void test_cycle_and_copy(void)
 }
 
 /**
+ * @brief Theme names are file stems (lower-case letters, digits, '-'): anything that could
+ *        leave the themes folder or overflow the field is refused, and invalidates a profile.
+ * @version 1
+ * @req REQ-UI-003
+ */
+static void test_theme_names(void)
+{
+    CHECK(bg_theme_name_valid("greenwood"), "plain stem");
+    CHECK(bg_theme_name_valid("greenwood-day"), "hyphen");
+    CHECK(bg_theme_name_valid("night2"), "digit");
+    CHECK(!bg_theme_name_valid(""), "empty");
+    CHECK(!bg_theme_name_valid(NULL), "NULL");
+    CHECK(!bg_theme_name_valid("Greenwood"), "upper case");
+    CHECK(!bg_theme_name_valid("../www"), "path");
+    CHECK(!bg_theme_name_valid("a b"), "space");
+    CHECK(!bg_theme_name_valid("abcdefghijklmnop"), "16 chars does not fit");
+    CHECK(bg_theme_name_valid("abcdefghijklmno"), "15 chars fits");
+
+    bg_schedule_t s;
+    winter_schedule(&s);
+    strcpy(s.profiles[1].theme, "greenwood-day");
+    CHECK(bg_schedule_valid(&s), "a valid theme name validates");
+    strcpy(s.profiles[1].theme, "../x");
+    CHECK(!bg_schedule_valid(&s), "a path in the theme invalidates");
+    memset(s.profiles[1].theme, 'a', sizeof(s.profiles[1].theme));
+    CHECK(!bg_schedule_valid(&s), "an unterminated theme invalidates");
+}
+
+/**
  * @brief Run every check and report the tally.
  * v2: also the editor's edits (slots, profiles, cells).
- * @version 2
+ * v3: also theme names.
+ * @version 3
  * @req REQ-BG-004
  * @return 0 if every check passed, 1 otherwise.
  */
@@ -275,6 +308,7 @@ int main(void)
     test_add_profile();
     test_remove_profile();
     test_cycle_and_copy();
+    test_theme_names();
     printf("bg_schedule: %d/%d checks passed\n", s_checks - s_failures, s_checks);
     return s_failures ? 1 : 0;
 }

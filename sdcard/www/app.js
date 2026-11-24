@@ -1,7 +1,9 @@
 /**
  * @fileoverview Web control panel script (served from /www): display state, surprise, weather, schedule, settings, assets and device info via the local API.
  * @brief Web control panel logic for the Greenwood Clock.
- * @version 1
+ * v2: colours from the device theme (GET /api/theme -> CSS variables); theme picker replaces
+ *     the text colour; surprise colours are theme roles.
+ * @version 2
  */
 // Greenwood Clock — Control Page
 // Vanilla JS, no dependencies
@@ -47,6 +49,49 @@ async function api(path, opts) {
   }
 }
 
+// ---- Theme ----
+
+/**
+ * Set the page's CSS colour variables from the device theme (GET /api/theme): --<role> for
+ * each role and --on-<role> for text on it, role names with '_' as '-'.
+ * @version 1
+ * @req REQ-UI-002
+ * @req REQ-UI-003
+ */
+async function applyTheme() {
+  try {
+    const t = await api('/api/theme');
+    const root = document.documentElement.style;
+    for (const [role, hex] of Object.entries(t.roles || {})) {
+      root.setProperty('--' + role.replace(/_/g, '-'), hex);
+    }
+    for (const [role, hex] of Object.entries(t.on || {})) {
+      root.setProperty('--on-' + role.replace(/_/g, '-'), hex);
+    }
+    root.setProperty('color-scheme', t.dark ? 'dark' : 'light');
+  } catch {
+    // keep the last applied theme
+  }
+}
+
+/**
+ * Fill the theme dropdown from GET /api/themes, selecting @p current.
+ * @version 1
+ * @req REQ-UI-002
+ * @req REQ-UI-003
+ */
+async function populateThemeSelect(current) {
+  const sel = document.getElementById('set-theme');
+  try {
+    const themes = await api('/api/themes');
+    sel.innerHTML = themes.map(t =>
+      '<option value="' + t.stem + '"' + (t.stem === current ? ' selected' : '') + '>' +
+      t.name + '</option>').join('');
+  } catch {
+    sel.innerHTML = '<option value="' + current + '" selected>' + current + '</option>';
+  }
+}
+
 // ---- Display Control ----
 
 /**
@@ -86,8 +131,9 @@ async function forceState(state) {
 // ---- Surprise Message ----
 
 /**
- * Build a one-label surprise layout from the message, colour and duration inputs and POST it to /api/display/surprise.
- * @version 1
+ * Build a one-label surprise layout from the message, colour role and duration inputs and POST it to /api/display/surprise.
+ * v2: the colour is a theme role name; the background is the raised surface.
+ * @version 2
  * @req REQ-UI-002
  */
 async function sendSurprise() {
@@ -98,7 +144,7 @@ async function sendSurprise() {
   const duration = parseInt(document.getElementById('surprise-duration').value);
 
   const layout = {
-    bg_color: '#1a1a2e',
+    bg_color: 'surface_raised',
     duration_s: duration,
     children: [
       {
@@ -323,8 +369,9 @@ async function populateBackgroundSelect(sel, bg) {
 }
 
 /**
- * Fill brightness, text colour and the background dropdown (backgrounds assets plus the current value) from GET /api/settings and /api/assets/list.
- * @version 2
+ * Fill brightness, theme and the background dropdown (backgrounds assets plus the current value) from GET /api/settings, /api/themes and /api/assets/list.
+ * v3: theme dropdown (was a text colour).
+ * @version 3
  * @req REQ-UI-002
  */
 async function refreshSettings() {
@@ -332,7 +379,7 @@ async function refreshSettings() {
     const data = await api('/api/settings');
     document.getElementById('set-brightness').value = data.brightness || 50;
     document.getElementById('brightness-val').textContent = (data.brightness || 50) + '%';
-    document.getElementById('set-text-color').value = data.text_color || '#ffffff';
+    await populateThemeSelect(data.theme || 'greenwood');
 
     // Populate background dropdown from assets
     await populateBackgroundSelect(document.getElementById('set-background'),
@@ -347,14 +394,15 @@ document.getElementById('set-brightness').addEventListener('input', function() {
 });
 
 /**
- * POST brightness, text colour and background image to /api/settings.
- * @version 1
+ * POST brightness, theme and background image to /api/settings, then re-read the theme.
+ * v2: theme (was text colour); the page recolours to it.
+ * @version 2
  * @req REQ-UI-002
  */
 async function saveSettings() {
   const body = {
     brightness: parseInt(document.getElementById('set-brightness').value),
-    text_color: document.getElementById('set-text-color').value,
+    theme: document.getElementById('set-theme').value,
     background_image: document.getElementById('set-background').value
   };
   try {
@@ -364,6 +412,7 @@ async function saveSettings() {
       body: JSON.stringify(body)
     });
     toast('Settings saved');
+    setTimeout(applyTheme, 500);   // the device re-applies the theme on its own task
   } catch (e) {
     toast('Error: ' + e.message);
   }
@@ -467,10 +516,12 @@ async function rebootDevice() {
 
 /**
  * Refresh every panel section once.
- * @version 1
+ * v2: applies the device theme first.
+ * @version 2
  * @req REQ-UI-002
  */
 function refreshAll() {
+  applyTheme();
   refreshState();
   refreshWeather();
   refreshForecast();

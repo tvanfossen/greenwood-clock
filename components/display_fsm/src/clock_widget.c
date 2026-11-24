@@ -826,10 +826,9 @@ static void mode_geometry(clock_mode_t mode, int32_t *x, int32_t *y, int32_t *w,
     }
 }
 
-// Effective label colour for the current mode: the user's NVS text_color only
-// on the FULL clock screen (sized to its background image); a fixed, legible
-// white once minimized over the dark state screens, where the user's chosen
-// colour — which may be dark — is not guaranteed to contrast.
+// Effective label colour for the current mode: the theme ink made legible over the full
+// clock's backdrop, or over the minimized clock's (each state sets that one from what is
+// behind it).
 /**
  * @brief Apply the mode's effective text colour (full colour in FULL mode, minimized colour otherwise) to all three labels.
  * v2: also colours the drop shadows (contrasting black/white).
