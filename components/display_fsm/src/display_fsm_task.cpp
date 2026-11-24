@@ -16,6 +16,8 @@
 #include "frame_capture.h"
 #include "image_decode.h"
 #include "ui_contrast.h"
+#include "ui_theme.h"
+#include "ui_theme_lvgl.h"
 #include "clock_animation.h"
 
 #include "esp_log.h"
@@ -475,7 +477,8 @@ static void load_background(lv_obj_t *scr, const clock_settings_t *cfg)
  *        of @p img in screen area @p a (images are top-down and screen-sized), or over the
  *        screen's own colour when there is no image (GIF background, failed decode).
  * @utility
- * @version 1
+ * v2: colours from the theme roles (ui_theme), no literals.
+ * @version 2
  * @return The colour to draw the text in.
  */
 static lv_color_t legible_over(lv_color_t user, const lv_image_dsc_t *img, const lv_area_t *a)
@@ -483,7 +486,7 @@ static lv_color_t legible_over(lv_color_t user, const lv_image_dsc_t *img, const
     if (!img) {
         lv_obj_t *scr = DisplayFsm::get_screen();
         return ui_legible(user, scr ? lv_obj_get_style_bg_color(scr, LV_PART_MAIN)
-                                    : lv_color_black());
+                                    : ui_theme_color(UI_ROLE_SCREEN));
     }
     lv_color_t mean = ui_image_region_mean(img, a->x1, LV_MAX(a->y1, 0), a->x2 - a->x1 + 1,
                                            a->y2 - a->y1 + 1);
@@ -494,7 +497,8 @@ static lv_color_t legible_over(lv_color_t user, const lv_image_dsc_t *img, const
  * @brief The colour text on @p panel actually sits on: the panel's bg colour blended at its
  *        bg opacity over the mean of the background picture under it (the screen colour
  *        without a picture). Caller holds the LVGL lock.
- * @version 1
+ * v2: colours from the theme roles (ui_theme), no literals.
+ * @version 2
  * @req REQ-BG-002
  * @return The composite backdrop colour.
  */
@@ -503,7 +507,8 @@ extern "C" lv_color_t display_fsm_panel_backdrop(lv_obj_t *panel)
     lv_color_t fill = lv_obj_get_style_bg_color(panel, LV_PART_MAIN);
     lv_opa_t opa = lv_obj_get_style_bg_opa(panel, LV_PART_MAIN);
     lv_obj_t *scr = DisplayFsm::get_screen();
-    lv_color_t under = scr ? lv_obj_get_style_bg_color(scr, LV_PART_MAIN) : lv_color_black();
+    lv_color_t under = scr ? lv_obj_get_style_bg_color(scr, LV_PART_MAIN)
+                           : ui_theme_color(UI_ROLE_SCREEN);
     if (s_bg_dsc && opa < LV_OPA_COVER) {
         lv_obj_update_layout(panel);
         lv_area_t a;
@@ -536,14 +541,15 @@ extern "C" void display_fsm_set_bg_visible(bool visible)
  * @brief The minimized clock's colour over @p behind (a screen's own content under the
  *        minimized clock: radar map, photo), or over the background picture when NULL.
  *        Caller holds the LVGL lock.
- * @version 1
+ * v2: colours from the theme roles (ui_theme), no literals.
+ * @version 2
  * @req REQ-BG-002
  * @return The user's colour, minimally adjusted for contrast.
  */
 extern "C" lv_color_t display_fsm_min_clock_color(const lv_image_dsc_t *behind)
 {
     clock_widget_t *clk = DisplayFsm::get_clock();
-    lv_color_t user = clk ? clock_widget_user_color(clk) : lv_color_white();
+    lv_color_t user = clk ? clock_widget_user_color(clk) : ui_theme_color(UI_ROLE_TEXT);
     lv_area_t ma;
     clock_widget_min_area(&ma);
     return legible_over(user, behind ? behind : s_bg_dsc, &ma);
@@ -801,19 +807,21 @@ static void clock_tick_cb(TimerHandle_t timer)
  * indicator, gesture handler) on lv_layer_top(). Returns the screen object.
  *
  * @utility
- * @version 1
+ * v2: colours from the theme roles (ui_theme), no literals.
+ * @version 2
  * @return The active screen object.
  */
 static lv_obj_t *setup_screen_widgets(const clock_settings_t *cfg)
 {
     lvgl_port_lock(0);
 
+    ui_theme_lvgl_init(lv_display_get_default());   // stock widgets draw with the theme
     lv_obj_t *scr = lv_scr_act();
     DisplayFsm::set_screen(scr);
 
     lv_obj_clean(scr);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(scr, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(scr, ui_theme_color(UI_ROLE_SCREEN), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
 
     // Persistent UI lives on lv_layer_top() so it always renders above the

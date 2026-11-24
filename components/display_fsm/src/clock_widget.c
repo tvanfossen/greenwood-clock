@@ -9,7 +9,7 @@
 // Caller must hold LVGL lock for all functions.
 
 #include "display_widgets.h"
-#include "ui_contrast.h"
+#include "ui_theme.h"
 #include "refresh_probe.h"
 #include "text_roll.h"
 #include "src/misc/lv_area_private.h"  /* lv_area_intersect / lv_area_join (private API) */
@@ -317,7 +317,8 @@ static void snap_to(clock_widget_t *w, clock_mode_t mode)
 /**
  * @brief Allocate a clock widget on @p parent: transparent container with white time, AM/PM and date labels in full mode.
  * v2: creates a drop-shadow label behind each text label.
- * @version 2
+ * v3: colours from the theme roles (ui_theme), no literals.
+ * @version 3
  * @req REQ-CLOCK-001
  * @return New widget, or NULL if allocation fails.
  */
@@ -329,10 +330,10 @@ clock_widget_t *clock_widget_create(lv_obj_t *parent)
         return NULL;
     }
     memset(w, 0, sizeof(*w));
-    w->user_color = lv_color_white();
-    w->color      = lv_color_white();
-    w->min_color  = lv_color_white();   // legible default until sampled
-    w->min_base   = lv_color_white();
+    w->user_color = ui_theme_color(UI_ROLE_TEXT);
+    w->color      = w->user_color;
+    w->min_color  = w->user_color;   // until the backdrop is sampled
+    w->min_base   = w->user_color;
     w->mode       = CLOCK_MODE_FULL;
 
     // Transparent container — groups labels for easy repositioning.
@@ -832,7 +833,8 @@ static void mode_geometry(clock_mode_t mode, int32_t *x, int32_t *y, int32_t *w,
 /**
  * @brief Apply the mode's effective text colour (full colour in FULL mode, minimized colour otherwise) to all three labels.
  * v2: also colours the drop shadows (contrasting black/white).
- * @version 2
+ * v3: colours from the theme roles (ui_theme), no literals.
+ * @version 3
  * @req REQ-BG-002
  */
 static void apply_effective_color(clock_widget_t *w)
@@ -841,7 +843,7 @@ static void apply_effective_color(clock_widget_t *w)
     lv_obj_set_style_text_color(w->lbl_time, c, 0);
     lv_obj_set_style_text_color(w->lbl_ampm, c, 0);
     lv_obj_set_style_text_color(w->lbl_date, c, 0);
-    lv_color_t sc = ui_text_on(c);   // black under light text, white under dark text
+    lv_color_t sc = ui_theme_shadow_for(c);   // the theme's dark or light extreme
     lv_obj_set_style_text_color(w->sh_time, sc, 0);
     lv_obj_set_style_text_color(w->sh_ampm, sc, 0);
     lv_obj_set_style_text_color(w->sh_date, sc, 0);
@@ -911,7 +913,8 @@ static lv_draw_buf_t *snap_crop(clock_widget_t *w, const lv_draw_buf_t *full, lv
  *        AM/PM and date hidden.
  * v2: cropped (snap_crop): the full 1008x350 container snapshot made the PPA scale ~2.5x the
  *     pixels every frame and redrew the background under its transparent margins.
- * @version 2
+ * v3: colours from the theme roles (ui_theme), no literals.
+ * @version 3
  * @req REQ-DISP-004
  * @return The snapshot, or NULL if rendering failed (OOM).
  */
@@ -920,7 +923,7 @@ static lv_draw_buf_t *snap_render(clock_widget_t *w, lv_color_t color, snap_slot
     snap_to(w, CLOCK_MODE_FULL);
     apply_full_layout(w);
     lv_obj_set_style_text_color(w->lbl_time, color, 0);
-    lv_obj_set_style_text_color(w->sh_time, ui_text_on(color), 0);
+    lv_obj_set_style_text_color(w->sh_time, ui_theme_shadow_for(color), 0);
     lv_obj_add_flag(w->lbl_ampm, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(w->lbl_date, LV_OBJ_FLAG_HIDDEN);
     shadows_sync(w);   // the time's shadow is in the snapshot, AM/PM's and the date's are not
@@ -1164,13 +1167,14 @@ void clock_widget_set_user_color(clock_widget_t *w, lv_color_t color)
 
 /**
  * @brief Get the user's configured text colour.
- * @version 1
+ * v2: colours from the theme roles (ui_theme), no literals.
+ * @version 2
  * @req REQ-BG-002
  * @return Stored user colour, or white if @p w is NULL.
  */
 lv_color_t clock_widget_user_color(const clock_widget_t *w)
 {
-    return w ? w->user_color : lv_color_white();
+    return w ? w->user_color : ui_theme_color(UI_ROLE_TEXT);
 }
 
 /**

@@ -86,6 +86,14 @@ void ui_theme_set(const ui_theme_t *t);
 const ui_theme_t *ui_theme_get(void);
 
 /**
+ * @brief Whether the current theme is dark (its surface below mid lightness).
+ * @version 1
+ * @req REQ-UI-003
+ * @return true for a dark theme.
+ */
+bool ui_theme_is_dark(void);
+
+/**
  * @brief The current theme's colour for @p role (text roles judged against SURFACE).
  * @version 1
  * @req REQ-UI-003
@@ -138,6 +146,15 @@ lv_color_t ui_theme_swatch(int i);
  * @return The colour.
  */
 lv_color_t ui_theme_tone(float l);
+
+/**
+ * @brief The theme's dark or light extreme (a deep tone of the surface hue, or LIGHT),
+ *        whichever contrasts more with @p fg: for shadows and outlines under text.
+ * @version 1
+ * @req REQ-UI-003
+ * @return The colour.
+ */
+lv_color_t ui_theme_shadow_for(lv_color_t fg);
 
 /**
  * @brief The role named @p name ("text", "surface_raised", ...), as layout JSON spells it.

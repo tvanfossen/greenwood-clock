@@ -10,6 +10,7 @@
 #include "display_widgets.h"
 #include "radar_time_view.h"
 #include "image_decode.h"
+#include "ui_theme.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_cache.h"
@@ -269,7 +270,8 @@ void radar_view_preload_map(void)
  * v4: the time is shown by a radar_time_view (chip or dial) instead of a label.
  * v5: no progress bar (the clock's time roll shows the loop's direction).
  * v6: no centre coordinates in the log (the device location is private).
- * @version 6
+ * v7: colours from the theme roles (ui_theme), no literals.
+ * @version 7
  * @req REQ-RADAR-001
  * @return The new view, or NULL if allocation failed.
  */
@@ -290,7 +292,7 @@ radar_view_t *radar_view_create(lv_obj_t *parent, float lat, float lon)
     lv_obj_align(rv->container, LV_ALIGN_TOP_LEFT, 0, 0);
     // Dark backing only without a basemap: the map covers the screen, and while the view
     // fades in a translucent full-screen fill is software-blended (~75 ms a frame, measured).
-    lv_obj_set_style_bg_color(rv->container, lv_color_hex(0x0a0a1e), 0);
+    lv_obj_set_style_bg_color(rv->container, ui_theme_color(UI_ROLE_SURFACE), 0);
     lv_obj_set_style_bg_opa(rv->container, s_map_dsc ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(rv->container, 0, 0);
     lv_obj_set_style_pad_all(rv->container, 0, 0);
@@ -321,13 +323,13 @@ radar_view_t *radar_view_create(lv_obj_t *parent, float lat, float lon)
     lv_obj_set_style_image_opa(rv->img_radar_b, LV_OPA_TRANSP, 0);
     rv->img_front = rv->img_radar;
 
-    // Home marker — pulsing red dot at lat/lon position
+    // Home marker — pulsing dot (theme ERROR, LIGHT ring) at lat/lon position
     rv->home_marker = lv_obj_create(rv->container);
     lv_obj_set_size(rv->home_marker, HOME_MARKER_SIZE, HOME_MARKER_SIZE);
-    lv_obj_set_style_bg_color(rv->home_marker, lv_color_hex(0xFF3333), 0);
+    lv_obj_set_style_bg_color(rv->home_marker, ui_theme_color(UI_ROLE_ERROR), 0);
     lv_obj_set_style_bg_opa(rv->home_marker, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(rv->home_marker, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_color(rv->home_marker, lv_color_white(), 0);
+    lv_obj_set_style_border_color(rv->home_marker, ui_theme_color(UI_ROLE_LIGHT), 0);
     lv_obj_set_style_border_width(rv->home_marker, 2, 0);
     lv_obj_clear_flag(rv->home_marker, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 

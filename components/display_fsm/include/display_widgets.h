@@ -37,20 +37,24 @@ typedef enum {
 typedef struct clock_widget_t clock_widget_t;
 
 /**
- * @brief Create the clock widget on the given parent.
+ * @brief Create the clock widget on the given parent, in the theme's text colour.
  * Caller must hold LVGL lock.
+ * @version 1
+ * @return The widget, or NULL if allocation failed.
  */
 clock_widget_t *clock_widget_create(lv_obj_t *parent);
 
 /**
  * @brief Destroy the clock widget and free resources.
  * Caller must hold LVGL lock.
+ * @version 1
  */
 void clock_widget_destroy(clock_widget_t *w);
 
 /**
  * @brief Update displayed time from struct tm.
  * Caller must hold LVGL lock.
+ * @version 1
  */
 void clock_widget_update(clock_widget_t *w, const struct tm *ti);
 
@@ -59,6 +63,7 @@ void clock_widget_update(clock_widget_t *w, const struct tm *ti);
  *        (the radar loop shows each frame's time on the clock). The time rolls to @p t,
  *        starting after @p delay_ms.
  * Caller must hold LVGL lock.
+ * @version 1
  */
 void clock_widget_hold(clock_widget_t *w, const struct tm *t, uint32_t delay_ms);
 
@@ -66,12 +71,14 @@ void clock_widget_hold(clock_widget_t *w, const struct tm *t, uint32_t delay_ms)
  * @brief End a hold: roll back to the latest live time after @p delay_ms. No-op when nothing
  *        is held.
  * Caller must hold LVGL lock.
+ * @version 1
  */
 void clock_widget_release(clock_widget_t *w, uint32_t delay_ms);
 
 /**
  * @brief Switch between full-screen and minimized mode.
  * Caller must hold LVGL lock.
+ * @version 1
  */
 void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode);
 
@@ -79,39 +86,61 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode);
  * @brief Run @p cb once the clock is at rest: immediately if no morph is running, else when
  *        the running morph finishes. A later mode change drops it.
  * Caller must hold LVGL lock.
+ * @version 1
  */
 void clock_widget_when_settled(clock_widget_t *w, void (*cb)(void));
 
 /**
  * @brief Apply a text color to all clock labels.
  * Caller must hold LVGL lock.
+ * @version 1
  */
 void clock_widget_set_color(clock_widget_t *w, lv_color_t color);
 
 /**
  * @brief Minimized-mode text colour (legible over the state screen behind it).
  * Set from a sample of the direct background; states override per their content.
+ * @version 1
  */
 void clock_widget_set_minimized_color(clock_widget_t *w, lv_color_t color);
 
-/** Default minimized colour, applied on each minimize (states that show the clock
- *  bg behind the clock use this; radar/photos override after). */
+/**
+ * @brief Default minimized colour, applied on each minimize (states that show the clock
+ *        bg behind the clock use this; radar/photos override after).
+ * @version 1
+ */
 void clock_widget_set_minimized_base_color(clock_widget_t *w, lv_color_t color);
 
-/** The raw NVS text colour — the OKLCH base hue used to derive every mode's
- *  legible colour. Set once from settings; read by states that sample their bg. */
-void       clock_widget_set_user_color(clock_widget_t *w, lv_color_t color);
+/**
+ * @brief Set the clock's base ink: the colour every mode's legible colour is derived from.
+ * @version 1
+ */
+void clock_widget_set_user_color(clock_widget_t *w, lv_color_t color);
+
+/**
+ * @brief The clock's base ink.
+ * @version 1
+ * @return The ink, or the theme's TEXT when @p w is NULL.
+ */
 lv_color_t clock_widget_user_color(const clock_widget_t *w);
 
 /**
- * @brief Full-clock / minimized-clock screen rectangles (where the digits sit).
- * Used to sample the background underneath for contrast. Coords are screen-space.
+ * @brief Full-clock screen rectangle (where the digits sit), screen-space; used to sample
+ *        the background underneath for contrast.
+ * @version 1
  */
 void clock_widget_full_area(lv_area_t *out);
+
+/**
+ * @brief Minimized-clock screen rectangle, screen-space.
+ * @version 1
+ */
 void clock_widget_min_area(lv_area_t *out);
 
 /**
  * @brief Get the current mode.
+ * @version 1
+ * @return The mode.
  */
 clock_mode_t clock_widget_get_mode(const clock_widget_t *w);
 
@@ -122,6 +151,7 @@ clock_mode_t clock_widget_get_mode(const clock_widget_t *w);
  * style) and does not affect the container's logical position used by
  * mode/animation logic.
  * Caller must hold LVGL lock.
+ * @version 1
  */
 void clock_widget_set_jitter(clock_widget_t *w, int8_t dx, int8_t dy);
 
@@ -139,10 +169,12 @@ void weather_card_destroy(weather_card_t *w);
 void weather_card_update(weather_card_t *w, const struct nws_conditions_t *cond);
 void weather_card_set_color(weather_card_t *w, lv_color_t primary, lv_color_t secondary);
 
-/** Derive legible text colours from a single base hue (the NVS clock text colour)
- *  via OKLCH against the card's own panel colour, and apply them. Primary text
- *  is the legible base; secondary text is the same dimmed toward the panel. */
-void weather_card_set_contrast(weather_card_t *w, lv_color_t base);
+/**
+ * @brief Colour the card's labels from the theme (TEXT / TEXT_MUTED), legible against the
+ *        card's real backdrop (its fill over the picture under it).
+ * @version 3
+ */
+void weather_card_set_contrast(weather_card_t *w);
 lv_obj_t *weather_card_container(const weather_card_t *w);
 
 /**
@@ -150,6 +182,7 @@ lv_obj_t *weather_card_container(const weather_card_t *w);
  * Matches condition_desc to a Lottie file in A:/lottie/weather/{day,night}/.
  * Spawns a background load task. No-op if Lottie not enabled or file missing.
  * Caller must hold LVGL lock.
+ * @version 2
  */
 void weather_card_load_condition_lottie(weather_card_t *w, const char *condition_desc,
                                          bool is_daytime);
@@ -167,10 +200,12 @@ void forecast_strip_destroy(forecast_strip_t *s);
 void forecast_strip_update(forecast_strip_t *s, const struct nws_forecast_t *fc);
 void forecast_strip_set_color(forecast_strip_t *s, lv_color_t primary, lv_color_t secondary);
 
-/** Derive legible text colours from a single base hue (NVS clock text colour) via
- *  OKLCH against the strip's panel colour, and apply them (day/temps = primary,
- *  condition = dimmed secondary). */
-void forecast_strip_set_contrast(forecast_strip_t *s, lv_color_t base);
+/**
+ * @brief Colour every day label with the theme's TEXT, legible against the strip's real
+ *        backdrop.
+ * @version 3
+ */
+void forecast_strip_set_contrast(forecast_strip_t *s);
 lv_obj_t *forecast_strip_container(const forecast_strip_t *s);
 
 /**

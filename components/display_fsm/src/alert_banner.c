@@ -8,7 +8,7 @@
  */
 
 #include "display_widgets.h"
-#include "ui_contrast.h"
+#include "ui_theme.h"
 #include "nws.h"
 #include "esp_log.h"
 #include <string.h>
@@ -34,25 +34,28 @@ struct alert_banner_t {
 };
 
 /**
- * @brief Map an NWS severity string to the banner background colour.
- * @version 1
+ * @brief Map an NWS severity string to the banner's theme role.
+ * v2: theme roles (were fixed hex colours).
+ * @version 2
  * @req REQ-ALERT-001
- * @return Dark red (Extreme), coral (Severe), yellow (Moderate), blue (Minor),
- *         coral for anything else.
+ * @req REQ-UI-003
+ * @return ERROR_STRONG (Extreme), ERROR (Severe, and anything unknown), WARN (Moderate),
+ *         BORDER (Minor).
  */
-static lv_color_t severity_color(const char *severity)
+static ui_role_t severity_role(const char *severity)
 {
-    if (strcmp(severity, "Extreme") == 0) return lv_color_hex(0xCC0000);  // dark red
-    if (strcmp(severity, "Severe") == 0)  return lv_color_hex(0xE76F51);  // coral/red
-    if (strcmp(severity, "Moderate") == 0) return lv_color_hex(0xE9C46A); // yellow
-    if (strcmp(severity, "Minor") == 0)   return lv_color_hex(0x4A6FA5);  // blue
-    return lv_color_hex(0xE76F51);  // default to coral
+    ui_role_t role = UI_ROLE_ERROR;
+    if (strcmp(severity, "Extreme") == 0) role = UI_ROLE_ERROR_STRONG;
+    else if (strcmp(severity, "Moderate") == 0) role = UI_ROLE_WARN;
+    else if (strcmp(severity, "Minor") == 0) role = UI_ROLE_BORDER;
+    return role;
 }
 
 /**
  * @brief Create a hidden full-width banner (1024 x ALERT_BANNER_HEIGHT) at the top
  *        of @p parent with a circular-scrolling headline label.
- * @version 1
+ * v2: colours from the theme roles (ui_theme), no literals.
+ * @version 2
  * @req REQ-ALERT-001
  * @return The new banner, or NULL if allocation failed.
  */
@@ -66,7 +69,7 @@ alert_banner_t *alert_banner_create(lv_obj_t *parent)
     memset(b, 0, sizeof(*b));
 
     // Full-width banner at top of screen
-    lv_color_t default_bg = lv_color_hex(0xE76F51);
+    lv_color_t default_bg = ui_theme_color(UI_ROLE_ERROR);
     b->container = lv_obj_create(parent);
     lv_obj_set_size(b->container, 1024, BANNER_HEIGHT);
     lv_obj_align(b->container, LV_ALIGN_TOP_MID, 0, 0);
@@ -81,7 +84,7 @@ alert_banner_t *alert_banner_create(lv_obj_t *parent)
     // Scrolling headline label — colour chosen for contrast vs the banner bg.
     b->lbl_headline = lv_label_create(b->container);
     lv_obj_set_style_text_font(b->lbl_headline, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(b->lbl_headline, ui_text_on(default_bg), 0);
+    lv_obj_set_style_text_color(b->lbl_headline, ui_theme_text_on(UI_ROLE_TEXT, default_bg), 0);
     lv_label_set_long_mode(b->lbl_headline, LV_LABEL_LONG_SCROLL_CIRCULAR);
     // Plain-ms duration (recomputed per headline in alert_banner_show); see the
     // SCROLL_MS_PER_CHAR note above for why we avoid lv_anim_speed*().
@@ -114,7 +117,8 @@ void alert_banner_destroy(alert_banner_t *b)
 /**
  * @brief Show @p alert: severity colour with contrasting text, headline
  *        "event — headline" scrolling at ~240 ms/char (min 8 s per cycle).
- * @version 1
+ * v2: colours from the theme roles (ui_theme), no literals.
+ * @version 2
  * @req REQ-ALERT-001
  */
 void alert_banner_show(alert_banner_t *b, const nws_alert_t *alert)
@@ -123,9 +127,9 @@ void alert_banner_show(alert_banner_t *b, const nws_alert_t *alert)
 
     // Set severity color + a contrast-matched headline colour (yellow/Moderate
     // needs black text; the dark severities need white).
-    lv_color_t bg = severity_color(alert->severity);
+    lv_color_t bg = ui_theme_color(severity_role(alert->severity));
     lv_obj_set_style_bg_color(b->container, bg, 0);
-    lv_obj_set_style_text_color(b->lbl_headline, ui_text_on(bg), 0);
+    lv_obj_set_style_text_color(b->lbl_headline, ui_theme_text_on(UI_ROLE_TEXT, bg), 0);
 
     // Set headline text — circular scroll handles overflow
     char text[320];

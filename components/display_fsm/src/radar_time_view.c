@@ -7,6 +7,7 @@
 #include "radar_time_view.h"
 #include "display_fsm.h"
 #include "display_widgets.h"
+#include "ui_theme.h"
 
 #include <stdio.h>
 #include "esp_log.h"
@@ -64,7 +65,8 @@ static void chip_text(radar_time_view_t *tv, const char *text)
 /**
  * @brief Create the indicator in @p parent (the radar view's container).
  * v2: one chip for both looks; the clock look also holds the clock (the dial is gone).
- * @version 2
+ * v3: colours from the theme roles (ui_theme), no literals.
+ * @version 3
  * @req REQ-RADAR-003
  * @return The view, or NULL if allocation failed.
  */
@@ -76,10 +78,10 @@ radar_time_view_t *radar_time_view_create(lv_obj_t *parent, radar_time_style_t s
         return NULL;
     }
     tv->on_clock = (style == RADAR_TIME_CLOCK);
-    tv->chip = lv_label_create(parent);   // dark translucent pill: legible over any map
+    tv->chip = lv_label_create(parent);   // translucent surface pill: legible over any map
     lv_obj_set_style_text_font(tv->chip, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(tv->chip, lv_color_hex(0xe0e0e0), 0);
-    lv_obj_set_style_bg_color(tv->chip, lv_color_hex(0x0a0a1e), 0);
+    lv_obj_set_style_text_color(tv->chip, ui_theme_color(UI_ROLE_TEXT), 0);
+    lv_obj_set_style_bg_color(tv->chip, ui_theme_color(UI_ROLE_SURFACE), 0);
     lv_obj_set_style_bg_opa(tv->chip, LV_OPA_70, 0);
     lv_obj_set_style_pad_hor(tv->chip, 8, 0);
     lv_obj_set_style_pad_ver(tv->chip, 4, 0);

@@ -8,6 +8,7 @@
 #include "display_states.h"
 #include "display_scheduler.h"
 #include "display_widgets.h"
+#include "ui_theme.h"
 #include "display_fsm.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -89,7 +90,8 @@ void PhotoSlideshow::prefetch()
 
 /**
  * @brief Enter: minimize the clock and create the rotator; with no photos show a "No photos" panel, otherwise start the 7 s advance timer and post the first advance.
- * @version 1
+ * v2: colours from the theme roles (ui_theme), no literals.
+ * @version 2
  * @req REQ-PHOTO-001
  */
 void PhotoSlideshow::entry()
@@ -101,11 +103,11 @@ void PhotoSlideshow::entry()
     s_rotator = image_rotator_create(s_screen, "A:/photos", s_next_photo_index);
 
     if (!s_rotator || image_rotator_count(s_rotator) == 0) {
-        // No photos — show message with dark backdrop for contrast
+        // No photos — show message on a surface panel
         s_empty_label = lv_obj_create(s_screen);
         lv_obj_set_size(s_empty_label, 400, 120);
         lv_obj_align(s_empty_label, LV_ALIGN_CENTER, 0, 0);
-        lv_obj_set_style_bg_color(s_empty_label, lv_color_hex(0x0a0a1e), 0);
+        lv_obj_set_style_bg_color(s_empty_label, ui_theme_color(UI_ROLE_SURFACE), 0);
         lv_obj_set_style_bg_opa(s_empty_label, LV_OPA_70, 0);
         lv_obj_set_style_radius(s_empty_label, 12, 0);
         lv_obj_set_style_border_width(s_empty_label, 0, 0);
@@ -114,7 +116,7 @@ void PhotoSlideshow::entry()
 
         lv_obj_t *lbl = lv_label_create(s_empty_label);
         lv_label_set_text(lbl, "No photos\nUpload via web control");
-        lv_obj_set_style_text_color(lbl, lv_color_hex(0xb0b0c0), 0);
+        lv_obj_set_style_text_color(lbl, ui_theme_color(UI_ROLE_TEXT_MUTED), 0);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_24, 0);
         lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);

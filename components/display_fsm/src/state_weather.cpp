@@ -52,7 +52,8 @@ static void deferred_lottie_cb(lv_timer_t *t)
  * v2: clock uses the user's exact colour; no background sampling before minimizing.
  * v3: the Lottie delay counted from the end of the clock morph.
  * v4: back to a fixed 1.1 s: the fades run alongside the morph again.
- * @version 4
+ * v5: colours from the theme roles (ui_theme), no literals.
+ * @version 5
  * @req REQ-WX-002
  * @req REQ-WX-003
  * @req REQ-WX-005
@@ -98,10 +99,9 @@ void WeatherOverlay::entry()
     }
     int64_t t_strip_u = esp_timer_get_time();
 
-    // OKLCH text contrast over the panels, derived from the single NVS text colour.
-    lv_color_t base = clock_widget_user_color(get_clock());
-    if (s_card)  weather_card_set_contrast(s_card, base);
-    if (s_strip) forecast_strip_set_contrast(s_strip, base);
+    // Theme text colours, legible against each panel's real backdrop.
+    if (s_card)  weather_card_set_contrast(s_card);
+    if (s_strip) forecast_strip_set_contrast(s_strip);
 
     // Fade in weather widgets
     if (s_card) fade_in(weather_card_container(s_card));

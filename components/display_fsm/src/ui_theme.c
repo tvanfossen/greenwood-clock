@@ -50,6 +50,7 @@ const ui_theme_t UI_THEME_BASE = {
 #define SWATCH_C      0.10f
 #define SWATCH_STEP   45.0f
 #define TONE_CHROMA   0.3f    // tone(): chroma, x the surface's
+#define SHADOW_DARK_L 0.08f   // shadow_for(): the dark extreme's lightness
 #define DEFAULT_CONTRAST 7.0f
 
 /** One leaf of the autumn palette: hue offset from the accent, lightness, chroma. */
@@ -295,6 +296,17 @@ const ui_theme_t *ui_theme_get(void)
 }
 
 /**
+ * @brief Whether the current theme is dark.
+ * @version 1
+ * @req REQ-UI-003
+ * @return true for a dark theme.
+ */
+bool ui_theme_is_dark(void)
+{
+    return polarity(current()) > 0.0f;
+}
+
+/**
  * @brief The current theme's colour for @p role.
  * @version 1
  * @req REQ-UI-003
@@ -364,6 +376,19 @@ lv_color_t ui_theme_swatch(int i)
 lv_color_t ui_theme_tone(float l)
 {
     return lch(l, current()->surface.c * TONE_CHROMA, current()->surface.h);
+}
+
+/**
+ * @brief The theme's dark or light extreme, whichever contrasts more with @p fg.
+ * @version 1
+ * @req REQ-UI-003
+ * @return The colour.
+ */
+lv_color_t ui_theme_shadow_for(lv_color_t fg)
+{
+    lv_color_t dark = ui_theme_tone(SHADOW_DARK_L);
+    lv_color_t light = ui_theme_color(UI_ROLE_LIGHT);
+    return ui_contrast_ratio(dark, fg) >= ui_contrast_ratio(light, fg) ? dark : light;
 }
 
 /**

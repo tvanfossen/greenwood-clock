@@ -6,6 +6,7 @@
 #include "leaf_view.h"
 #include "leaf_field.h"
 #include "particle_view.h"
+#include "ui_theme.h"
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -18,17 +19,12 @@ static const char *TAG = "leaves";
 #define LEAF_WIDTH_RATIO  0.42f
 #define LEAF_WIDEST_AT   -0.15f
 
-static const uint32_t LEAF_PALETTE[LEAF_PALETTE_SIZE] = {
-    0xB83A1E,  /* maple red */
-    0xD9661F,  /* orange */
-    0xE0A526,  /* gold */
-    0x8C5A2B,  /* brown */
-    0xA4471B,  /* rust */
-};
+_Static_assert(LEAF_PALETTE_SIZE == UI_THEME_LEAF_COUNT, "leaf field and theme palette sizes differ");
 
 struct leaf_view_t {
     particle_view_t *pv;
     leaf_field_t     field;
+    lv_color_t       palette[LEAF_PALETTE_SIZE];   /**< The theme's leaves, read once at create. */
 };
 
 /** Kite outline in screen space: tip, side A, tail, side B. */
@@ -57,34 +53,37 @@ static void leaf_kite(const leaf_field_t *f, int i, leaf_kite_t *k)
 
 /**
  * @brief Live leaf count.
- * @version 1
+ * v2: the particle model is the view (it carries the theme palette), not the bare field.
+ * @version 2
  * @callback
  * @return Number of leaves.
  */
 static int leaves_count(void *m)
 {
-    return ((leaf_field_t *)m)->count;
+    return ((leaf_view_t *)m)->field.count;
 }
 
 /**
  * @brief Advance the leaf field.
- * @version 1
+ * v2: the particle model is the view (it carries the theme palette), not the bare field.
+ * @version 2
  * @callback
  */
 static void leaves_step(void *m, float dt_s)
 {
-    leaf_field_step((leaf_field_t *)m, dt_s);
+    leaf_field_step(&((leaf_view_t *)m)->field, dt_s);
 }
 
 /**
  * @brief Bounding box of the rotated kite, padded for anti-aliasing.
- * @version 1
+ * v2: the particle model is the view (it carries the theme palette), not the bare field.
+ * @version 2
  * @callback
  */
 static void leaves_bounds(void *m, int i, lv_area_t *out)
 {
     leaf_kite_t k;
-    leaf_kite((leaf_field_t *)m, i, &k);
+    leaf_kite(&((leaf_view_t *)m)->field, i, &k);
     float x1 = k.p[0].x, x2 = k.p[0].x, y1 = k.p[0].y, y2 = k.p[0].y;
     for (int j = 1; j < 4; j++) {
         x1 = fminf(x1, k.p[j].x);
@@ -100,17 +99,19 @@ static void leaves_bounds(void *m, int i, lv_area_t *out)
 
 /**
  * @brief Draw one leaf as two triangles (tip-sideA-tail, tip-tail-sideB).
- * @version 1
+ * v2: colour from the theme's leaf palette, cached on the view at create.
+ * @version 2
  * @callback
  */
 static void leaves_draw(void *m, int i, lv_layer_t *layer)
 {
-    const leaf_field_t *f = (const leaf_field_t *)m;
+    const leaf_view_t *v = (const leaf_view_t *)m;
+    const leaf_field_t *f = &v->field;
     leaf_kite_t k;
     leaf_kite(f, i, &k);
     lv_draw_triangle_dsc_t dsc;
     lv_draw_triangle_dsc_init(&dsc);
-    dsc.color = lv_color_hex(LEAF_PALETTE[f->leaves[i].color]);
+    dsc.color = v->palette[f->leaves[i].color];
     dsc.opa = f->leaves[i].opa;
     dsc.p[0] = k.p[0];
     dsc.p[1] = k.p[1];
@@ -125,8 +126,10 @@ static const particle_view_ops_t LEAF_OPS = {
 };
 
 /**
- * @brief Allocate the field in SPIRAM, seed it, attach a particle view.
- * @version 1
+ * @brief Allocate the field in SPIRAM, seed it, read the theme's leaf palette, attach a
+ *        particle view (the view is the particle model).
+ * v2: caches the theme's leaf palette; the view is the particle model.
+ * @version 2
  * @req REQ-ANIM-003
  * @return New view, or NULL on allocation failure.
  */
@@ -140,7 +143,8 @@ leaf_view_t *leaf_view_create(lv_obj_t *parent, int leaf_count)
     leaf_params_t p;
     leaf_params_default(&p, lv_obj_get_width(parent), lv_obj_get_height(parent));
     leaf_field_init(&v->field, &p, leaf_count, esp_random());
-    v->pv = particle_view_create(parent, &LEAF_OPS, &v->field);
+    for (int i = 0; i < LEAF_PALETTE_SIZE; i++) v->palette[i] = ui_theme_leaf(i);
+    v->pv = particle_view_create(parent, &LEAF_OPS, v);
     if (!v->pv) {
         heap_caps_free(v);
         return NULL;

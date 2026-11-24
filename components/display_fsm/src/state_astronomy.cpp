@@ -49,7 +49,8 @@ static int get_tz_offset_minutes(time_t now)
 
 /**
  * @brief Build the moon section: phase name, illumination, days to full/new, and a brightness-scaled disc.
- * @version 1
+ * v2: colours from the theme roles (ui_theme), no literals.
+ * @version 2
  * @req REQ-ASTRO-001
  */
 static void astro_build_moon(lv_obj_t *parent, const moon_phase_t *moon,
@@ -70,11 +71,10 @@ static void astro_build_moon(lv_obj_t *parent, const moon_phase_t *moon,
     lv_obj_set_size(moon_circle, 120, 120);
     lv_obj_align(moon_circle, LV_ALIGN_TOP_LEFT, 0, 130);
     lv_obj_set_style_radius(moon_circle, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_color(moon_circle, lv_color_hex(0x555555), 0);
+    lv_obj_set_style_border_color(moon_circle, ui_theme_color(UI_ROLE_BORDER), 0);
     lv_obj_set_style_border_width(moon_circle, 2, 0);
-    // Brightness maps to illumination
-    uint8_t bright = (uint8_t)(moon->illumination_pct * 2.55f);
-    lv_obj_set_style_bg_color(moon_circle, lv_color_make(bright, bright, bright), 0);
+    // Lightness maps to illumination (a neutral of the theme's surface hue)
+    lv_obj_set_style_bg_color(moon_circle, ui_theme_tone(moon->illumination_pct / 100.0f), 0);
     lv_obj_set_style_bg_opa(moon_circle, LV_OPA_COVER, 0);
     lv_obj_clear_flag(moon_circle,
                       (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
@@ -143,7 +143,8 @@ static void astro_fmt_aurora(char *buf, size_t n, float kp, float aurora_prob)
  * v2: panel, moon section and line formatting split into helpers (knots v2
  *     cognitive limit); output unchanged.
  * v3: clock uses the user's exact colour; no background sampling before minimizing.
- * @version 3
+ * v4: colours from the theme roles (ui_theme), no literals.
+ * @version 4
  * @req REQ-ASTRO-001
  * @req REQ-DISP-001
  */
@@ -175,27 +176,21 @@ void Astronomy::entry()
     int sr_local = info_panel_wrap_day_minutes(sun.sunrise_hour * 60 + sun.sunrise_min + tz_offset_min);
     int ss_local = info_panel_wrap_day_minutes(sun.sunset_hour * 60 + sun.sunset_min + tz_offset_min);
 
-    // OKLCH text contrast over the panel, from the single NVS clock text colour.
-    // (Semantic accents below — sunrise gold, aurora violet — are kept on purpose.)
-    lv_color_t panel = lv_color_hex(0x0a0a1e);
-    lv_color_t base = clock_widget_user_color(get_clock());
-    lv_color_t primary = ui_legible(base, panel);
-    lv_color_t secondary = lv_color_mix(panel, primary, 110);
-
     s_container = info_panel_create(s_screen);
-    astro_build_moon(s_container, &moon, primary, secondary);
+    info_panel_palette_t pal = info_panel_palette(s_container);
+    astro_build_moon(s_container, &moon, pal.text, pal.muted);
 
     char buf[128];
     astro_fmt_sun(buf, sizeof(buf), sr_local, ss_local);
-    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_24, lv_color_hex(0xE9C46A), 270), buf);
+    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_24, pal.accent, 270), buf);
 
     int now_min = ti.tm_hour * 60 + ti.tm_min;
     astro_fmt_daylight(buf, sizeof(buf), now_min, sr_local, ss_local, sun.daylight_minutes);
-    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, secondary, 300), buf);
+    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, pal.muted, 300), buf);
 
     float kp = nws_get_kp_index();
     astro_fmt_aurora(buf, sizeof(buf), kp, astro_calc_aurora_probability(kp, cfg.latitude));
-    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, lv_color_hex(0xa490c2), 340), buf);
+    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, pal.accent_alt, 340), buf);
 
     fade_in(s_container);
 

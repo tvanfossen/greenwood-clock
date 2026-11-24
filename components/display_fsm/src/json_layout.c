@@ -1,6 +1,7 @@
 /**
  * @file json_layout.c
- * @version 1
+ * v2: colours are theme role names ("text", "accent", "surface_raised", ...), not hex.
+ * @version 2
  * @brief JsonLayout: builds a full-screen LVGL container with background, label and image children from a JSON layout string.
  */
 // Layer 1: JsonLayout — creates LVGL widgets from JSON DSL.
@@ -9,18 +10,21 @@
 //
 // JSON format:
 // {
-//   "bg_color": "#1a1a2e",
+//   "bg_color": "surface_raised",
 //   "bg_image": "A:/backgrounds/birthday.png",
 //   "duration_s": 86400,
 //   "children": [
-//     {"type": "label", "text": "Hello!", "font": "nunito_128", "color": "#ff69b4", "x": 100, "y": 200},
+//     {"type": "label", "text": "Hello!", "font": "nunito_128", "color": "accent_alt", "x": 100, "y": 200},
 //     {"type": "image", "src": "A:/photos/pic.png", "x": 0, "y": 0, "w": 1024, "h": 600},
 //     {"type": "lottie", "src": "A:/lottie/hearts.json", "x": 262, "y": 50, "w": 500, "h": 500}
 //   ]
 // }
+// Colours name theme roles (ui_theme.h); a label's colour is made legible against the
+// layout's background. Anything else (a hex string included) falls back to the default.
 
 #include "display_widgets.h"
 #include "cJSON.h"
+#include "ui_theme.h"
 #include "esp_log.h"
 #include <string.h>
 #include <stdlib.h>
@@ -40,18 +44,22 @@ struct json_layout_t {
 };
 
 /**
- * @brief Parse a "#RRGGBB" string into an LVGL colour.
- * @version 1
+ * @brief The theme role named by @p item's string value, or @p fallback when it is missing or
+ *        names no role (logged: a hex colour is refused, not drawn).
+ * v2: role names (was "#RRGGBB").
+ * @version 2
  * @utility
- * @return Parsed colour, or white if the string is missing or malformed.
+ * @return The role.
  */
-static lv_color_t parse_color(const char *hex_str)
+static ui_role_t parse_role(const cJSON *item, ui_role_t fallback)
 {
-    if (!hex_str || hex_str[0] != '#' || strlen(hex_str) < 7) {
-        return lv_color_white();
+    ui_role_t role = fallback;
+    if (item && cJSON_IsString(item) && !ui_theme_role_by_name(item->valuestring, &role)) {
+        ESP_LOGW(TAG, "layout colour \"%s\" is not a theme role; using %s", item->valuestring,
+                 ui_theme_role_name(fallback));
+        role = fallback;
     }
-    uint32_t val = (uint32_t)strtol(hex_str + 1, NULL, 16);
-    return lv_color_hex(val);
+    return role;
 }
 
 /**
@@ -74,8 +82,11 @@ static const lv_font_t *parse_font(const char *name)
 }
 
 /**
- * @brief Create a label child from JSON text, font (default nunito 48), colour (default white) and x/y (or y-only top-centred, else centred).
- * @version 1
+ * @brief Create a label child from JSON text, font (default nunito 48), colour role (default
+ *        text, legible against the layout background) and x/y (or y-only top-centred, else
+ *        centred).
+ * v2: colour is a theme role.
+ * @version 2
  * @req REQ-DISP-005
  * @return New label, or NULL if "text" is missing.
  */
@@ -98,11 +109,8 @@ static lv_obj_t *create_label_child(lv_obj_t *parent, const cJSON *child)
         lv_obj_set_style_text_font(lbl, &nunito_48, 0);
     }
 
-    if (color && cJSON_IsString(color)) {
-        lv_obj_set_style_text_color(lbl, parse_color(color->valuestring), 0);
-    } else {
-        lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-    }
+    lv_color_t backdrop = lv_obj_get_style_bg_color(parent, LV_PART_MAIN);
+    lv_obj_set_style_text_color(lbl, ui_theme_text_on(parse_role(color, UI_ROLE_TEXT), backdrop), 0);
 
     if (x && cJSON_IsNumber(x) && y && cJSON_IsNumber(y)) {
         lv_obj_set_pos(lbl, x->valueint, y->valueint);
@@ -148,8 +156,10 @@ static lv_obj_t *create_image_child(lv_obj_t *parent, const cJSON *child)
 
 // Container geometry + background colour from the root object.
 /**
- * @brief Create the 1024x600 layout container and set its background colour from "bg_color" (default #1a1a2e).
- * @version 1
+ * @brief Create the 1024x600 layout container and set its background from the "bg_color" role
+ *        (default surface_raised).
+ * v2: colour is a theme role.
+ * @version 2
  * @req REQ-DISP-005
  */
 static void setup_container(json_layout_t *jl, lv_obj_t *parent, const cJSON *root)
@@ -162,10 +172,8 @@ static void setup_container(json_layout_t *jl, lv_obj_t *parent, const cJSON *ro
     lv_obj_set_style_radius(jl->container, 0, 0);
     lv_obj_clear_flag(jl->container, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-    const cJSON *bg_color = cJSON_GetObjectItem(root, "bg_color");
-    lv_color_t color = (bg_color && cJSON_IsString(bg_color))
-        ? parse_color(bg_color->valuestring) : lv_color_hex(0x1a1a2e);
-    lv_obj_set_style_bg_color(jl->container, color, 0);
+    ui_role_t bg = parse_role(cJSON_GetObjectItem(root, "bg_color"), UI_ROLE_SURFACE_RAISED);
+    lv_obj_set_style_bg_color(jl->container, ui_theme_color(bg), 0);
     lv_obj_set_style_bg_opa(jl->container, LV_OPA_COVER, 0);
 }
 

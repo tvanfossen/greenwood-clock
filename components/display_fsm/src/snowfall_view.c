@@ -6,6 +6,7 @@
 #include "snowfall_view.h"
 #include "particle_view.h"
 #include "snow_physics.h"
+#include "ui_theme.h"
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -56,8 +57,9 @@ static void snow_bounds(void *m, int i, lv_area_t *out)
 }
 
 /**
- * @brief Draw one flake as a white disc at its depth-faded opacity.
- * @version 1
+ * @brief Draw one flake as a disc of the theme's LIGHT at its depth-faded opacity.
+ * v2: colours from the theme roles (ui_theme), no literals.
+ * @version 2
  * @callback
  */
 static void snow_draw(void *m, int i, lv_layer_t *layer)
@@ -65,7 +67,7 @@ static void snow_draw(void *m, int i, lv_layer_t *layer)
     const snow_flake_t *fl = &((snow_field_t *)m)->flakes[i];
     lv_draw_rect_dsc_t dsc;
     lv_draw_rect_dsc_init(&dsc);
-    dsc.bg_color = lv_color_white();
+    dsc.bg_color = ui_theme_color(UI_ROLE_LIGHT);
     dsc.bg_opa = fl->opa;
     dsc.radius = LV_RADIUS_CIRCLE;
     lv_area_t a;

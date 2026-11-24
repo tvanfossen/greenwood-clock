@@ -175,7 +175,8 @@ static void amb_fmt_golden(char *buf, size_t n, int sr_local, int ss_local)
 
 /**
  * @brief Add the daylight progress bar (sunrise to sunset) at @p y.
- * @version 1
+ * v2: colours from the theme roles (ui_theme), no literals.
+ * @version 2
  * @req REQ-AMB-001
  */
 static void amb_add_daylight_bar(lv_obj_t *parent, int y, int now_min, int sr_local,
@@ -184,8 +185,8 @@ static void amb_add_daylight_bar(lv_obj_t *parent, int y, int now_min, int sr_lo
     lv_obj_t *bar = lv_bar_create(parent);
     lv_obj_set_size(bar, 500, 16);
     lv_obj_align(bar, LV_ALIGN_TOP_LEFT, 0, y);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0x333344), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0xE9C46A), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(bar, ui_theme_color(UI_ROLE_SURFACE_INSET), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bar, ui_theme_color(UI_ROLE_ACCENT), LV_PART_INDICATOR);
     lv_obj_set_style_radius(bar, 8, LV_PART_MAIN);
     lv_obj_set_style_radius(bar, 8, LV_PART_INDICATOR);
     lv_bar_set_range(bar, 0, 100);
@@ -246,7 +247,8 @@ static void amb_fmt_next(char *buf, size_t n, const char *prefix, const char *ev
  * v2: sections split into helpers and the panel shared via info_panel.h (knots v2
  *     cognitive limit); output unchanged.
  * v3: clock uses the user's exact colour; no background sampling before minimizing.
- * @version 3
+ * v4: colours from the theme roles (ui_theme), no literals.
+ * @version 4
  * @req REQ-AMB-001
  * @req REQ-ASTRO-001
  */
@@ -257,10 +259,6 @@ void AmbientDashboard::entry()
 
     clock_settings_t cfg;
     settings_load(&cfg);
-
-    // Fixed high-contrast palette for secondary screens (NVS text_color is clock-only)
-    lv_color_t primary = lv_color_white();
-    lv_color_t secondary = lv_color_hex(0xb0b0c0);
 
     time_t now;
     time(&now);
@@ -278,28 +276,29 @@ void AmbientDashboard::entry()
     int now_min = ti.tm_hour * 60 + ti.tm_min;
 
     s_container = info_panel_create(s_screen);
+    info_panel_palette_t pal = info_panel_palette(s_container);
     int y_pos = 0;
     char buf[128];
 
-    lv_label_set_text(info_panel_label(s_container, &nunito_48, primary, y_pos), "Dashboard");
+    lv_label_set_text(info_panel_label(s_container, &nunito_48, pal.text, y_pos), "Dashboard");
     y_pos += 56;
 
     amb_fmt_sun(buf, sizeof(buf), sr_local, ss_local);
-    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_24, lv_color_hex(0xE9C46A), y_pos), buf);
+    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_24, pal.accent, y_pos), buf);
     y_pos += 32;
 
     amb_add_daylight_bar(s_container, y_pos, now_min, sr_local, ss_local, sun.daylight_minutes);
     y_pos += 30;
 
     amb_fmt_golden(buf, sizeof(buf), sr_local, ss_local);
-    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, secondary, y_pos), buf);
+    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, pal.muted, y_pos), buf);
     y_pos += 32;
 
-    y_pos += amb_add_conditions(s_container, y_pos, secondary);
+    y_pos += amb_add_conditions(s_container, y_pos, pal.muted);
 
     float kp = nws_get_kp_index();
     amb_fmt_aurora(buf, sizeof(buf), kp, astro_calc_aurora_probability(kp, cfg.latitude));
-    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, lv_color_hex(0xa490c2), y_pos), buf);
+    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, pal.accent_alt, y_pos), buf);
     y_pos += 32;
 
     // Next celestial event (solstice/equinox) and meteor shower
@@ -307,14 +306,14 @@ void AmbientDashboard::entry()
     const char *next_event = next_event_after(celestial_dates, (int)CELESTIAL_COUNT,
                                               ti.tm_year, ti.tm_yday, &days_until);
     amb_fmt_next(buf, sizeof(buf), "Next", next_event, days_until);
-    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, secondary, y_pos), buf);
+    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, pal.muted, y_pos), buf);
     y_pos += 28;
 
     int shower_days = 999;
     const char *next_shower = next_event_after(meteor_showers, (int)SHOWER_COUNT,
                                                ti.tm_year, ti.tm_yday, &shower_days);
     amb_fmt_next(buf, sizeof(buf), "Meteor shower", next_shower, shower_days);
-    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, secondary, y_pos), buf);
+    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, pal.muted, y_pos), buf);
 
     fade_in(s_container);
 
