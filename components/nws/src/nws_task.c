@@ -328,22 +328,24 @@ static void poll_alerts(float lat, float lon, TickType_t *now,
 }
 
 #define RADAR_RASTERS_MAX   32         /* images listed per query (the server holds ~16) */
-#define RADAR_FRAME_GAP_S   (5 * 60)   /* every server image (~6-8 min apart), so the set stays
-                                          stable as new images arrive: 1-2 fetches per poll */
+#define RADAR_GRID_S        (10 * 60)  /* loop frames at hh:00, hh:10, ...: each fixed once its
+                                          mark is past, so 1-2 fetches per poll */
 
 /**
- * @brief Fetch loop frame @p r unless the SD history (for the @p newest: the cache) already
- *        has it; save it to the history (the newest overwrites its file, repairing one saved
- *        by an older build) and, for the newest, make it the cached image.
- * @version 1
+ * @brief Fetch loop frame @p f unless the SD history (for the @p newest: the cache) already
+ *        has it; save it to the history under its shown time (the newest overwrites its file,
+ *        repairing one saved by an older build) and, for the newest, make it the cached image.
+ * v2: takes a frame; stored and cached under its shown time (a grid mark for past frames).
+ * @version 2
  * @utility
  * @return ESP_OK (fetched or nothing to do) or the fetch error. @p new_latest is set when the
  *         cached image changed.
  */
-static esp_err_t fetch_frame(float lat, float lon, const nws_radar_raster_t *r, bool newest,
+static esp_err_t fetch_frame(float lat, float lon, const nws_radar_frame_t *f, bool newest,
                              bool *new_latest)
 {
-    time_t ts = (time_t)(r->start_ms / 1000);
+    const nws_radar_raster_t *r = &f->raster;
+    time_t ts = (time_t)f->show_s;
     bool on_sd = nws_radar_history_has(ts);
     bool needed = newest ? (s_radar_ts != ts || !s_radar_png) : !on_sd;
     if (!needed) return ESP_OK;
@@ -364,13 +366,14 @@ static esp_err_t fetch_frame(float lat, float lon, const nws_radar_raster_t *r, 
     s_radar_png_len = len;
     s_radar_ts      = ts;
     *new_latest = true;
-    ESP_LOGI(TAG, "radar cached: %zu bytes, valid from %lld", len, (long long)ts);
+    ESP_LOGI(TAG, "radar cached: %zu bytes, image %lld valid from %lld", len, (long long)r->id,
+             (long long)ts);
     return ESP_OK;
 }
 
 /**
- * @brief If due (10 min): list the server's radar images, pick the loop's frames (newest,
- *        then >= 5 min apart, i.e. every server image, over the last 70 min), fetch the
+ * @brief If due (10 min): list the server's radar images, pick the loop's frames (the
+ *        newest, then the image current at each 10-minute mark over the last 70 min), fetch the
  *        ones not yet on the SD history (all of them after boot), drop the rest from it,
  *        and emit DISPLAY_EVT_RADAR_READY when the newest image changed. Counts the
  *        attempt/failure and staggers.
@@ -378,7 +381,9 @@ static esp_err_t fetch_frame(float lat, float lon, const nws_radar_raster_t *r, 
  *     rate is unchanged.
  * v3: frames by their valid time, each fetched by image id (the default view lagged and
  *     returned the same image twice), and the past hour backfilled.
- * @version 3
+ * v4: past frames on the 10-minute grid (the image current at each mark), the newest at its
+ *     own time.
+ * @version 4
  * @req REQ-RADAR-001
  * @req REQ-RADAR-003
  * @req REQ-WX-004
@@ -388,9 +393,10 @@ static void poll_radar(float lat, float lon, TickType_t *now,
 {
     if (!poll_due(*now, *last, RADAR_INTERVAL_S)) return;
     st->attempted++;
-    nws_radar_raster_t all[RADAR_RASTERS_MAX], pick[NWS_RADAR_HISTORY_MAX];
+    nws_radar_raster_t all[RADAR_RASTERS_MAX];
+    nws_radar_frame_t pick[NWS_RADAR_HISTORY_MAX];
     int n = nws_radar_rasters(lat, lon, all, RADAR_RASTERS_MAX);
-    int k = n > 0 ? nws_radar_pick(all, n, (int64_t)time(NULL), RADAR_FRAME_GAP_S,
+    int k = n > 0 ? nws_radar_pick(all, n, (int64_t)time(NULL), RADAR_GRID_S,
                                    NWS_RADAR_HISTORY_MAX_AGE_S, pick, NWS_RADAR_HISTORY_MAX)
                   : 0;
     bool failed = (k == 0);
@@ -398,7 +404,7 @@ static void poll_radar(float lat, float lon, TickType_t *now,
     // Drop the frames the loop no longer uses first: saving prunes to the newest
     // NWS_RADAR_HISTORY_MAX, which would otherwise delete the backfilled older frames.
     time_t keep[NWS_RADAR_HISTORY_MAX];
-    for (int i = 0; i < k; i++) keep[i] = (time_t)(pick[i].start_ms / 1000);
+    for (int i = 0; i < k; i++) keep[i] = (time_t)pick[i].show_s;
     if (k > 0) nws_radar_history_keep(keep, k);
     for (int i = k - 1; i >= 0; i--) {   // newest first: the screen gets it before the backfill
         if (fetch_frame(lat, lon, &pick[i], i == k - 1, &new_latest) != ESP_OK) failed = true;

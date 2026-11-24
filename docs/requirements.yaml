@@ -296,12 +296,14 @@ requirements:
     name: Radar loop of the past hour
     subsystem: RADAR
     description: >-
-      Each fetched radar image is also kept on the SD card (newest 6, at most 70 min old), and
-      the radar screen plays them oldest to newest in a loop with each frame's time. No extra
-      radar downloads are made for the loop.
+      The radar screen loops the past hour from the SD card, oldest to newest: one frame per
+      10-minute mark (hh:00, hh:10, ...) showing the image that was current at that mark and
+      labelled with it, ending on the newest image at its own time (at most 8 frames, 70 min).
+      A past frame is fetched once.
     acceptance_criteria: >-
-      After an hour of uptime, the radar screen animates the last hour of precipitation with a
-      time label per frame, and still does after a reboot; the radar request rate is unchanged.
+      After an hour of uptime, the radar screen animates the last hour of precipitation, every
+      frame but the last labelled on a 10-minute mark (e.g. 6:00, 6:10 ... 6:40, then 6:47),
+      and still does after a reboot.
 
   # ---------------------------------------------------------------- ALERT
   REQ-ALERT-001:
