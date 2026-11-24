@@ -1,7 +1,8 @@
 /**
  * @file test_ui_theme.c
  * v2: slots (which role fills each themed place) — defaults, file overrides, refusals.
- * @version 2
+ * v3: JSON round trip (ui_theme_to_json).
+ * @version 3
  * @brief Host tests for the OKLCH theme: the base theme reproduces the clock's original
  *        colours; every shipped theme's text roles meet their contrast targets; text over
  *        any backdrop keeps its hue and meets its target; theme files parse (and the base
@@ -306,9 +307,34 @@ static void test_slots(void)
 }
 
 /**
+ * @brief A theme written by ui_theme_to_json parses back to the same theme (cores to 4
+ *        decimals, contrast, slots, name), and a too-small buffer is refused.
+ * @version 1
+ * @utility
+ */
+static void test_json_round_trip(void)
+{
+    ui_theme_t t;
+    CHECK(load_theme("sdcard/themes/sassafras.json", &t), "sassafras parses");
+    t.slots[UI_SLOT_ALERT_MINOR] = UI_ROLE_ACCENT;
+    strcpy(t.name, "Round Trip");
+    char buf[1024];
+    CHECK(ui_theme_to_json(&t, buf, sizeof(buf)), "written");
+    ui_theme_t back;
+    CHECK(ui_theme_parse(buf, &back), "parses back: %s", buf);
+    CHECK(strcmp(back.name, t.name) == 0, "name");
+    CHECK(fabsf(back.ink.l - t.ink.l) < 1e-3f && fabsf(back.accent.h - t.accent.h) < 1e-3f &&
+              fabsf(back.surface.c - t.surface.c) < 1e-3f, "cores");
+    CHECK(back.contrast == t.contrast, "contrast");
+    CHECK(memcmp(back.slots, t.slots, sizeof(t.slots)) == 0, "slots");
+    CHECK(!ui_theme_to_json(&t, buf, 40), "small buffer refused");
+}
+
+/**
  * @brief Run the ui_theme tests; exit status is the failure count.
  * v2: slots.
- * @version 2
+ * v3: JSON round trip.
+ * @version 3
  * @utility
  * @return 0 when every check passed.
  */
@@ -323,6 +349,7 @@ int main(void)
     test_parse_rejects();
     test_role_names();
     test_slots();
+    test_json_round_trip();
     printf("ui_theme: %d/%d checks passed\n", s_checks - s_failures, s_checks);
     return s_failures;
 }

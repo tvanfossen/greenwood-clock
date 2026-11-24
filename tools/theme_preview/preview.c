@@ -13,6 +13,8 @@
  *              accent palette (leaves, swatches)
  *   live     — the weather screen built under the FIRST theme, then switched to this one in
  *              place (no rebuild): what a theme change on the device repaints
+ *   editor_<tab> — the on-screen theme editor on each tab, over the background
+ *   editor_edit  — FIRST theme only: the editor after moving the accent hue to 200 (teal)
  * `inv theme-preview` builds this and converts the frames to PNG.
  */
 
@@ -23,6 +25,7 @@
 #include "display_widgets.h"
 #include "display_fsm.h"   // lottie_load_job_t (the seam stubbed below)
 #include "info_panel.h"
+#include "theme_editor.h"
 #include "nws.h"
 #include "src/libs/lodepng/lodepng.h"
 
@@ -365,6 +368,22 @@ static void scene_gallery(void)
 static bool install_theme(const char *path, ui_theme_t *t);
 
 /**
+ * @brief The theme editor over the background, on @p tab, written to <stem>_editor_<name>.
+ * @version 1
+ * @utility
+ */
+static void scene_editor(const char *out_dir, const char *stem, theme_editor_tab_t tab,
+                         const char *name)
+{
+    lv_obj_t *scr = fresh_screen(true);
+    theme_editor_create(scr, 114, NULL, NULL);
+    theme_editor_set_tab(tab);
+    char file[512];
+    snprintf(file, sizeof(file), "%s/%s_editor_%s.ppm", out_dir, stem, name);
+    write_frame(file);
+}
+
+/**
  * @brief The file stem of @p path ("sdcard/themes/sassafras.json" -> "sassafras").
  * @version 1
  * @utility
@@ -437,9 +456,33 @@ static void render_live(const char *out_dir, const char *first, const char *path
 }
 
 /**
+ * @brief The editor under theme @p path after moving the accent hue to 200: what one drag of
+ *        the h slider repaints.
+ * @version 1
+ * @utility
+ */
+static void render_edit_demo(const char *out_dir, const char *path)
+{
+    ui_theme_t t;
+    if (!install_theme(path, &t)) return;
+    lv_obj_t *scr = fresh_screen(true);
+    theme_editor_create(scr, 114, NULL, NULL);
+    theme_editor_set_tab(THEME_EDITOR_ACCENT);
+    ui_oklch_t accent = t.accent;
+    accent.h = 200.0f;
+    theme_editor_set_core(THEME_EDITOR_ACCENT, accent);
+    char stem[64], file[512];
+    stem_of(path, stem, sizeof(stem));
+    snprintf(file, sizeof(file), "%s/%s_editor_edit.ppm", out_dir, stem);
+    write_frame(file);
+    fresh_screen(false);
+}
+
+/**
  * @brief Render every scene for the theme in @p path into @p out_dir.
  * v2: installs through install_theme (bindings repainted).
- * @version 2
+ * v3: editor scenes per tab.
+ * @version 3
  * @utility
  * @return Whether the theme parsed.
  */
@@ -455,6 +498,11 @@ static bool render_theme(const char *out_dir, const char *path)
     scene_gallery();
     snprintf(file, sizeof(file), "%s/%s_gallery.ppm", out_dir, stem);
     write_frame(file);
+    scene_editor(out_dir, stem, THEME_EDITOR_INK, "ink");
+    scene_editor(out_dir, stem, THEME_EDITOR_ACCENT, "accent");
+    scene_editor(out_dir, stem, THEME_EDITOR_CONTRAST, "text");
+    scene_editor(out_dir, stem, THEME_EDITOR_SLOTS, "slots");
+    fresh_screen(false);   // closes the editor: the theme it opened with comes back
     printf("%s: %s\n", stem, t.name);
     return true;
 }
@@ -462,7 +510,8 @@ static bool render_theme(const char *out_dir, const char *path)
 /**
  * @brief Entry point: set up LVGL with an RGB565 display, then render each theme.
  * v2: the picture feeds bound text; live-switch renders.
- * @version 2
+ * v3: 64-byte aligned draw buffer (LVGL asserts and spins otherwise); edit demo.
+ * @version 3
  * @utility
  * @return 0 when every theme rendered.
  */
@@ -476,7 +525,7 @@ int main(int argc, char **argv)
     lv_tick_set_cb(tick_cb);
     lv_display_t *disp = lv_display_create(SCREEN_W, SCREEN_H);
     lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
-    static uint8_t buf[SCREEN_W * 100 * 2];
+    static uint8_t buf[SCREEN_W * 100 * 2] __attribute__((aligned(LV_DRAW_BUF_ALIGN)));   // LVGL asserts (and spins) on a misaligned buffer
     lv_display_set_buffers(disp, buf, NULL, sizeof(buf), LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(disp, flush_cb);
     s_have_bg = load_background(argv[2]);
@@ -484,5 +533,6 @@ int main(int argc, char **argv)
     int failed = 0;
     for (int i = 3; i < argc; i++) failed += render_theme(argv[1], argv[i]) ? 0 : 1;
     for (int i = 4; i < argc; i++) render_live(argv[1], argv[3], argv[i]);
+    render_edit_demo(argv[1], argv[3]);
     return failed;
 }

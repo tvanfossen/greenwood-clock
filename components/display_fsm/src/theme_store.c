@@ -1,6 +1,7 @@
 /**
  * @file theme_store.c
- * @version 1
+ * v2: theme_store_save (the on-screen editor's themes).
+ * @version 2
  * @brief Theme files on the SD card: the cached list of installed themes and loading one.
  */
 
@@ -156,4 +157,27 @@ const char *theme_store_name(const char *stem)
         if (strcmp(s_entries[i].stem, stem) == 0) name = s_entries[i].name;
     }
     return name;
+}
+
+/**
+ * @brief Write @p t to THEME_STORE_DIR/<stem>.json (replacing it). Off-lock (SD I/O).
+ * @version 1
+ * @req REQ-UI-004
+ * @return Whether it was written (failures logged).
+ */
+bool theme_store_save(const char *stem, const ui_theme_t *t)
+{
+    char json[1024];
+    char path[64];
+    bool ok = bg_theme_name_valid(stem) && ui_theme_to_json(t, json, sizeof(json));
+    FILE *f = NULL;
+    if (ok) {
+        snprintf(path, sizeof(path), THEME_STORE_DIR "/%s.json", stem);
+        f = fopen(path, "wb");
+        ok = f && fwrite(json, 1, strlen(json), f) == strlen(json);
+    }
+    if (f) ok = (fclose(f) == 0) && ok;
+    if (ok) ESP_LOGI(TAG, "saved theme '%s' (%s)", stem, t->name);
+    else ESP_LOGE(TAG, "save theme '%s' failed", stem ? stem : "(null)");
+    return ok;
 }

@@ -488,6 +488,21 @@ requirements:
       every other screen (weather, radar, astronomy, ambient, photos, settings, alerts, the web
       panel) on its next showing, with no colour left over from the previous theme; text on
       every panel reads at the theme's contrast target where the backdrop allows it.
+  REQ-UI-004:
+    name: On-screen theme editor
+    subsystem: UI
+    description: >-
+      Settings > Theme > Customize opens a theme editor: a live design preview (clock text, a
+      card and strip over the real background, the four alert severities, stock controls) beside
+      OKLCH pickers for the three cores (L, C and h sliders over their gradients), the text
+      contrast target, and the slot grid (tap a themed place for its next fill role). Every
+      edit repaints the running UI; Back restores the opening theme; Save writes
+      /sdcard/themes/custom.json and makes it the global theme.
+    acceptance_criteria: >-
+      Dragging a core's sliders recolours the preview and the rest of the screen while
+      dragging; tapping a slot cell changes that place's fill everywhere it appears; Back
+      leaves the theme as it was; after Save and a reboot the clock still shows the edited
+      theme.
 
   # ---------------------------------------------------------------- TOOL
   REQ-TOOL-001:

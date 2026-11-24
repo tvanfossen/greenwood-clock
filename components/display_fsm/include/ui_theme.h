@@ -21,6 +21,8 @@
 #include "lvgl.h"
 #include "ui_contrast.h"
 
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -225,6 +227,14 @@ bool ui_theme_slot_by_name(const char *name, ui_slot_t *out);
  * @return Whether @p json is a complete, in-range theme (@p out set only when it is).
  */
 bool ui_theme_parse(const char *json, ui_theme_t *out);
+
+/**
+ * @brief Write @p t as a theme file (the format ui_theme_parse reads, every slot spelled out).
+ * @version 1
+ * @req REQ-UI-003
+ * @return Whether it fit in @p n bytes (@p buf is NUL-terminated either way when n > 0).
+ */
+bool ui_theme_to_json(const ui_theme_t *t, char *buf, size_t n);
 
 #ifdef __cplusplus
 }

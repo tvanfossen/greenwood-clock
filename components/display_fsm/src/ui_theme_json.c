@@ -1,14 +1,18 @@
 /**
  * @file ui_theme_json.c
  * v2: optional "slots" map.
- * @version 2
- * @brief Parse a theme file (three OKLCH cores and a contrast target) into a ui_theme_t.
+ * v3: ui_theme_to_json (the theme editor saves with it).
+ * @version 3
+ * @brief Parse a theme file (three OKLCH cores and a contrast target) into a ui_theme_t,
+ *        and write one back.
  *        Pure C over cJSON: host-tested.
  */
 
 #include "ui_theme.h"
 #include "cJSON.h"
 
+#include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 
 #define MAX_CHROMA   0.4f    // past the sRGB gamut edge (~0.37)
@@ -95,5 +99,51 @@ bool ui_theme_parse(const char *json, ui_theme_t *out)
         *out = t;
     }
     cJSON_Delete(root);
+    return ok;
+}
+
+/**
+ * @brief Append printf-style text at @p *at in @p buf (of @p n bytes), tracking overflow.
+ * @version 1
+ * @utility
+ * @return Whether everything so far fit.
+ */
+__attribute__((format(printf, 5, 6)))
+static bool append(char *buf, size_t n, size_t *at, bool ok, const char *fmt, ...)
+{
+    if (!ok || *at >= n) return false;
+    va_list ap;
+    va_start(ap, fmt);
+    int w = vsnprintf(buf + *at, n - *at, fmt, ap);
+    va_end(ap);
+    ok = w >= 0 && (size_t)w < n - *at;
+    *at += ok ? (size_t)w : 0;
+    return ok;
+}
+
+/**
+ * @brief Write @p t as a theme file.
+ * @version 1
+ * @req REQ-UI-003
+ * @return Whether it fit in @p n bytes.
+ */
+bool ui_theme_to_json(const ui_theme_t *t, char *buf, size_t n)
+{
+    size_t at = 0;
+    if (n) buf[0] = '\0';
+    const ui_oklch_t *c[3] = { &t->ink, &t->surface, &t->accent };
+    const char *key[3] = { "ink", "surface", "accent" };
+    bool ok = append(buf, n, &at, true, "{\n  \"name\": \"%s\",\n", t->name);
+    for (int i = 0; i < 3; i++) {
+        ok = append(buf, n, &at, ok, "  \"%s\": [%.4f, %.4f, %.2f],\n", key[i],
+                    (double)c[i]->l, (double)c[i]->c, (double)c[i]->h);
+    }
+    ok = append(buf, n, &at, ok, "  \"contrast\": %.2f,\n  \"slots\": {", (double)t->contrast);
+    for (int i = 0; i < UI_SLOT_COUNT; i++) {
+        ok = append(buf, n, &at, ok, "%s\"%s\": \"%s\"", i ? ", " : "",
+                    ui_theme_slot_name((ui_slot_t)i), ui_theme_role_name((ui_role_t)t->slots[i]));
+    }
+    ok = append(buf, n, &at, ok, "}\n}\n");
+    if (!ok && n) buf[0] = '\0';
     return ok;
 }

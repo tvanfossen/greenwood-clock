@@ -32,6 +32,7 @@ extern "C" {
 #include "display_fsm.h"    // display_fsm_refresh_background, display_fsm_refresh_theme
 #include "ui_theme_bind.h"
 #include "theme_store.h"
+#include "theme_editor.h"
 #include "bsp/display.h"    // bsp_display_brightness_set
 #include "clock_anim_pref.h"  // clock_anim_pref_get/set
 #include "theme_pref.h"       // theme_pref_get/set
@@ -60,6 +61,7 @@ static lv_obj_t *create_sub_wifi(lv_obj_t *parent);
 static lv_obj_t *create_sub_brightness(lv_obj_t *parent);
 static lv_obj_t *create_sub_background(lv_obj_t *parent);
 static lv_obj_t *create_sub_theme(lv_obj_t *parent);
+static lv_obj_t *create_sub_theme_editor(lv_obj_t *parent);
 static lv_obj_t *create_sub_animation(lv_obj_t *parent);
 static lv_obj_t *create_sub_clock_anim(lv_obj_t *parent);
 static lv_obj_t *create_sub_about(lv_obj_t *parent);
@@ -77,6 +79,7 @@ static const sub_creator_fn_t SUB_CREATORS[SUB_MAX] = {
     [SUB_SCHEDULE]       = create_sub_schedule,
     [SUB_SCHED_PROFILES] = create_sub_sched_profiles,
     [SUB_SCHED_PROFILE]  = create_sub_sched_profile,
+    [SUB_THEME_EDITOR]   = create_sub_theme_editor,   // enum order (C++ designated init)
 };
 
 // ============================================================================
@@ -849,7 +852,8 @@ static void theme_select_cb(lv_event_t *e)
 
 /**
  * @brief Build the list of installed themes with the current global theme focused.
- * @version 1
+ * v2: a Customize... entry opens the on-screen theme editor.
+ * @version 2
  * @req REQ-UI-001
  * @req REQ-UI-003
  * @return The sub-screen container.
@@ -864,6 +868,8 @@ static lv_obj_t *create_sub_theme(lv_obj_t *parent)
     lv_obj_set_size(list, 700, 380);
     lv_obj_align(list, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_text_font(list, &lv_font_montserrat_20, 0);
+    lv_obj_t *edit = lv_list_add_button(list, LV_SYMBOL_SETTINGS, "Customize...");
+    lv_obj_add_event_cb(edit, menu_item_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)SUB_THEME_EDITOR);
 
     for (int i = 0; i < theme_store_count(); i++) {
         const theme_entry_t *t = theme_store_entry(i);
@@ -872,6 +878,62 @@ static lv_obj_t *create_sub_theme(lv_obj_t *parent)
         if (strcmp(t->stem, current) == 0) lv_obj_add_state(btn, LV_STATE_CHECKED);
     }
     if (theme_store_count() == 0) lv_list_add_text(list, "No themes in /sdcard/themes");
+    return cont;
+}
+
+#define CUSTOM_THEME_STEM "custom"
+static bool s_editor_saved = false;   // the editor saved: leave the theme list too on close
+
+/**
+ * @brief Theme editor save: write the edited theme as custom.json and make it the global
+ *        theme (SD and NVS writes off the LVGL lock), then have fsm_task re-apply it.
+ * @version 1
+ * @callback
+ * @req REQ-UI-004
+ */
+static void theme_editor_saved(const ui_theme_t *t)
+{
+    ui_theme_t copy = *t;
+    lvgl_port_unlock();
+    bool ok = theme_store_save(CUSTOM_THEME_STEM, &copy) &&
+              theme_pref_set(CUSTOM_THEME_STEM) == ESP_OK;
+    lvgl_port_lock(0);
+    ESP_LOGI(TAG, "Theme editor: %s", ok ? "saved as custom (global theme)" : "save FAILED");
+    s_editor_saved = ok;
+    if (ok) display_fsm_refresh_theme();
+}
+
+/**
+ * @brief Theme editor closed: back to the theme list, or to the menu after a save (the list
+ *        is rebuilt with the new theme next time).
+ * @version 1
+ * @callback
+ * @req REQ-UI-004
+ */
+static void theme_editor_closed(void)
+{
+    bool saved = s_editor_saved;
+    s_editor_saved = false;
+    pop_sub();
+    if (saved) pop_sub();
+}
+
+/**
+ * @brief The on-screen theme editor, full width below the top-bar clock.
+ * @version 1
+ * @req REQ-UI-001
+ * @req REQ-UI-004
+ * @return The sub-screen container.
+ */
+static lv_obj_t *create_sub_theme_editor(lv_obj_t *parent)
+{
+    lv_obj_t *cont = lv_obj_create(parent);
+    lv_obj_remove_style_all(cont);
+    lv_obj_set_size(cont, lv_pct(100), lv_pct(100));
+    lv_obj_remove_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_update_layout(cont);
+    s_editor_saved = false;
+    theme_editor_create(cont, 114, theme_editor_saved, theme_editor_closed);
     return cont;
 }
 

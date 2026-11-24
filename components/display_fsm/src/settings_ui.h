@@ -24,6 +24,7 @@ enum settings_sub_screen_t {
     SUB_SCHEDULE,
     SUB_SCHED_PROFILES,
     SUB_SCHED_PROFILE,
+    SUB_THEME_EDITOR,
     SUB_MAX
 };
 
