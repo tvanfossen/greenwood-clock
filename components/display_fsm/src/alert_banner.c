@@ -118,7 +118,8 @@ void alert_banner_destroy(alert_banner_t *b)
  * @brief Show @p alert: severity colour with contrasting text, headline
  *        "event — headline" scrolling at ~240 ms/char (min 8 s per cycle).
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: ':' between event and headline (the em dash is not in the font: it drew a box).
+ * @version 3
  * @req REQ-ALERT-001
  */
 void alert_banner_show(alert_banner_t *b, const nws_alert_t *alert)
@@ -133,7 +134,7 @@ void alert_banner_show(alert_banner_t *b, const nws_alert_t *alert)
 
     // Set headline text — circular scroll handles overflow
     char text[320];
-    int len = snprintf(text, sizeof(text), "  %s — %s  ", alert->event, alert->headline);
+    int len = snprintf(text, sizeof(text), "  %s: %s  ", alert->event, alert->headline);
 
     // Size the scroll duration to the headline length (constant slow px/s crawl).
     // Set BEFORE set_text so the scroll animation is (re)created with this duration.

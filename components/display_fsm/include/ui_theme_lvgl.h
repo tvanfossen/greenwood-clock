@@ -20,6 +20,16 @@ extern "C" {
 void ui_theme_lvgl_init(lv_display_t *disp);
 
 /**
+ * @brief The colour text on @p panel actually sits on: its fill at its bg opacity over the
+ *        mean of @p bg under it (the panel's screen colour without a picture).
+ * @version 1
+ * @req REQ-BG-002
+ * @req REQ-UI-003
+ * @return The composite backdrop colour.
+ */
+lv_color_t ui_theme_panel_backdrop(lv_obj_t *panel, const lv_image_dsc_t *bg);
+
+/**
  * @brief Recolour the themed styles from the current ui_theme and restyle every object.
  * @version 1
  * @req REQ-UI-003

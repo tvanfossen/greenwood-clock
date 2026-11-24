@@ -720,3 +720,112 @@ def lint(c):
     subprocess.run(
         [str(REPO / ".venv" / "bin" / "pre-commit"), "run", "--all-files"], check=True
     )
+
+
+#: Host LVGL build: the fork compiled with the device's own sdkconfig (tools/lvgl_host).
+LVGL_HOST_DIR = TMP / "lvgl_host"
+LVGL_HOST_DEFINE = '-DLV_CONF_KCONFIG_EXTERNAL_INCLUDE=\\"lv_host_kconfig.h\\"'
+#: Firmware sources the theme preview links: the theme code and the real widgets.
+THEME_PREVIEW_SRCS = (
+    "components/display_fsm/src/ui_theme.c",
+    "components/display_fsm/src/ui_theme_json.c",
+    "components/display_fsm/src/ui_theme_lvgl.c",
+    "components/display_fsm/src/ui_contrast.c",
+    "components/display_fsm/src/weather_widgets.c",
+    "components/display_fsm/src/alert_banner.c",
+    "components/cjson/cjson/cJSON.c",
+    "components/fonts/c_array/nunito_48.c",
+    "components/fonts/c_array/nunito_128.c",
+    "tools/theme_preview/preview.c",
+)
+#: Include path for host builds against the real LVGL (stubs last, so real headers win).
+LVGL_HOST_INCLUDES = (
+    LVGL_HOST_DIR,
+    REPO / "components" / "lvgl",
+    REPO / "components" / "display_fsm" / "include",
+    REPO / "components" / "nws" / "include",
+    REPO / "components" / "settings",
+    REPO / "components" / "display_events" / "include",
+    REPO / "components" / "cjson" / "cjson",
+    REPO / "tools" / "lvgl_host" / "stubs",
+    REPO
+    / "tests"
+    / "host"
+    / "stubs",  # esp_err.h (its lvgl.h is shadowed by the real one)
+)
+
+
+## @brief Build (incrementally) the LVGL fork for the host from the device's sdkconfig.h.
+## @utility
+## @version 1
+## @return Path to liblvgl.a.
+def _lvgl_host_lib(c):
+    from concurrent.futures import ThreadPoolExecutor
+
+    sdk = REPO / "build" / "config" / "sdkconfig.h"
+    if not sdk.exists():
+        raise SystemExit("build/config/sdkconfig.h missing: run `inv build` once first")
+    kconf = LVGL_HOST_DIR / "lv_host_kconfig.h"
+    gen = REPO / "tools" / "lvgl_host" / "gen_kconfig.py"
+    c.run(f"{sys.executable} {gen} {sdk} {kconf} {REPO / 'sdcard'}")
+    obj_dir = LVGL_HOST_DIR / "obj"
+    obj_dir.mkdir(parents=True, exist_ok=True)
+    srcs = sorted((REPO / "components" / "lvgl" / "src").rglob("*.c"))
+    incs = f"-I{LVGL_HOST_DIR} -I{REPO / 'components' / 'lvgl'}"
+
+    def build(src):
+        obj = obj_dir / (src.relative_to(REPO).as_posix().replace("/", "_") + ".o")
+        if obj.exists() and obj.stat().st_mtime > max(
+            src.stat().st_mtime, kconf.stat().st_mtime
+        ):
+            return obj
+        subprocess.run(
+            f"gcc -c -O2 -w {LVGL_HOST_DEFINE} {incs} {src} -o {obj}",
+            shell=True,
+            check=True,
+        )
+        return obj
+
+    with ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
+        objs = list(pool.map(build, srcs))
+    lib = LVGL_HOST_DIR / "liblvgl.a"
+    if not lib.exists() or max(o.stat().st_mtime for o in objs) > lib.stat().st_mtime:
+        c.run(f"ar rcs {lib} {' '.join(str(o) for o in objs)}")
+    return lib
+
+
+## @brief Render every theme in sdcard/themes with the firmware's own widgets and the real
+## LVGL (host build), as PNGs in .claude/tmp/theme_preview/ — review before any OTA.
+## @req REQ-TOOL-004
+## @req REQ-UI-003
+## @version 1
+@task(
+    help={
+        "background": "LVGL path of the background behind the weather scene ('-': none)",
+        "themes": "Comma-separated theme stems (default: every file in sdcard/themes)",
+    }
+)
+def theme_preview(c, background="A:/backgrounds/winter_afternoon.png", themes=None):
+    from PIL import Image
+
+    lib = _lvgl_host_lib(c)
+    out = TMP / "theme_preview"
+    out.mkdir(parents=True, exist_ok=True)
+    exe = out / "theme_preview"
+    incs = " ".join(f"-I{d}" for d in LVGL_HOST_INCLUDES)
+    srcs = " ".join(str(REPO / s) for s in THEME_PREVIEW_SRCS)
+    compat = REPO / "tools" / "lvgl_host" / "stubs" / "host_compat.h"
+    c.run(
+        f"gcc -std=gnu11 -O1 -g -w -include {compat} {LVGL_HOST_DEFINE} {incs} {srcs} {lib} -lm -o {exe}"
+    )
+    stems = (
+        themes.split(",")
+        if themes
+        else sorted(p.stem for p in (REPO / "sdcard" / "themes").glob("*.json"))
+    )
+    files = " ".join(str(REPO / "sdcard" / "themes" / f"{s}.json") for s in stems)
+    c.run(f"{exe} {out} {background} {files}")
+    for ppm in sorted(out.glob("*.ppm")):
+        Image.open(ppm).save(ppm.with_suffix(".png"))
+        ppm.unlink()
+        print(ppm.with_suffix(".png"))

@@ -15,6 +15,8 @@
 #include "ui_theme.h"
 #include "esp_log.h"
 
+#include <inttypes.h>
+
 static const char *TAG = "ui_theme_lvgl";
 
 static lv_theme_t   *s_theme = NULL;
@@ -138,6 +140,36 @@ static void recolor_styles(void)
     lv_style_set_bg_color(&s_backdrop, ui_theme_color(UI_ROLE_SCREEN));
     lv_style_set_bg_opa(&s_backdrop, LV_OPA_50);
     lv_style_set_bg_color(&s_scrollbar, border);
+}
+
+/**
+ * @brief The colour text on @p panel actually sits on: its bg colour blended at its bg
+ *        opacity over the mean of @p bg (a screen-sized, top-down picture) under the panel,
+ *        or over the panel's screen colour when there is no picture or the panel is opaque.
+ * @version 1
+ * @req REQ-BG-002
+ * @req REQ-UI-003
+ * @return The composite backdrop colour.
+ */
+lv_color_t ui_theme_panel_backdrop(lv_obj_t *panel, const lv_image_dsc_t *bg)
+{
+    lv_color_t fill = lv_obj_get_style_bg_color(panel, LV_PART_MAIN);
+    lv_opa_t opa = lv_obj_get_style_bg_opa(panel, LV_PART_MAIN);
+    lv_obj_t *scr = lv_obj_get_screen(panel);
+    lv_color_t under = scr ? lv_obj_get_style_bg_color(scr, LV_PART_MAIN)
+                           : ui_theme_color(UI_ROLE_SCREEN);
+    if (bg && opa < LV_OPA_COVER) {
+        lv_obj_update_layout(panel);
+        lv_area_t a;
+        lv_obj_get_coords(panel, &a);
+        under = ui_image_region_mean(bg, LV_MAX(a.x1, 0), LV_MAX(a.y1, 0),
+                                     lv_area_get_width(&a), lv_area_get_height(&a));
+    }
+    lv_color_t backdrop = lv_color_mix(fill, under, opa);
+    ESP_LOGI(TAG, "panel backdrop: fill #%06" PRIX32 " opa %u over #%06" PRIX32 " -> #%06" PRIX32,
+             lv_color_to_u32(fill) & 0xFFFFFF, opa, lv_color_to_u32(under) & 0xFFFFFF,
+             lv_color_to_u32(backdrop) & 0xFFFFFF);
+    return backdrop;
 }
 
 /**
