@@ -391,9 +391,38 @@ def cloud_layer(
 # =============================================================================
 
 
-## @brief Single rain drop layer that falls linearly over fall_dur frames (default op) with fade in/out.
+## @brief Copy keyframes @p kfs with every time moved by @p dt frames (a particle copy's phase:
+##        the renderers do not honour a layer's start time, so phases live in the keyframes).
 ## @version 1
-## @return Rain drop shape layer dict.
+## @return New keyframe list.
+## @utility
+def shifted(kfs, dt):
+    return [{**k, "t": k["t"] + dt} for k in kfs]
+
+
+## @brief Looping copies of one falling particle: its fall period is fitted to divide the loop
+##        (op / round(op / fall_dur)) and one copy starts every period from st_offset's phase,
+##        so the particle falls continuously through the whole loop and across its seam.
+##        The old single layer leaned on a layer start offset, which ThorVG ignores: every
+##        particle fell at once from frame 0.
+## @version 1
+## @return (period, list of layer start times).
+## @utility
+def particle_cycle(op, st_offset, fall_dur):
+    period = op / max(1, round(op / fall_dur))
+    phase = st_offset % period
+    starts = []
+    s = phase - period
+    while s < op:
+        starts.append(int(round(s)))
+        s += period
+    return int(round(period)), starts
+
+
+## @brief Single rain drop layer that falls linearly over fall_dur frames (default op) with fade in/out.
+## v2: loops continuously (particle_cycle); returns one layer per cycle copy.
+## @version 2
+## @return List of rain drop shape layer dicts.
 ## @req REQ-LOTTIE-002
 def rain_drop_layer(
     name,
@@ -414,6 +443,7 @@ def rain_drop_layer(
     """
     if fall_dur is None:
         fall_dur = op
+    fall_dur, starts = particle_cycle(op, st_offset, fall_dur)
     fade_in = int(fall_dur * 0.1)
     fade_out = int(fall_dur * 0.1)
     hold_end = fall_dur - fade_out
@@ -435,13 +465,17 @@ def rain_drop_layer(
         kf(fall_dur, [0]),
     ]
 
-    return shape_layer(
-        name,
-        shapes,
-        layer_transform(animated(pos_kf), opacity=animated(o_kf)),
-        op=op,
-        st=st_offset,
-    )
+    return [
+        shape_layer(
+            f"{name}-{i}",
+            shapes,
+            layer_transform(
+                animated(shifted(pos_kf, st)), opacity=animated(shifted(o_kf, st))
+            ),
+            op=op,
+        )
+        for i, st in enumerate(starts)
+    ]
 
 
 # =============================================================================
@@ -450,8 +484,9 @@ def rain_drop_layer(
 
 
 ## @brief Single snowflake layer drifting down over fall_dur frames (default op) with horizontal sway, fade in/out and gentle rotation.
-## @version 1
-## @return Snowflake shape layer dict.
+## v2: loops continuously (particle_cycle); returns one layer per cycle copy.
+## @version 2
+## @return List of snowflake shape layer dicts.
 ## @req REQ-LOTTIE-002
 def snowflake_layer(
     name,
@@ -472,6 +507,7 @@ def snowflake_layer(
     """
     if fall_dur is None:
         fall_dur = op
+    fall_dur, starts = particle_cycle(op, st_offset, fall_dur)
 
     shapes = [
         ellipse("flake", [0, 0], [size, size]),
@@ -527,15 +563,19 @@ def snowflake_layer(
         kf(fall_dur, [45 if drift_x > 0 else -30]),
     ]
 
-    return shape_layer(
-        name,
-        shapes,
-        layer_transform(
-            animated(pos_kf), opacity=animated(o_kf), rotation=animated(r_kf)
-        ),
-        op=op,
-        st=st_offset,
-    )
+    return [
+        shape_layer(
+            f"{name}-{i}",
+            shapes,
+            layer_transform(
+                animated(shifted(pos_kf, st)),
+                opacity=animated(shifted(o_kf, st)),
+                rotation=animated(shifted(r_kf, st)),
+            ),
+            op=op,
+        )
+        for i, st in enumerate(starts)
+    ]
 
 
 # =============================================================================
@@ -935,7 +975,8 @@ def gen_day_mostly_cloudy():
 
 
 ## @brief Generate day rain: dark cloud with 14 staggered steel-blue rain drops on a 120-frame loop.
-## @version 1
+## v2: particles fall continuously (rain_drop_layer/snowflake_layer cycle copies).
+## @version 2
 ## @return Lottie composition dict from lottie().
 ## @req REQ-LOTTIE-002
 def gen_day_rain():
@@ -977,7 +1018,7 @@ def gen_day_rain():
         (210, 2.5, 21, 62, -235, 66, 312, 75),
     ]
     for i, (x, w, h, opac, st, ys, ye, fdur) in enumerate(drop_specs):
-        drops.append(
+        drops.extend(
             rain_drop_layer(
                 f"drop-{i+1}",
                 x,
@@ -997,7 +1038,8 @@ def gen_day_rain():
 
 
 ## @brief Generate day thunderstorm: lightning-illuminated dark cloud, four timed bolts and 14 rain drops.
-## @version 1
+## v2: particles fall continuously (rain_drop_layer/snowflake_layer cycle copies).
+## @version 2
 ## @return Lottie composition dict from lottie().
 ## @req REQ-LOTTIE-002
 def gen_day_thunderstorm():
@@ -1080,7 +1122,7 @@ def gen_day_thunderstorm():
         (112, 3, 21, 60, -330, 62, 316, 108),
     ]
     for i, (x, w, h, opac, st, ys, ye, fdur) in enumerate(drop_specs):
-        drops.append(
+        drops.extend(
             rain_drop_layer(
                 f"drop-{i+1}",
                 x,
@@ -1106,7 +1148,8 @@ def gen_day_thunderstorm():
 
 
 ## @brief Generate day snow: breathing cloud with 14 staggered drifting snowflakes.
-## @version 1
+## v2: particles fall continuously (rain_drop_layer/snowflake_layer cycle copies).
+## @version 2
 ## @return Lottie composition dict from lottie().
 ## @req REQ-LOTTIE-002
 def gen_day_snow():
@@ -1143,7 +1186,7 @@ def gen_day_snow():
         (130, -12, 7, 55, -500, 248),
     ]
     for i, (x, drift, sz, opac, st, fdur) in enumerate(flake_specs):
-        flakes.append(
+        flakes.extend(
             snowflake_layer(
                 f"flake-{i+1}",
                 x,
@@ -1212,7 +1255,8 @@ def gen_night_partly_cloudy():
 
 
 ## @brief Generate night rain: night cloud with 12 staggered night-blue rain drops.
-## @version 1
+## v2: particles fall continuously (rain_drop_layer/snowflake_layer cycle copies).
+## @version 2
 ## @return Lottie composition dict from lottie().
 ## @req REQ-LOTTIE-002
 def gen_night_rain():
@@ -1245,7 +1289,7 @@ def gen_night_rain():
         (175, 2, 21, 50, -245, 70, 306, 85),
     ]
     for i, (x, w, h, opac, st, ys, ye, fdur) in enumerate(drop_specs):
-        drops.append(
+        drops.extend(
             rain_drop_layer(
                 f"drop-{i+1}",
                 x,
@@ -1345,7 +1389,8 @@ def gen_day_overcast():
 
 
 ## @brief Generate day drizzle: cloud with six sparse, thin, slow rain drops.
-## @version 1
+## v2: particles fall continuously (rain_drop_layer/snowflake_layer cycle copies).
+## @version 2
 ## @return Lottie composition dict from lottie().
 ## @req REQ-LOTTIE-002
 def gen_day_drizzle():
@@ -1371,7 +1416,7 @@ def gen_day_drizzle():
         (135, 1.5, 10, 35, -195, 102, 278, 150),
     ]
     for i, (x, w, h, opac, st, ys, ye, fdur) in enumerate(drop_specs):
-        drops.append(
+        drops.extend(
             rain_drop_layer(
                 f"drop-{i+1}",
                 x,
@@ -1390,7 +1435,8 @@ def gen_day_drizzle():
 
 
 ## @brief Generate day ice: dark cloud with 12 fast, short, wide ice pellets on a 90-frame loop.
-## @version 1
+## v2: particles fall continuously (rain_drop_layer/snowflake_layer cycle copies).
+## @version 2
 ## @return Lottie composition dict from lottie().
 ## @req REQ-LOTTIE-002
 def gen_day_ice():
@@ -1422,7 +1468,7 @@ def gen_day_ice():
         (82, 3, 5, 55, -148, 84, 302, 85),
     ]
     for i, (x, w, h, opac, st, ys, ye, fdur) in enumerate(pellet_specs):
-        drops.append(
+        drops.extend(
             rain_drop_layer(
                 f"pellet-{i+1}",
                 x,
@@ -1647,7 +1693,8 @@ def gen_night_overcast():
 
 
 ## @brief Generate night drizzle: night cloud with five sparse drops, plus two stars and a moon.
-## @version 1
+## v2: particles fall continuously (rain_drop_layer/snowflake_layer cycle copies).
+## @version 2
 ## @return Lottie composition dict from lottie().
 ## @req REQ-LOTTIE-002
 def gen_night_drizzle():
@@ -1674,7 +1721,7 @@ def gen_night_drizzle():
         (125, 1.5, 13, 36, -175, 128, 290, 125),
     ]
     for i, (x, w, h, opac, st, ys, ye, fdur) in enumerate(drop_specs):
-        drops.append(
+        drops.extend(
             rain_drop_layer(
                 f"drop-{i+1}",
                 x,
@@ -1693,7 +1740,8 @@ def gen_night_drizzle():
 
 
 ## @brief Generate night thunderstorm: lightning-illuminated dark cloud, four timed bolts and 12 night-blue drops.
-## @version 1
+## v2: particles fall continuously (rain_drop_layer/snowflake_layer cycle copies).
+## @version 2
 ## @return Lottie composition dict from lottie().
 ## @req REQ-LOTTIE-002
 def gen_night_thunderstorm():
@@ -1764,7 +1812,7 @@ def gen_night_thunderstorm():
         (148, 2, 22, 52, -288, 70, 310, 135),
     ]
     for i, (x, w, h, opac, st, ys, ye, fdur) in enumerate(drop_specs):
-        drops.append(
+        drops.extend(
             rain_drop_layer(
                 f"drop-{i+1}",
                 x,
@@ -1791,7 +1839,8 @@ def gen_night_thunderstorm():
 
 ## @brief Generate night snow: breathing cloud with 12 drifting snowflakes and three stars.
 ## v2: moonlit night cloud ramp instead of hard-coded near-card-colour darks (invisible on device).
-## @version 2
+## v3: particles fall continuously (rain_drop_layer/snowflake_layer cycle copies).
+## @version 3
 ## @return Lottie composition dict from lottie().
 ## @req REQ-LOTTIE-002
 def gen_night_snow():
@@ -1824,7 +1873,7 @@ def gen_night_snow():
         (78, -11, 7, 52, -438, 275),
     ]
     for i, (x, drift, sz, opac, st, fdur) in enumerate(flake_specs):
-        flakes.append(
+        flakes.extend(
             snowflake_layer(
                 f"flake-{i+1}",
                 x,
@@ -1844,7 +1893,8 @@ def gen_night_snow():
 
 ## @brief Generate night ice: dark cloud with 10 fast ice pellets.
 ## v2: moonlit night cloud ramp instead of hard-coded near-card-colour darks (invisible on device).
-## @version 2
+## v3: particles fall continuously (rain_drop_layer/snowflake_layer cycle copies).
+## @version 3
 ## @return Lottie composition dict from lottie().
 ## @req REQ-LOTTIE-002
 def gen_night_ice():
@@ -1874,7 +1924,7 @@ def gen_night_ice():
         (205, 3, 6, 50, -128, 76, 312, 68),
     ]
     for i, (x, w, h, opac, st, ys, ye, fdur) in enumerate(pellet_specs):
-        drops.append(
+        drops.extend(
             rain_drop_layer(
                 f"pellet-{i+1}",
                 x,
