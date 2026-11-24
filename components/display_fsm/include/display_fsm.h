@@ -75,15 +75,6 @@ struct clock_widget_t *display_fsm_get_clock(void);
 lv_color_t display_fsm_min_clock_color(const lv_image_dsc_t *behind);
 
 /**
- * @brief The colour text on a translucent @p panel actually sits on: its bg colour at its bg
- *        opacity over the background picture under it. Caller holds the LVGL lock.
- * @version 1
- * @req REQ-BG-002
- * @return The composite backdrop colour.
- */
-lv_color_t display_fsm_panel_backdrop(lv_obj_t *panel);
-
-/**
  * @brief Show or hide the clock background image, for screens whose own content covers the
  *        whole display (LVGL draws covered objects too). Caller holds the LVGL lock.
  * @version 1

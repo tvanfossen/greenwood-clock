@@ -1,6 +1,7 @@
 /**
  * @file state_settings.cpp
- * @version 1
+ * v2: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 2
  * @brief Settings state: on-device settings sub-screens (Wi-Fi, brightness, background, colour, animation, about) on an internal navigation stack.
  */
 // Settings state — manages settings sub-screens with an internal navigation
@@ -29,7 +30,7 @@ extern "C" {
 #include "settings.h"
 #include "sdcard.h"
 #include "display_fsm.h"    // display_fsm_refresh_background, display_fsm_refresh_theme
-#include "ui_theme.h"
+#include "ui_theme_bind.h"
 #include "theme_store.h"
 #include "bsp/display.h"    // bsp_display_brightness_set
 #include "clock_anim_pref.h"  // clock_anim_pref_get/set
@@ -187,7 +188,8 @@ static void back_btn_cb(lv_event_t *e)
  * All sub-screens share the same visual style: dark bg, rounded corners, centered.
  * v2: shared with the schedule editor (settings_ui.h).
  * v3: colours from the theme roles (ui_theme), no literals.
- * @version 3
+ * v4: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 4
  * @req REQ-UI-001
  * @return The new sub-screen container.
  */
@@ -197,10 +199,10 @@ lv_obj_t *make_sub_container(lv_obj_t *parent, const char *title)
     // Below the topbar clock (y 54..110), which the panel used to cover the Back button with.
     lv_obj_set_size(cont, 800, 480);
     lv_obj_align(cont, LV_ALIGN_TOP_MID, -80, 114);
-    lv_obj_set_style_bg_color(cont, ui_theme_color(UI_ROLE_SURFACE_RAISED), 0);
+    ui_bind_fill(cont, UI_SLOT_DIALOG);
     lv_obj_set_style_bg_opa(cont, LV_OPA_90, 0);
     lv_obj_set_style_border_width(cont, 1, 0);
-    lv_obj_set_style_border_color(cont, ui_theme_color(UI_ROLE_BORDER), 0);
+    ui_bind_border(cont, UI_ROLE_BORDER);
     lv_obj_set_style_radius(cont, 16, 0);
     lv_obj_set_style_pad_all(cont, 20, 0);
     lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
@@ -209,7 +211,7 @@ lv_obj_t *make_sub_container(lv_obj_t *parent, const char *title)
     lv_obj_t *lbl = lv_label_create(cont);
     lv_label_set_text(lbl, title);
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_color(lbl, ui_theme_color(UI_ROLE_TEXT), 0);
+    ui_bind_text(lbl, UI_ROLE_TEXT);
     lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 0);
 
     // Back button
@@ -538,7 +540,8 @@ static void wifi_connect_btn_cb(lv_event_t *e)
 /**
  * @brief Build the WiFi sub-screen: status label, scan button, network list, hidden password entry, connect button and keyboard.
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 3
  * @req REQ-UI-001
  * @req REQ-NET-002
  * @return The sub-screen container.
@@ -559,7 +562,7 @@ static lv_obj_t *create_sub_wifi(lv_obj_t *parent)
     } else {
         lv_label_set_text(s_wifi_status_label, "Not connected");
     }
-    lv_obj_set_style_text_color(s_wifi_status_label, ui_theme_color(UI_ROLE_TEXT), 0);
+    ui_bind_text(s_wifi_status_label, UI_ROLE_TEXT);
     lv_obj_align(s_wifi_status_label, LV_ALIGN_TOP_MID, 0, 50);
 
     // Scan button
@@ -645,7 +648,8 @@ static void brightness_slider_cb(lv_event_t *e)
 /**
  * @brief Build the brightness sub-screen with a 10-100% slider initialised from saved settings.
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 3
  * @req REQ-UI-001
  * @return The sub-screen container.
  */
@@ -663,7 +667,7 @@ static lv_obj_t *create_sub_brightness(lv_obj_t *parent)
     char buf[32];
     snprintf(buf, sizeof(buf), "Brightness: %d%%", current);
     lv_label_set_text(lbl, buf);
-    lv_obj_set_style_text_color(lbl, ui_theme_color(UI_ROLE_TEXT), 0);
+    ui_bind_text(lbl, UI_ROLE_TEXT);
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_24, 0);
     lv_obj_align(lbl, LV_ALIGN_CENTER, 0, -60);
 
@@ -678,7 +682,7 @@ static lv_obj_t *create_sub_brightness(lv_obj_t *parent)
     // Instruction text
     lv_obj_t *instr = lv_label_create(cont);
     lv_label_set_text(instr, "Slide to adjust screen brightness");
-    lv_obj_set_style_text_color(instr, ui_theme_color(UI_ROLE_TEXT_FAINT), 0);
+    ui_bind_text(instr, UI_ROLE_TEXT_FAINT);
     lv_obj_align(instr, LV_ALIGN_CENTER, 0, 60);
 
     return cont;
@@ -995,7 +999,8 @@ static void anim_spawn_load_task(lv_obj_t *widget, const char *path)
 /**
  * @brief Build the animation preview sub-screen: a Lottie preview if enabled and heap allows, otherwise an error label.
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 3
  * @utility
  * @return The sub-screen container.
  */
@@ -1012,7 +1017,7 @@ static lv_obj_t *create_sub_animation(lv_obj_t *parent)
     if (free_heap < 500000) {
         lv_obj_t *lbl = lv_label_create(cont);
         lv_label_set_text(lbl, "ERROR: Insufficient memory\nRequires 500 KB free heap");
-        lv_obj_set_style_text_color(lbl, ui_theme_color(UI_ROLE_ERROR), 0);
+        ui_bind_text(lbl, UI_ROLE_ERROR);
         lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
         return cont;
@@ -1024,14 +1029,14 @@ static lv_obj_t *create_sub_animation(lv_obj_t *parent)
     } else {
         lv_obj_t *lbl = lv_label_create(cont);
         lv_label_set_text(lbl, "Animation unavailable\n(insufficient PSRAM for render task)");
-        lv_obj_set_style_text_color(lbl, ui_theme_color(UI_ROLE_ERROR), 0);
+        ui_bind_text(lbl, UI_ROLE_ERROR);
         lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
     }
 #else
     lv_obj_t *lbl = lv_label_create(cont);
     lv_label_set_text(lbl, "Lottie not enabled\nCONFIG_LV_USE_LOTTIE is not set");
-    lv_obj_set_style_text_color(lbl, ui_theme_color(UI_ROLE_WARN), 0);
+    ui_bind_text(lbl, UI_ROLE_WARN);
     lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
 #endif
@@ -1046,7 +1051,8 @@ static lv_obj_t *create_sub_animation(lv_obj_t *parent)
 /**
  * @brief Build the About sub-screen showing version, platform, MAC, IP and heap statistics.
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 3
  * @req REQ-UI-001
  * @req REQ-OTA-003
  * @return The sub-screen container.
@@ -1085,7 +1091,7 @@ static lv_obj_t *create_sub_about(lv_obj_t *parent)
 
     lv_obj_t *lbl = lv_label_create(cont);
     lv_label_set_text(lbl, info);
-    lv_obj_set_style_text_color(lbl, ui_theme_color(UI_ROLE_TEXT), 0);
+    ui_bind_text(lbl, UI_ROLE_TEXT);
     lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 20);
 

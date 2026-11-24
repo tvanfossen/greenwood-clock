@@ -14,7 +14,7 @@
 
 #include "display_widgets.h"
 #include "image_decode.h"
-#include "ui_theme.h"
+#include "ui_theme_bind.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include <string.h>
@@ -106,7 +106,8 @@ static bool file_exists(const char *lvgl_path)
 /**
  * @brief Create the full-screen (1024x600) opaque SCREEN-role container that holds the rotating image.
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 3
  * @utility
  * @return The new container.
  */
@@ -115,7 +116,7 @@ static lv_obj_t *make_container(lv_obj_t *parent)
     lv_obj_t *c = lv_obj_create(parent);
     lv_obj_set_size(c, 1024, 600);
     lv_obj_align(c, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(c, ui_theme_color(UI_ROLE_SCREEN), 0);
+    ui_bind_fill_role(c, UI_ROLE_SCREEN);
     lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(c, 0, 0);
     lv_obj_set_style_pad_all(c, 0, 0);

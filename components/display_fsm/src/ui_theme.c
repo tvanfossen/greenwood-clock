@@ -1,6 +1,7 @@
 /**
  * @file ui_theme.c
- * @version 1
+ * v2: slots (which role fills each themed place).
+ * @version 2
  * @brief The UI colour theme: three OKLCH cores derived into named roles. The only file
  *        that writes colour values down (see ui_theme.h).
  *
@@ -24,12 +25,26 @@
 // The base theme and the derivation constants
 // ---------------------------------------------------------------------------
 
+#define UI_SLOTS_DEFAULT {                                   \
+    [UI_SLOT_CARD]           = UI_ROLE_SURFACE,               \
+    [UI_SLOT_STRIP]          = UI_ROLE_SURFACE_RAISED,        \
+    [UI_SLOT_CHIP]           = UI_ROLE_SURFACE,               \
+    [UI_SLOT_DIALOG]         = UI_ROLE_SURFACE_RAISED,        \
+    [UI_SLOT_CONTROL]        = UI_ROLE_SURFACE_INSET,         \
+    [UI_SLOT_ALERT_EXTREME]  = UI_ROLE_ERROR_STRONG,          \
+    [UI_SLOT_ALERT_SEVERE]   = UI_ROLE_ERROR,                 \
+    [UI_SLOT_ALERT_MODERATE] = UI_ROLE_WARN,                  \
+    [UI_SLOT_ALERT_MINOR]    = UI_ROLE_BORDER,                \
+    [UI_SLOT_MARKER]         = UI_ROLE_ERROR,                 \
+}
+
 const ui_theme_t UI_THEME_BASE = {
     .name     = "Greenwood",
     .ink      = { 1.000f, 0.000f, 0.0f },      // white
     .surface  = { 0.158f, 0.042f, 280.6f },    // navy panel
     .accent   = { 0.834f, 0.117f, 87.4f },     // gold
     .contrast = 7.0f,
+    .slots    = UI_SLOTS_DEFAULT,
 };
 
 #define STEP_RAISED   0.07f   // surface -> raised, toward mid lightness
@@ -84,6 +99,19 @@ static const char *const ROLE_NAMES[UI_ROLE_COUNT] = {
     [UI_ROLE_ERROR_STRONG]   = "error_strong",
     [UI_ROLE_WARN]           = "warn",
     [UI_ROLE_LIGHT]          = "light",
+};
+
+static const char *const SLOT_NAMES[UI_SLOT_COUNT] = {
+    [UI_SLOT_CARD]           = "card",
+    [UI_SLOT_STRIP]          = "strip",
+    [UI_SLOT_CHIP]           = "chip",
+    [UI_SLOT_DIALOG]         = "dialog",
+    [UI_SLOT_CONTROL]        = "control",
+    [UI_SLOT_ALERT_EXTREME]  = "alert_extreme",
+    [UI_SLOT_ALERT_SEVERE]   = "alert_severe",
+    [UI_SLOT_ALERT_MODERATE] = "alert_moderate",
+    [UI_SLOT_ALERT_MINOR]    = "alert_minor",
+    [UI_SLOT_MARKER]         = "marker",
 };
 
 static ui_theme_t s_theme;                    // valid once s_installed
@@ -389,6 +417,50 @@ lv_color_t ui_theme_shadow_for(lv_color_t fg)
     lv_color_t dark = ui_theme_tone(SHADOW_DARK_L);
     lv_color_t light = ui_theme_color(UI_ROLE_LIGHT);
     return ui_contrast_ratio(dark, fg) >= ui_contrast_ratio(light, fg) ? dark : light;
+}
+
+/**
+ * @brief The fill role of @p slot under the current theme.
+ * @version 1
+ * @req REQ-UI-003
+ * @return The role; SURFACE for an out-of-range slot.
+ */
+ui_role_t ui_theme_slot_role(ui_slot_t slot)
+{
+    ui_role_t r = UI_ROLE_SURFACE;
+    if ((unsigned)slot < UI_SLOT_COUNT && current()->slots[slot] < UI_ROLE_COUNT) {
+        r = (ui_role_t)current()->slots[slot];
+    }
+    return r;
+}
+
+/**
+ * @brief The JSON name of @p slot.
+ * @version 1
+ * @req REQ-UI-003
+ * @return The name; "" for an out-of-range slot.
+ */
+const char *ui_theme_slot_name(ui_slot_t slot)
+{
+    return (unsigned)slot < UI_SLOT_COUNT ? SLOT_NAMES[slot] : "";
+}
+
+/**
+ * @brief The slot named @p name.
+ * @version 1
+ * @req REQ-UI-003
+ * @return Whether the name is a slot.
+ */
+bool ui_theme_slot_by_name(const char *name, ui_slot_t *out)
+{
+    bool found = false;
+    for (int i = 0; name && !found && i < UI_SLOT_COUNT; i++) {
+        if (strcmp(name, SLOT_NAMES[i]) == 0) {
+            *out = (ui_slot_t)i;
+            found = true;
+        }
+    }
+    return found;
 }
 
 /**

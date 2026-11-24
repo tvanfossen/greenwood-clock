@@ -1,6 +1,7 @@
 /**
  * @file ui_theme.h
- * @version 1
+ * v2: slots — the themed places (cards, strips, alerts, ...) and which fill role each takes.
+ * @version 2
  * @brief The UI colour theme: three OKLCH core colours (ink, surface, accent) and a
  *        contrast target, mapped to the named roles every widget draws with.
  *
@@ -26,15 +27,6 @@ extern "C" {
 
 #define UI_THEME_NAME_LEN 24
 
-/** A theme as written in its JSON file: three core colours and a contrast target. */
-typedef struct {
-    char       name[UI_THEME_NAME_LEN];   /**< Shown in the theme picker. */
-    ui_oklch_t ink;        /**< Text hue (and lightness, where it is legible as is). */
-    ui_oklch_t surface;    /**< Panel hue and lightness; its polarity orders the tints. */
-    ui_oklch_t accent;     /**< Highlights, focus, progress, the decorative palettes. */
-    float      contrast;   /**< WCAG ratio primary text reaches (e.g. 7.0). */
-} ui_theme_t;
-
 /** What a colour is for. Text roles end in _TEXT or begin with TEXT. */
 typedef enum {
     UI_ROLE_SCREEN = 0,        /**< The screen behind everything (letterboxing, gaps). */
@@ -53,6 +45,33 @@ typedef enum {
     UI_ROLE_LIGHT,             /**< The theme's near-white (snow, markers). */
     UI_ROLE_COUNT
 } ui_role_t;
+
+/** The themed places a fill role is chosen for. A theme file may move any slot to any role
+ *  ("slots": {"alert_minor": "accent"}); the defaults are the original look. */
+typedef enum {
+    UI_SLOT_CARD = 0,          /**< Weather card, astronomy / ambient panels. */
+    UI_SLOT_STRIP,             /**< Forecast strip. */
+    UI_SLOT_CHIP,              /**< Radar time chip, photo notice. */
+    UI_SLOT_DIALOG,            /**< Settings panels and modal dialogs. */
+    UI_SLOT_CONTROL,           /**< Grid buttons, progress tracks. */
+    UI_SLOT_ALERT_EXTREME,     /**< Alert banner, Extreme severity. */
+    UI_SLOT_ALERT_SEVERE,      /**< Alert banner, Severe (and unknown) severity. */
+    UI_SLOT_ALERT_MODERATE,    /**< Alert banner, Moderate severity. */
+    UI_SLOT_ALERT_MINOR,       /**< Alert banner, Minor severity. */
+    UI_SLOT_MARKER,            /**< Radar home marker. */
+    UI_SLOT_COUNT
+} ui_slot_t;
+
+/** A theme as written in its JSON file: three core colours and a contrast target. */
+typedef struct {
+    char       name[UI_THEME_NAME_LEN];   /**< Shown in the theme picker. */
+    ui_oklch_t ink;        /**< Text hue (and lightness, where it is legible as is). */
+    ui_oklch_t surface;    /**< Panel hue and lightness; its polarity orders the tints. */
+    ui_oklch_t accent;     /**< Highlights, focus, progress, the decorative palettes. */
+    float      contrast;   /**< WCAG ratio primary text reaches (e.g. 7.0). */
+    uint8_t    slots[UI_SLOT_COUNT];   /**< ui_role_t filling each slot. */
+} ui_theme_t;
+
 
 /** Number of leaf colours in the theme's autumn palette (ui_theme_leaf). */
 #define UI_THEME_LEAF_COUNT 5
@@ -173,9 +192,34 @@ bool ui_theme_role_by_name(const char *name, ui_role_t *out);
 const char *ui_theme_role_name(ui_role_t role);
 
 /**
+ * @brief The fill role of @p slot under the current theme.
+ * @version 1
+ * @req REQ-UI-003
+ * @return The role; SURFACE for an out-of-range slot.
+ */
+ui_role_t ui_theme_slot_role(ui_slot_t slot);
+
+/**
+ * @brief The JSON name of @p slot ("alert_severe").
+ * @version 1
+ * @req REQ-UI-003
+ * @return The name; "" for an out-of-range slot.
+ */
+const char *ui_theme_slot_name(ui_slot_t slot);
+
+/**
+ * @brief The slot named @p name.
+ * @version 1
+ * @req REQ-UI-003
+ * @return Whether the name is a slot (@p out set when it is).
+ */
+bool ui_theme_slot_by_name(const char *name, ui_slot_t *out);
+
+/**
  * @brief Parse a theme file:
  *        {"name": "...", "ink": [L, C, h], "surface": [L, C, h], "accent": [L, C, h],
- *         "contrast": 7.0}. "contrast" is optional (7.0).
+ *         "contrast": 7.0, "slots": {"alert_minor": "accent"}}. "contrast" (7.0) and
+ *        "slots" (the defaults) are optional; an unknown slot or role refuses the file.
  * @version 1
  * @req REQ-UI-003
  * @return Whether @p json is a complete, in-range theme (@p out set only when it is).

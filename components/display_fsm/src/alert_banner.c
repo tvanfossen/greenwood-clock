@@ -8,7 +8,7 @@
  */
 
 #include "display_widgets.h"
-#include "ui_theme.h"
+#include "ui_theme_bind.h"
 #include "nws.h"
 #include "esp_log.h"
 #include <string.h>
@@ -34,28 +34,30 @@ struct alert_banner_t {
 };
 
 /**
- * @brief Map an NWS severity string to the banner's theme role.
+ * @brief Map an NWS severity string to the banner's theme slot (whose role a theme can move).
+ * v3: slots (the theme's settings choose each severity's role); was fixed roles.
  * v2: theme roles (were fixed hex colours).
- * @version 2
+ * @version 3
  * @req REQ-ALERT-001
  * @req REQ-UI-003
- * @return ERROR_STRONG (Extreme), ERROR (Severe, and anything unknown), WARN (Moderate),
- *         BORDER (Minor).
+ * @return ALERT_EXTREME / ALERT_MODERATE / ALERT_MINOR, ALERT_SEVERE for Severe and anything
+ *         unknown.
  */
-static ui_role_t severity_role(const char *severity)
+static ui_slot_t severity_slot(const char *severity)
 {
-    ui_role_t role = UI_ROLE_ERROR;
-    if (strcmp(severity, "Extreme") == 0) role = UI_ROLE_ERROR_STRONG;
-    else if (strcmp(severity, "Moderate") == 0) role = UI_ROLE_WARN;
-    else if (strcmp(severity, "Minor") == 0) role = UI_ROLE_BORDER;
-    return role;
+    ui_slot_t slot = UI_SLOT_ALERT_SEVERE;
+    if (strcmp(severity, "Extreme") == 0) slot = UI_SLOT_ALERT_EXTREME;
+    else if (strcmp(severity, "Moderate") == 0) slot = UI_SLOT_ALERT_MODERATE;
+    else if (strcmp(severity, "Minor") == 0) slot = UI_SLOT_ALERT_MINOR;
+    return slot;
 }
 
 /**
  * @brief Create a hidden full-width banner (1024 x ALERT_BANNER_HEIGHT) at the top
  *        of @p parent with a circular-scrolling headline label.
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: fill and text bound to the theme.
+ * @version 3
  * @req REQ-ALERT-001
  * @return The new banner, or NULL if allocation failed.
  */
@@ -69,11 +71,10 @@ alert_banner_t *alert_banner_create(lv_obj_t *parent)
     memset(b, 0, sizeof(*b));
 
     // Full-width banner at top of screen
-    lv_color_t default_bg = ui_theme_color(UI_ROLE_ERROR);
     b->container = lv_obj_create(parent);
     lv_obj_set_size(b->container, 1024, BANNER_HEIGHT);
     lv_obj_align(b->container, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(b->container, default_bg, 0);
+    ui_bind_fill(b->container, UI_SLOT_ALERT_SEVERE);
     lv_obj_set_style_bg_opa(b->container, LV_OPA_90, 0);
     lv_obj_set_style_border_width(b->container, 0, 0);
     lv_obj_set_style_pad_all(b->container, 0, 0);
@@ -84,7 +85,7 @@ alert_banner_t *alert_banner_create(lv_obj_t *parent)
     // Scrolling headline label — colour chosen for contrast vs the banner bg.
     b->lbl_headline = lv_label_create(b->container);
     lv_obj_set_style_text_font(b->lbl_headline, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(b->lbl_headline, ui_theme_text_on(UI_ROLE_TEXT, default_bg), 0);
+    ui_bind_text(b->lbl_headline, UI_ROLE_TEXT);   // legible on the severity fill
     lv_label_set_long_mode(b->lbl_headline, LV_LABEL_LONG_SCROLL_CIRCULAR);
     // Plain-ms duration (recomputed per headline in alert_banner_show); see the
     // SCROLL_MS_PER_CHAR note above for why we avoid lv_anim_speed*().
@@ -119,7 +120,8 @@ void alert_banner_destroy(alert_banner_t *b)
  *        "event — headline" scrolling at ~240 ms/char (min 8 s per cycle).
  * v2: colours from the theme roles (ui_theme), no literals.
  * v3: ':' between event and headline (the em dash is not in the font: it drew a box).
- * @version 3
+ * v4: fill bound to the severity's slot, text re-judged on it.
+ * @version 4
  * @req REQ-ALERT-001
  */
 void alert_banner_show(alert_banner_t *b, const nws_alert_t *alert)
@@ -128,9 +130,8 @@ void alert_banner_show(alert_banner_t *b, const nws_alert_t *alert)
 
     // Set severity color + a contrast-matched headline colour (yellow/Moderate
     // needs black text; the dark severities need white).
-    lv_color_t bg = ui_theme_color(severity_role(alert->severity));
-    lv_obj_set_style_bg_color(b->container, bg, 0);
-    lv_obj_set_style_text_color(b->lbl_headline, ui_theme_text_on(UI_ROLE_TEXT, bg), 0);
+    ui_bind_fill(b->container, severity_slot(alert->severity));
+    ui_bind_text(b->lbl_headline, UI_ROLE_TEXT);   // re-judged against the new fill
 
     // Set headline text — circular scroll handles overflow
     char text[320];

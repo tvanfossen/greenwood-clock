@@ -18,6 +18,7 @@
 #include "ui_contrast.h"
 #include "ui_theme.h"
 #include "ui_theme_lvgl.h"
+#include "ui_theme_bind.h"
 #include "theme_store.h"
 #include "clock_animation.h"
 
@@ -500,25 +501,11 @@ static lv_color_t legible_over(lv_color_t user, const lv_image_dsc_t *img, const
 }
 
 /**
- * @brief The colour text on @p panel actually sits on: the panel's bg colour blended at its
- *        bg opacity over the mean of the background picture under it (the screen colour
- *        without a picture). Caller holds the LVGL lock.
- * v2: colours from the theme roles (ui_theme), no literals.
- * v3: delegates to ui_theme_panel_backdrop (shared with the host preview).
- * @version 3
- * @req REQ-BG-002
- * @return The composite backdrop colour.
- */
-extern "C" lv_color_t display_fsm_panel_backdrop(lv_obj_t *panel)
-{
-    return ui_theme_panel_backdrop(panel, s_bg_dsc);
-}
-
-/**
  * @brief Show or hide the clock background image (no-op without one). A screen whose own
  *        content covers the whole display hides it: LVGL still draws covered objects (on the
  *        radar screen, ~18% of every redraw). Caller holds the LVGL lock.
- * @version 1
+ * v2: theme bindings sample the picture only while it shows.
+ * @version 2
  * @req REQ-DISP-004
  */
 extern "C" void display_fsm_set_bg_visible(bool visible)
@@ -526,6 +513,7 @@ extern "C" void display_fsm_set_bg_visible(bool visible)
     if (!s_bg_img) return;
     if (visible) lv_obj_remove_flag(s_bg_img, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(s_bg_img, LV_OBJ_FLAG_HIDDEN);
+    ui_bind_set_picture(visible ? s_bg_dsc : NULL);   // text backdrops follow what shows
 }
 
 /**
@@ -587,7 +575,8 @@ static void apply_clock_user_color(void)
  * v4: swaps after decoding the new image (it deleted the old one first: ~1.3 s of black
  *     screen at every background change, seen on device with the schedule).
  * v5: themes replace the text colour (theme names, theme roles, theme events).
- * @version 5
+ * v6: bound text is re-judged against the new picture.
+ * @version 6
  */
 static void reload_background(const clock_settings_t *cfg)
 {
@@ -615,6 +604,7 @@ static void reload_background(const clock_settings_t *cfg)
             lv_anim_delete(old_img, NULL);
             lv_obj_delete(old_img);
         }
+        ui_bind_set_picture(s_bg_dsc);   // before the old one is freed: bound text re-judged
         lvgl_port_unlock();
         if (old_dsc) image_decode_free(old_dsc);   // its object is gone
     }
@@ -665,7 +655,8 @@ static char s_theme_stem[BG_THEME_LEN] = "";   // theme file last installed ("" 
  * @brief Install the effective theme (the profile's when it names one, else the global
  *        preference) unless it is already installed (always when @p force). Loads the file
  *        off the LVGL lock, falling back to the built-in theme. fsm_task only.
- * @version 1
+ * v2: repaints every theme binding.
+ * @version 2
  * @req REQ-UI-003
  * @req REQ-BG-004
  */
@@ -681,6 +672,7 @@ static void apply_theme(const bg_profile_t *p, bool force)
     lvgl_port_lock(0);
     ui_theme_set(ok ? &t : NULL);
     ui_theme_lvgl_refresh();
+    ui_bind_refresh_all();   // every bound fill, border and text, live
     lvgl_port_unlock();
     strlcpy(s_theme_stem, stem, sizeof(s_theme_stem));
     ESP_LOGI(TAG, "theme '%s' -> %s%s", stem, ui_theme_get()->name,
@@ -831,7 +823,8 @@ static void clock_tick_cb(TimerHandle_t timer)
  * @utility
  * v2: colours from the theme roles (ui_theme), no literals.
  * v3: no settings parameter (the clock takes the theme's colour).
- * @version 3
+ * v4: screen fill bound to SCREEN.
+ * @version 4
  * @return The active screen object.
  */
 static lv_obj_t *setup_screen_widgets(void)
@@ -844,7 +837,7 @@ static lv_obj_t *setup_screen_widgets(void)
 
     lv_obj_clean(scr);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(scr, ui_theme_color(UI_ROLE_SCREEN), LV_PART_MAIN);
+    ui_bind_fill_role(scr, UI_ROLE_SCREEN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
 
     // Persistent UI lives on lv_layer_top() so it always renders above the
@@ -997,7 +990,8 @@ static void fsm_run_event_loop(void)
  * v4: starts from the effective settings (active background schedule profile applied).
  * v5: hooks the debug frame recorder to the display.
  * v6: installs the effective theme (and lists the installed ones) before building widgets.
- * @version 6
+ * v7: bound text samples the background picture.
+ * @version 7
  */
 static void fsm_task(void *arg)
 {
@@ -1014,6 +1008,9 @@ static void fsm_task(void *arg)
 
     // Background + Lottie manage their own LVGL lock.
     load_background(scr, &cfg);
+    lvgl_port_lock(0);
+    ui_bind_set_picture(s_bg_dsc);   // what bound text sits on
+    lvgl_port_unlock();
     apply_clock_user_color();
     clock_animation_init(scr);   // user-selected clock animation (hummingbird / snowfall / none)
     s_bg_anim = clock_anim_pref_get();

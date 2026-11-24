@@ -50,28 +50,28 @@ static int get_tz_offset_minutes(time_t now)
 /**
  * @brief Build the moon section: phase name, illumination, days to full/new, and a brightness-scaled disc.
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: label roles bound (no colour parameters); border bound.
+ * @version 3
  * @req REQ-ASTRO-001
  */
-static void astro_build_moon(lv_obj_t *parent, const moon_phase_t *moon,
-                             lv_color_t primary, lv_color_t secondary)
+static void astro_build_moon(lv_obj_t *parent, const moon_phase_t *moon)
 {
     char buf[128];
-    lv_label_set_text(info_panel_label(parent, &nunito_48, primary, 0), moon->phase_name);
+    lv_label_set_text(info_panel_label(parent, &nunito_48, UI_ROLE_TEXT, 0), moon->phase_name);
 
     snprintf(buf, sizeof(buf), "%.0f%% illuminated", moon->illumination_pct);
-    lv_label_set_text(info_panel_label(parent, &lv_font_montserrat_24, secondary, 60), buf);
+    lv_label_set_text(info_panel_label(parent, &lv_font_montserrat_24, UI_ROLE_TEXT_MUTED, 60), buf);
 
     snprintf(buf, sizeof(buf), "Full in %d days  |  New in %d days",
              moon->days_to_full, moon->days_to_new);
-    lv_label_set_text(info_panel_label(parent, &lv_font_montserrat_20, secondary, 92), buf);
+    lv_label_set_text(info_panel_label(parent, &lv_font_montserrat_20, UI_ROLE_TEXT_MUTED, 92), buf);
 
     // Moon visual — simple circle with illumination fill
     lv_obj_t *moon_circle = lv_obj_create(parent);
     lv_obj_set_size(moon_circle, 120, 120);
     lv_obj_align(moon_circle, LV_ALIGN_TOP_LEFT, 0, 130);
     lv_obj_set_style_radius(moon_circle, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_color(moon_circle, ui_theme_color(UI_ROLE_BORDER), 0);
+    ui_bind_border(moon_circle, UI_ROLE_BORDER);
     lv_obj_set_style_border_width(moon_circle, 2, 0);
     // Lightness maps to illumination (a neutral of the theme's surface hue)
     lv_obj_set_style_bg_color(moon_circle, ui_theme_tone(moon->illumination_pct / 100.0f), 0);
@@ -144,7 +144,8 @@ static void astro_fmt_aurora(char *buf, size_t n, float kp, float aurora_prob)
  *     cognitive limit); output unchanged.
  * v3: clock uses the user's exact colour; no background sampling before minimizing.
  * v4: colours from the theme roles (ui_theme), no literals.
- * @version 4
+ * v5: label roles bound via info_panel_label.
+ * @version 5
  * @req REQ-ASTRO-001
  * @req REQ-DISP-001
  */
@@ -177,20 +178,19 @@ void Astronomy::entry()
     int ss_local = info_panel_wrap_day_minutes(sun.sunset_hour * 60 + sun.sunset_min + tz_offset_min);
 
     s_container = info_panel_create(s_screen);
-    info_panel_palette_t pal = info_panel_palette(s_container);
-    astro_build_moon(s_container, &moon, pal.text, pal.muted);
+    astro_build_moon(s_container, &moon);
 
     char buf[128];
     astro_fmt_sun(buf, sizeof(buf), sr_local, ss_local);
-    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_24, pal.accent, 270), buf);
+    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_24, UI_ROLE_ACCENT, 270), buf);
 
     int now_min = ti.tm_hour * 60 + ti.tm_min;
     astro_fmt_daylight(buf, sizeof(buf), now_min, sr_local, ss_local, sun.daylight_minutes);
-    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, pal.muted, 300), buf);
+    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, UI_ROLE_TEXT_MUTED, 300), buf);
 
     float kp = nws_get_kp_index();
     astro_fmt_aurora(buf, sizeof(buf), kp, astro_calc_aurora_probability(kp, cfg.latitude));
-    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, pal.accent_alt, 340), buf);
+    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, UI_ROLE_ACCENT_ALT, 340), buf);
 
     fade_in(s_container);
 

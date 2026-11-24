@@ -10,7 +10,7 @@
 #include "display_widgets.h"
 #include "radar_time_view.h"
 #include "image_decode.h"
-#include "ui_theme.h"
+#include "ui_theme_bind.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_cache.h"
@@ -271,7 +271,8 @@ void radar_view_preload_map(void)
  * v5: no progress bar (the clock's time roll shows the loop's direction).
  * v6: no centre coordinates in the log (the device location is private).
  * v7: colours from the theme roles (ui_theme), no literals.
- * @version 7
+ * v8: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 8
  * @req REQ-RADAR-001
  * @return The new view, or NULL if allocation failed.
  */
@@ -292,7 +293,7 @@ radar_view_t *radar_view_create(lv_obj_t *parent, float lat, float lon)
     lv_obj_align(rv->container, LV_ALIGN_TOP_LEFT, 0, 0);
     // Dark backing only without a basemap: the map covers the screen, and while the view
     // fades in a translucent full-screen fill is software-blended (~75 ms a frame, measured).
-    lv_obj_set_style_bg_color(rv->container, ui_theme_color(UI_ROLE_SURFACE), 0);
+    ui_bind_fill_role(rv->container, UI_ROLE_SURFACE);
     lv_obj_set_style_bg_opa(rv->container, s_map_dsc ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(rv->container, 0, 0);
     lv_obj_set_style_pad_all(rv->container, 0, 0);
@@ -326,10 +327,10 @@ radar_view_t *radar_view_create(lv_obj_t *parent, float lat, float lon)
     // Home marker — pulsing dot (theme ERROR, LIGHT ring) at lat/lon position
     rv->home_marker = lv_obj_create(rv->container);
     lv_obj_set_size(rv->home_marker, HOME_MARKER_SIZE, HOME_MARKER_SIZE);
-    lv_obj_set_style_bg_color(rv->home_marker, ui_theme_color(UI_ROLE_ERROR), 0);
+    ui_bind_fill(rv->home_marker, UI_SLOT_MARKER);
     lv_obj_set_style_bg_opa(rv->home_marker, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(rv->home_marker, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_color(rv->home_marker, ui_theme_color(UI_ROLE_LIGHT), 0);
+    ui_bind_border(rv->home_marker, UI_ROLE_LIGHT);
     lv_obj_set_style_border_width(rv->home_marker, 2, 0);
     lv_obj_clear_flag(rv->home_marker, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 

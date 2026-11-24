@@ -730,6 +730,7 @@ THEME_PREVIEW_SRCS = (
     "components/display_fsm/src/ui_theme.c",
     "components/display_fsm/src/ui_theme_json.c",
     "components/display_fsm/src/ui_theme_lvgl.c",
+    "components/display_fsm/src/ui_theme_bind.c",
     "components/display_fsm/src/ui_contrast.c",
     "components/display_fsm/src/weather_widgets.c",
     "components/display_fsm/src/alert_banner.c",

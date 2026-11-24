@@ -24,7 +24,7 @@
 
 #include "display_widgets.h"
 #include "cJSON.h"
-#include "ui_theme.h"
+#include "ui_theme_bind.h"
 #include "esp_log.h"
 #include <string.h>
 #include <stdlib.h>
@@ -86,7 +86,8 @@ static const lv_font_t *parse_font(const char *name)
  *        text, legible against the layout background) and x/y (or y-only top-centred, else
  *        centred).
  * v2: colour is a theme role.
- * @version 2
+ * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 3
  * @req REQ-DISP-005
  * @return New label, or NULL if "text" is missing.
  */
@@ -109,8 +110,7 @@ static lv_obj_t *create_label_child(lv_obj_t *parent, const cJSON *child)
         lv_obj_set_style_text_font(lbl, &nunito_48, 0);
     }
 
-    lv_color_t backdrop = lv_obj_get_style_bg_color(parent, LV_PART_MAIN);
-    lv_obj_set_style_text_color(lbl, ui_theme_text_on(parse_role(color, UI_ROLE_TEXT), backdrop), 0);
+    ui_bind_text(lbl, parse_role(color, UI_ROLE_TEXT));   // legible against the layout bg
 
     if (x && cJSON_IsNumber(x) && y && cJSON_IsNumber(y)) {
         lv_obj_set_pos(lbl, x->valueint, y->valueint);
@@ -159,7 +159,8 @@ static lv_obj_t *create_image_child(lv_obj_t *parent, const cJSON *child)
  * @brief Create the 1024x600 layout container and set its background from the "bg_color" role
  *        (default surface_raised).
  * v2: colour is a theme role.
- * @version 2
+ * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 3
  * @req REQ-DISP-005
  */
 static void setup_container(json_layout_t *jl, lv_obj_t *parent, const cJSON *root)
@@ -173,8 +174,8 @@ static void setup_container(json_layout_t *jl, lv_obj_t *parent, const cJSON *ro
     lv_obj_clear_flag(jl->container, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
     ui_role_t bg = parse_role(cJSON_GetObjectItem(root, "bg_color"), UI_ROLE_SURFACE_RAISED);
-    lv_obj_set_style_bg_color(jl->container, ui_theme_color(bg), 0);
     lv_obj_set_style_bg_opa(jl->container, LV_OPA_COVER, 0);
+    ui_bind_fill_role(jl->container, bg);
 }
 
 // Append an object to the child list if there's room.

@@ -2,7 +2,8 @@
  * @file weather_widgets.c
  * v2: forecast icons resolved off-lock into a cache (forecast_icons_rescan).
  * v3: panel text colours judged against the panel's composite backdrop; Lottie top right.
- * @version 3
+ * v4: colours are theme bindings (ui_theme_bind); the set_color / set_contrast calls are gone.
+ * @version 4
  * @brief Layer 1: WeatherCard + ForecastStrip widgets.
  *
  * Caller must hold LVGL lock for all functions, EXCEPT forecast_icons_rescan() (SD I/O: off-lock).
@@ -10,7 +11,7 @@
 
 #include "display_widgets.h"
 #include "display_fsm.h"
-#include "ui_theme.h"
+#include "ui_theme_bind.h"
 #include "image_decode.h"
 #include "nws.h"
 #include "esp_lvgl_port.h"
@@ -22,22 +23,6 @@
 #include <sys/stat.h>
 
 static const char *TAG = "weather_widgets";
-
-/**
- * @brief The primary and muted text colours for labels on @p panel, made legible against
- *        what is really behind them (the panel's fill over the picture under it).
- * v3: theme roles (TEXT / TEXT_MUTED) instead of a base colour and a mix.
- * v2: judged against the composite backdrop, not the panel fill as if opaque (the 70%
- * panel over a bright picture is far lighter); secondary no longer dims below AA.
- * @version 3
- * @utility
- */
-static void derive_panel_colors(lv_obj_t *panel, lv_color_t *primary, lv_color_t *secondary)
-{
-    lv_color_t backdrop = display_fsm_panel_backdrop(panel);
-    *primary   = ui_theme_text_on(UI_ROLE_TEXT, backdrop);
-    *secondary = ui_theme_text_on(UI_ROLE_TEXT_MUTED, backdrop);
-}
 
 LV_FONT_DECLARE(nunito_48);
 LV_FONT_DECLARE(nunito_128);
@@ -254,7 +239,8 @@ static float kmh_to_mph(float k) { return k * 0.621371f; }
  * @brief Create the current-conditions card (temp, unit, description, feels-like, wind,
  *        humidity labels) on a dark rounded panel at the top-left of @p parent.
  * v3: colours from the theme roles (ui_theme), no literals.
- * @version 3
+ * v4: colours bound to theme roles (ui_bind_*): repainted live on a theme change.
+ * @version 4
  * @return New card, or NULL on allocation failure (logged).
  * @req REQ-WX-002
  */
@@ -274,7 +260,7 @@ weather_card_t *weather_card_create(lv_obj_t *parent)
     w->container = lv_obj_create(parent);
     lv_obj_set_size(w->container, 556, 350);
     lv_obj_align(w->container, LV_ALIGN_TOP_LEFT, 16, ALERT_BANNER_HEIGHT + 16);
-    lv_obj_set_style_bg_color(w->container, ui_theme_color(UI_ROLE_SURFACE), 0);
+    ui_bind_fill(w->container, UI_SLOT_CARD);
     lv_obj_set_style_bg_opa(w->container, LV_OPA_70, 0);
     lv_obj_set_style_radius(w->container, 12, 0);
     lv_obj_set_style_border_width(w->container, 0, 0);
@@ -284,42 +270,42 @@ weather_card_t *weather_card_create(lv_obj_t *parent)
     // Temperature — large number at 128pt, unit suffix in smaller font
     w->lbl_temp = lv_label_create(w->container);
     lv_obj_set_style_text_font(w->lbl_temp, &nunito_128, 0);
-    lv_obj_set_style_text_color(w->lbl_temp, ui_theme_color(UI_ROLE_TEXT), 0);
+    ui_bind_text(w->lbl_temp, UI_ROLE_TEXT);
     lv_obj_align(w->lbl_temp, LV_ALIGN_TOP_LEFT, 0, 20);
     lv_label_set_text(w->lbl_temp, "--");
 
     // "°F" suffix — Nunito fonts are ASCII-only (no ° glyph), use Montserrat
     w->lbl_temp_unit = lv_label_create(w->container);
     lv_obj_set_style_text_font(w->lbl_temp_unit, &nunito_48, 0);
-    lv_obj_set_style_text_color(w->lbl_temp_unit, ui_theme_color(UI_ROLE_TEXT_MUTED), 0);
+    ui_bind_text(w->lbl_temp_unit, UI_ROLE_TEXT_MUTED);
     lv_obj_align_to(w->lbl_temp_unit, w->lbl_temp, LV_ALIGN_OUT_RIGHT_TOP, 4, 8);
     lv_label_set_text(w->lbl_temp_unit, "F");
 
     // Description
     w->lbl_description = lv_label_create(w->container);
     lv_obj_set_style_text_font(w->lbl_description, &nunito_48, 0);
-    lv_obj_set_style_text_color(w->lbl_description, ui_theme_color(UI_ROLE_TEXT), 0);
+    ui_bind_text(w->lbl_description, UI_ROLE_TEXT);
     lv_obj_align_to(w->lbl_description, w->lbl_temp, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
     lv_label_set_text(w->lbl_description, "");
 
     // Feels like
     w->lbl_feels = lv_label_create(w->container);
     lv_obj_set_style_text_font(w->lbl_feels, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(w->lbl_feels, ui_theme_color(UI_ROLE_TEXT_MUTED), 0);
+    ui_bind_text(w->lbl_feels, UI_ROLE_TEXT_MUTED);
     lv_obj_align_to(w->lbl_feels, w->lbl_description, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 8);
     lv_label_set_text(w->lbl_feels, "");
 
     // Wind
     w->lbl_wind = lv_label_create(w->container);
     lv_obj_set_style_text_font(w->lbl_wind, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(w->lbl_wind, ui_theme_color(UI_ROLE_TEXT_MUTED), 0);
+    ui_bind_text(w->lbl_wind, UI_ROLE_TEXT_MUTED);
     lv_obj_align_to(w->lbl_wind, w->lbl_feels, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
     lv_label_set_text(w->lbl_wind, "");
 
     // Humidity
     w->lbl_humidity = lv_label_create(w->container);
     lv_obj_set_style_text_font(w->lbl_humidity, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(w->lbl_humidity, ui_theme_color(UI_ROLE_TEXT_MUTED), 0);
+    ui_bind_text(w->lbl_humidity, UI_ROLE_TEXT_MUTED);
     lv_obj_align_to(w->lbl_humidity, w->lbl_wind, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
     lv_label_set_text(w->lbl_humidity, "");
 
@@ -358,46 +344,6 @@ void weather_card_destroy(weather_card_t *w)
 lv_obj_t *weather_card_container(const weather_card_t *w)
 {
     return w ? w->container : NULL;
-}
-
-/**
- * @brief Apply @p primary to the temperature and @p secondary to the description,
- *        feels-like, wind and humidity labels. NULL-safe.
- * @version 1
- * @req REQ-WX-002
- */
-void weather_card_set_color(weather_card_t *w, lv_color_t primary, lv_color_t secondary)
-{
-    if (!w) return;
-    lv_obj_set_style_text_color(w->lbl_temp, primary, 0);
-    lv_obj_set_style_text_color(w->lbl_description, secondary, 0);
-    lv_obj_set_style_text_color(w->lbl_feels, secondary, 0);
-    lv_obj_set_style_text_color(w->lbl_wind, secondary, 0);
-    lv_obj_set_style_text_color(w->lbl_humidity, secondary, 0);
-}
-
-/**
- * @brief Colour the labels from the theme against the card's real backdrop: primary for
- *        temperature and description, muted for unit, feels-like, wind and humidity.
- *        NULL-safe.
- * v3: theme roles; no base colour parameter.
- * v2: judged against the panel's real backdrop (fill over the picture under it).
- * @version 3
- * @req REQ-WX-002
- * @req REQ-BG-002
- * @req REQ-UI-003
- */
-void weather_card_set_contrast(weather_card_t *w)
-{
-    if (!w) return;
-    lv_color_t primary, secondary;
-    derive_panel_colors(w->container, &primary, &secondary);
-    lv_obj_set_style_text_color(w->lbl_temp, primary, 0);
-    lv_obj_set_style_text_color(w->lbl_description, primary, 0);
-    lv_obj_set_style_text_color(w->lbl_temp_unit, secondary, 0);
-    lv_obj_set_style_text_color(w->lbl_feels, secondary, 0);
-    lv_obj_set_style_text_color(w->lbl_wind, secondary, 0);
-    lv_obj_set_style_text_color(w->lbl_humidity, secondary, 0);
 }
 
 /**
@@ -543,7 +489,8 @@ struct forecast_strip_t {
 /**
  * @brief Create one label in a forecast column.
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: text bound to the theme (ui_bind_text).
+ * @version 3
  * @utility
  * @return The label.
  */
@@ -552,7 +499,7 @@ static lv_obj_t *strip_label(lv_obj_t *col, const lv_font_t *font, lv_align_t al
 {
     lv_obj_t *lbl = lv_label_create(col);
     lv_obj_set_style_text_font(lbl, font, 0);
-    lv_obj_set_style_text_color(lbl, ui_theme_color(UI_ROLE_TEXT), 0);
+    ui_bind_text(lbl, UI_ROLE_TEXT);
     lv_obj_align(lbl, align, 0, y);
     lv_label_set_text(lbl, text);
     return lbl;
@@ -590,7 +537,8 @@ static void strip_create_column(forecast_strip_t *s, int i)
 /**
  * @brief Create the 7-day forecast strip along the bottom of @p parent.
  * v3: colours from the theme roles (ui_theme), no literals.
- * @version 3
+ * v4: fill bound to the strip slot (ui_bind_fill).
+ * @version 4
  * @req REQ-WX-006
  * @return New strip, or NULL on allocation failure (logged).
  */
@@ -606,7 +554,7 @@ forecast_strip_t *forecast_strip_create(lv_obj_t *parent)
     s->container = lv_obj_create(parent);
     lv_obj_set_size(s->container, 992, 160);
     lv_obj_align(s->container, LV_ALIGN_BOTTOM_MID, 0, -8);
-    lv_obj_set_style_bg_color(s->container, ui_theme_color(UI_ROLE_SURFACE_RAISED), 0);
+    ui_bind_fill(s->container, UI_SLOT_STRIP);
     lv_obj_set_style_bg_opa(s->container, LV_OPA_80, 0);
     lv_obj_set_style_border_width(s->container, 0, 0);
     lv_obj_set_style_pad_all(s->container, 4, 0);
@@ -646,43 +594,6 @@ void forecast_strip_destroy(forecast_strip_t *s)
 lv_obj_t *forecast_strip_container(const forecast_strip_t *s)
 {
     return s ? s->container : NULL;
-}
-
-/**
- * @brief Apply @p primary to every day's name and hi/lo labels and @p secondary to the
- *        condition text label. NULL-safe.
- * @version 1
- * @req REQ-WX-003
- */
-void forecast_strip_set_color(forecast_strip_t *s, lv_color_t primary, lv_color_t secondary)
-{
-    if (!s) return;
-    for (int i = 0; i < FORECAST_DAYS; i++) {
-        lv_obj_set_style_text_color(s->days[i].lbl_name, primary, 0);
-        lv_obj_set_style_text_color(s->days[i].lbl_condition, secondary, 0);
-        lv_obj_set_style_text_color(s->days[i].lbl_temps, primary, 0);
-    }
-}
-
-/**
- * @brief Colour every day-column label with the theme's primary text against the strip's
- *        real backdrop (no dimmed tier). NULL-safe.
- * v3: theme roles; no base colour parameter.
- * v2: judged against the strip's real backdrop (fill over the picture under it).
- * @version 3
- * @req REQ-WX-003
- * @req REQ-BG-002
- * @req REQ-UI-003
- */
-void forecast_strip_set_contrast(forecast_strip_t *s)
-{
-    if (!s) return;
-    lv_color_t primary, secondary;
-    derive_panel_colors(s->container, &primary, &secondary);
-    (void)secondary;
-    // Uniform: every day-column label (name, condition, hi/lo) gets the same
-    // legible primary colour — no dimmed tier — so the strip reads cleanly.
-    forecast_strip_set_color(s, primary, primary);
 }
 
 /**

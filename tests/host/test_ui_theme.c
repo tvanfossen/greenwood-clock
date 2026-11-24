@@ -1,6 +1,7 @@
 /**
  * @file test_ui_theme.c
- * @version 1
+ * v2: slots (which role fills each themed place) — defaults, file overrides, refusals.
+ * @version 2
  * @brief Host tests for the OKLCH theme: the base theme reproduces the clock's original
  *        colours; every shipped theme's text roles meet their contrast targets; text over
  *        any backdrop keeps its hue and meets its target; theme files parse (and the base
@@ -212,7 +213,8 @@ static void test_polarity(void)
 
 /**
  * @brief The base theme file equals the compiled fallback (one look, two copies).
- * @version 1
+ * v2: slots compared too.
+ * @version 2
  * @utility
  */
 static void test_base_file_matches(void)
@@ -223,6 +225,7 @@ static void test_base_file_matches(void)
     CHECK(memcmp(&t.ink, &UI_THEME_BASE.ink, sizeof(t.ink)) == 0, "ink");
     CHECK(memcmp(&t.surface, &UI_THEME_BASE.surface, sizeof(t.surface)) == 0, "surface");
     CHECK(memcmp(&t.accent, &UI_THEME_BASE.accent, sizeof(t.accent)) == 0, "accent");
+    CHECK(memcmp(t.slots, UI_THEME_BASE.slots, sizeof(t.slots)) == 0, "slots");
     CHECK(t.contrast == UI_THEME_BASE.contrast, "contrast");
 }
 
@@ -265,8 +268,47 @@ static void test_role_names(void)
 }
 
 /**
- * @brief Run the ui_theme tests; exit status is the failure count.
+ * @brief Slots default to the original look (cards on surface, alerts on error/warn/border)
+ *        and a theme file may move them to any role; unknown slots or roles refuse the file.
  * @version 1
+ * @utility
+ */
+static void test_slots(void)
+{
+    ui_theme_set(NULL);
+    CHECK(ui_theme_slot_role(UI_SLOT_CARD) == UI_ROLE_SURFACE, "card on surface");
+    CHECK(ui_theme_slot_role(UI_SLOT_STRIP) == UI_ROLE_SURFACE_RAISED, "strip raised");
+    CHECK(ui_theme_slot_role(UI_SLOT_ALERT_EXTREME) == UI_ROLE_ERROR_STRONG, "extreme");
+    CHECK(ui_theme_slot_role(UI_SLOT_ALERT_SEVERE) == UI_ROLE_ERROR, "severe");
+    CHECK(ui_theme_slot_role(UI_SLOT_ALERT_MODERATE) == UI_ROLE_WARN, "moderate");
+    CHECK(ui_theme_slot_role(UI_SLOT_ALERT_MINOR) == UI_ROLE_BORDER, "minor");
+
+    ui_theme_t t;
+    const char *base = "{\"name\":\"x\",\"ink\":[1,0,0],\"surface\":[0.2,0.04,280],"
+                       "\"accent\":[0.8,0.1,90],";
+    char json[400];
+    snprintf(json, sizeof(json), "%s\"slots\":{\"alert_minor\":\"accent\",\"card\":\"surface_raised\"}}", base);
+    CHECK(ui_theme_parse(json, &t), "slot overrides parse");
+    ui_theme_set(&t);
+    CHECK(ui_theme_slot_role(UI_SLOT_ALERT_MINOR) == UI_ROLE_ACCENT, "minor moved to accent");
+    CHECK(ui_theme_slot_role(UI_SLOT_CARD) == UI_ROLE_SURFACE_RAISED, "card moved");
+    CHECK(ui_theme_slot_role(UI_SLOT_ALERT_SEVERE) == UI_ROLE_ERROR, "others keep defaults");
+    snprintf(json, sizeof(json), "%s\"slots\":{\"nope\":\"accent\"}}", base);
+    CHECK(!ui_theme_parse(json, &t), "unknown slot refused");
+    snprintf(json, sizeof(json), "%s\"slots\":{\"card\":\"#ff0000\"}}", base);
+    CHECK(!ui_theme_parse(json, &t), "a colour instead of a role refused");
+    for (int i = 0; i < UI_SLOT_COUNT; i++) {
+        ui_slot_t sl;
+        CHECK(ui_theme_slot_by_name(ui_theme_slot_name((ui_slot_t)i), &sl) && sl == (ui_slot_t)i,
+              "slot %d round-trips", i);
+    }
+    ui_theme_set(NULL);
+}
+
+/**
+ * @brief Run the ui_theme tests; exit status is the failure count.
+ * v2: slots.
+ * @version 2
  * @utility
  * @return 0 when every check passed.
  */
@@ -280,6 +322,7 @@ int main(void)
     test_base_file_matches();
     test_parse_rejects();
     test_role_names();
+    test_slots();
     printf("ui_theme: %d/%d checks passed\n", s_checks - s_failures, s_checks);
     return s_failures;
 }

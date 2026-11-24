@@ -176,7 +176,8 @@ static void amb_fmt_golden(char *buf, size_t n, int sr_local, int ss_local)
 /**
  * @brief Add the daylight progress bar (sunrise to sunset) at @p y.
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: track and fill from the LVGL theme (control / accent), no local colours.
+ * @version 3
  * @req REQ-AMB-001
  */
 static void amb_add_daylight_bar(lv_obj_t *parent, int y, int now_min, int sr_local,
@@ -185,8 +186,6 @@ static void amb_add_daylight_bar(lv_obj_t *parent, int y, int now_min, int sr_lo
     lv_obj_t *bar = lv_bar_create(parent);
     lv_obj_set_size(bar, 500, 16);
     lv_obj_align(bar, LV_ALIGN_TOP_LEFT, 0, y);
-    lv_obj_set_style_bg_color(bar, ui_theme_color(UI_ROLE_SURFACE_INSET), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(bar, ui_theme_color(UI_ROLE_ACCENT), LV_PART_INDICATOR);
     lv_obj_set_style_radius(bar, 8, LV_PART_MAIN);
     lv_obj_set_style_radius(bar, 8, LV_PART_INDICATOR);
     lv_bar_set_range(bar, 0, 100);
@@ -196,11 +195,12 @@ static void amb_add_daylight_bar(lv_obj_t *parent, int y, int now_min, int sr_lo
 
 /**
  * @brief Add the NWS conditions line (description, humidity, visibility) if conditions are valid.
- * @version 1
+ * v2: takes a role.
+ * @version 2
  * @req REQ-AMB-001
  * @return Vertical space used: 28 px when the line was added, else 0.
  */
-static int amb_add_conditions(lv_obj_t *parent, int y, lv_color_t color)
+static int amb_add_conditions(lv_obj_t *parent, int y, ui_role_t role)
 {
     const nws_conditions_t *cond = nws_get_conditions();
     if (!cond || !cond->valid) {
@@ -209,7 +209,7 @@ static int amb_add_conditions(lv_obj_t *parent, int y, lv_color_t color)
     char buf[128];
     snprintf(buf, sizeof(buf), "%s  |  Humidity %d%%  |  Visibility %.0f mi",
              cond->description, cond->humidity, cond->visibility_km * 0.621371f);
-    lv_label_set_text(info_panel_label(parent, &lv_font_montserrat_20, color, y), buf);
+    lv_label_set_text(info_panel_label(parent, &lv_font_montserrat_20, role, y), buf);
     return 28;
 }
 
@@ -248,7 +248,8 @@ static void amb_fmt_next(char *buf, size_t n, const char *prefix, const char *ev
  *     cognitive limit); output unchanged.
  * v3: clock uses the user's exact colour; no background sampling before minimizing.
  * v4: colours from the theme roles (ui_theme), no literals.
- * @version 4
+ * v5: label roles bound via info_panel_label.
+ * @version 5
  * @req REQ-AMB-001
  * @req REQ-ASTRO-001
  */
@@ -276,29 +277,28 @@ void AmbientDashboard::entry()
     int now_min = ti.tm_hour * 60 + ti.tm_min;
 
     s_container = info_panel_create(s_screen);
-    info_panel_palette_t pal = info_panel_palette(s_container);
     int y_pos = 0;
     char buf[128];
 
-    lv_label_set_text(info_panel_label(s_container, &nunito_48, pal.text, y_pos), "Dashboard");
+    lv_label_set_text(info_panel_label(s_container, &nunito_48, UI_ROLE_TEXT, y_pos), "Dashboard");
     y_pos += 56;
 
     amb_fmt_sun(buf, sizeof(buf), sr_local, ss_local);
-    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_24, pal.accent, y_pos), buf);
+    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_24, UI_ROLE_ACCENT, y_pos), buf);
     y_pos += 32;
 
     amb_add_daylight_bar(s_container, y_pos, now_min, sr_local, ss_local, sun.daylight_minutes);
     y_pos += 30;
 
     amb_fmt_golden(buf, sizeof(buf), sr_local, ss_local);
-    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, pal.muted, y_pos), buf);
+    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, UI_ROLE_TEXT_MUTED, y_pos), buf);
     y_pos += 32;
 
-    y_pos += amb_add_conditions(s_container, y_pos, pal.muted);
+    y_pos += amb_add_conditions(s_container, y_pos, UI_ROLE_TEXT_MUTED);
 
     float kp = nws_get_kp_index();
     amb_fmt_aurora(buf, sizeof(buf), kp, astro_calc_aurora_probability(kp, cfg.latitude));
-    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, pal.accent_alt, y_pos), buf);
+    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, UI_ROLE_ACCENT_ALT, y_pos), buf);
     y_pos += 32;
 
     // Next celestial event (solstice/equinox) and meteor shower
@@ -306,14 +306,14 @@ void AmbientDashboard::entry()
     const char *next_event = next_event_after(celestial_dates, (int)CELESTIAL_COUNT,
                                               ti.tm_year, ti.tm_yday, &days_until);
     amb_fmt_next(buf, sizeof(buf), "Next", next_event, days_until);
-    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, pal.muted, y_pos), buf);
+    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, UI_ROLE_TEXT_MUTED, y_pos), buf);
     y_pos += 28;
 
     int shower_days = 999;
     const char *next_shower = next_event_after(meteor_showers, (int)SHOWER_COUNT,
                                                ti.tm_year, ti.tm_yday, &shower_days);
     amb_fmt_next(buf, sizeof(buf), "Meteor shower", next_shower, shower_days);
-    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, pal.muted, y_pos), buf);
+    lv_label_set_text(info_panel_label(s_container, &lv_font_montserrat_20, UI_ROLE_TEXT_MUTED, y_pos), buf);
 
     fade_in(s_container);
 

@@ -27,6 +27,7 @@ idf_component_register(
         "src/ui_theme_json.c"
         "src/ui_theme_lvgl.c"
         "src/theme_store.c"
+        "src/ui_theme_bind.c"
         "src/astro_calc.c"
         "src/image_rotator.c"
         "src/json_layout.c"

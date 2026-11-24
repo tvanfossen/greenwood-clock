@@ -1,6 +1,7 @@
 /**
  * @file preview.c
- * @version 1
+ * v2: theme bindings; a live-switch scene.
+ * @version 2
  * @brief Host theme preview: renders the firmware's own widgets with the real LVGL fork (built
  *        from the device sdkconfig) and the real theme code, one PNG-ready frame per theme and
  *        scene, so a theme can be judged before anything goes to the device.
@@ -10,13 +11,17 @@
  *   weather  — the weather screen: card, forecast strip and a Severe alert over the background
  *   gallery  — every role: surfaces and text tiers, stock widgets, the alert severities, the
  *              accent palette (leaves, swatches)
+ *   live     — the weather screen built under the FIRST theme, then switched to this one in
+ *              place (no rebuild): what a theme change on the device repaints
  * `inv theme-preview` builds this and converts the frames to PNG.
  */
 
 #include "lvgl.h"
 #include "ui_theme.h"
 #include "ui_theme_lvgl.h"
+#include "ui_theme_bind.h"
 #include "display_widgets.h"
+#include "display_fsm.h"   // lottie_load_job_t (the seam stubbed below)
 #include "info_panel.h"
 #include "nws.h"
 #include "src/libs/lodepng/lodepng.h"
@@ -36,17 +41,6 @@ static bool           s_have_bg = false;
 // ---------------------------------------------------------------------------
 // Platform seams the widgets call (the device implements them in display_fsm / image_decode)
 // ---------------------------------------------------------------------------
-
-/**
- * @brief The colour behind text on @p panel: the same computation the device uses.
- * @version 1
- * @utility
- * @return The backdrop colour.
- */
-lv_color_t display_fsm_panel_backdrop(lv_obj_t *panel)
-{
-    return ui_theme_panel_backdrop(panel, s_have_bg ? &s_bg : NULL);
-}
 
 /**
  * @brief No Lottie on the host (ThorVG is the device's C++ backend).
@@ -168,21 +162,24 @@ static void write_frame(const char *path)
 
 /**
  * @brief Start a fresh screen: SCREEN fill and the background picture, like the clock.
- * @version 1
+ * v2: screen fill bound; the old screen is deleted (its bindings end).
+ * @version 2
  * @utility
  * @return The screen.
  */
 static lv_obj_t *fresh_screen(bool with_bg)
 {
     lv_obj_t *scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(scr, ui_theme_color(UI_ROLE_SCREEN), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    ui_bind_fill_role(scr, UI_ROLE_SCREEN);
     if (with_bg && s_have_bg) {
         lv_obj_t *img = lv_image_create(scr);
         lv_image_set_src(img, &s_bg);
         lv_obj_set_pos(img, 0, 0);
     }
+    lv_obj_t *old = lv_screen_active();
     lv_screen_load(scr);
+    if (old) lv_obj_delete(old);   // its bindings end with it, as on the device
     return scr;
 }
 
@@ -223,7 +220,8 @@ static void fake_weather(nws_conditions_t *c, nws_forecast_t *fc)
 
 /**
  * @brief The weather screen: card, forecast strip and a Severe alert over the background.
- * @version 1
+ * v2: a real event name; no contrast calls (bindings).
+ * @version 2
  * @utility
  */
 static void scene_weather(void)
@@ -236,19 +234,19 @@ static void scene_weather(void)
     weather_card_update(card, &c);
     forecast_strip_t *strip = forecast_strip_create(scr);
     forecast_strip_update(strip, &fc);
-    weather_card_set_contrast(card);
-    forecast_strip_set_contrast(strip);
     alert_banner_t *ab = alert_banner_create(scr);
     nws_alert_t a;
     memset(&a, 0, sizeof(a));
+    strcpy(a.event, "Winter Storm Warning");
     strcpy(a.severity, "Severe");
-    strcpy(a.headline, "Winter Storm Warning until 7 PM: heavy snow, 6 to 10 inches");
+    strcpy(a.headline, "until 7 PM: heavy snow, 6 to 10 inches");
     alert_banner_show(ab, &a);
 }
 
 /**
  * @brief One labelled row of text tiers on a panel of role @p fill.
- * @version 1
+ * v2: fill and text bound.
+ * @version 2
  * @utility
  */
 static void tier_panel(lv_obj_t *scr, ui_role_t fill, int32_t x, int32_t y)
@@ -256,19 +254,18 @@ static void tier_panel(lv_obj_t *scr, ui_role_t fill, int32_t x, int32_t y)
     lv_obj_t *p = lv_obj_create(scr);
     lv_obj_set_size(p, 300, 150);
     lv_obj_set_pos(p, x, y);
-    lv_obj_set_style_bg_color(p, ui_theme_color(fill), 0);
     lv_obj_set_style_bg_opa(p, LV_OPA_COVER, 0);
+    ui_bind_fill_role(p, fill);
     lv_obj_remove_flag(p, LV_OBJ_FLAG_SCROLLABLE);
-    lv_color_t bd = ui_theme_color(fill);
     static const ui_role_t TIERS[] = { UI_ROLE_TEXT, UI_ROLE_TEXT_MUTED, UI_ROLE_TEXT_FAINT,
                                        UI_ROLE_ACCENT };
     for (int i = 0; i < 4; i++) {
         lv_obj_t *l = lv_label_create(p);
         lv_label_set_text_fmt(l, "%s on %s", ui_theme_role_name(TIERS[i]),
                               ui_theme_role_name(fill));
-        lv_obj_set_style_text_color(l, ui_theme_text_on(TIERS[i], bd), 0);
         lv_obj_set_style_text_font(l, &lv_font_montserrat_20, 0);
         lv_obj_set_pos(l, 0, i * 30);
+        ui_bind_text(l, TIERS[i]);
     }
 }
 
@@ -306,7 +303,8 @@ static void stock_widgets(lv_obj_t *scr)
 
 /**
  * @brief The four alert severities as banners, stacked.
- * @version 1
+ * v2: event and headline like a real alert.
+ * @version 2
  * @utility
  */
 static void alert_stack(lv_obj_t *scr)
@@ -321,7 +319,8 @@ static void alert_stack(lv_obj_t *scr)
         nws_alert_t a;
         memset(&a, 0, sizeof(a));
         strcpy(a.severity, SEV[i]);
-        snprintf(a.headline, sizeof(a.headline), "%s alert: example headline text", SEV[i]);
+        snprintf(a.event, sizeof(a.event), "%s", SEV[i]);
+        snprintf(a.headline, sizeof(a.headline), "example headline text");
         alert_banner_show(ab, &a);
     }
 }
@@ -363,6 +362,8 @@ static void scene_gallery(void)
     alert_stack(scr);
 }
 
+static bool install_theme(const char *path, ui_theme_t *t);
+
 /**
  * @brief The file stem of @p path ("sdcard/themes/sassafras.json" -> "sassafras").
  * @version 1
@@ -397,23 +398,55 @@ static char *read_text(const char *path)
 }
 
 /**
- * @brief Render every scene for the theme in @p path into @p out_dir.
+ * @brief Install theme @p path (parse, set, recolour the LVGL theme and every binding).
  * @version 1
  * @utility
- * @return Whether the theme parsed.
+ * @return Whether it parsed (@p t set only then).
  */
-static bool render_theme(const char *out_dir, const char *path)
+static bool install_theme(const char *path, ui_theme_t *t)
 {
     char *json = read_text(path);
-    ui_theme_t t;
-    bool ok = json && ui_theme_parse(json, &t);
+    bool ok = json && ui_theme_parse(json, t);
     free(json);
     if (!ok) {
         fprintf(stderr, "skip %s: not a theme file\n", path);
         return false;
     }
-    ui_theme_set(&t);
-    ui_theme_lvgl_init(lv_display_get_default());
+    ui_theme_set(t);
+    ui_theme_lvgl_init(lv_display_get_default());   // first call installs, later ones recolour
+    ui_bind_refresh_all();
+    return true;
+}
+
+/**
+ * @brief Build the weather scene under theme @p first, switch to @p path in place and write
+ *        <stem>_live.ppm: the live repaint, no widget rebuilt.
+ * @version 1
+ * @utility
+ */
+static void render_live(const char *out_dir, const char *first, const char *path)
+{
+    ui_theme_t t;
+    if (!install_theme(first, &t)) return;
+    scene_weather();
+    if (!install_theme(path, &t)) return;
+    char stem[64], file[512];
+    stem_of(path, stem, sizeof(stem));
+    snprintf(file, sizeof(file), "%s/%s_live.ppm", out_dir, stem);
+    write_frame(file);
+}
+
+/**
+ * @brief Render every scene for the theme in @p path into @p out_dir.
+ * v2: installs through install_theme (bindings repainted).
+ * @version 2
+ * @utility
+ * @return Whether the theme parsed.
+ */
+static bool render_theme(const char *out_dir, const char *path)
+{
+    ui_theme_t t;
+    if (!install_theme(path, &t)) return false;
     char stem[64], file[512];
     stem_of(path, stem, sizeof(stem));
     scene_weather();
@@ -428,7 +461,8 @@ static bool render_theme(const char *out_dir, const char *path)
 
 /**
  * @brief Entry point: set up LVGL with an RGB565 display, then render each theme.
- * @version 1
+ * v2: the picture feeds bound text; live-switch renders.
+ * @version 2
  * @utility
  * @return 0 when every theme rendered.
  */
@@ -446,7 +480,9 @@ int main(int argc, char **argv)
     lv_display_set_buffers(disp, buf, NULL, sizeof(buf), LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(disp, flush_cb);
     s_have_bg = load_background(argv[2]);
+    ui_bind_set_picture(s_have_bg ? &s_bg : NULL);   // what bound text sits on, as on the device
     int failed = 0;
     for (int i = 3; i < argc; i++) failed += render_theme(argv[1], argv[i]) ? 0 : 1;
+    for (int i = 4; i < argc; i++) render_live(argv[1], argv[3], argv[i]);
     return failed;
 }

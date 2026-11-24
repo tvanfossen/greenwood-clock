@@ -8,7 +8,7 @@
  */
 #include "settings_ui.h"
 #include "display_fsm.h"
-#include "ui_theme.h"
+#include "ui_theme_bind.h"
 #include "theme_store.h"
 
 #include <cstdio>
@@ -69,7 +69,8 @@ static void sched_save(void)
 /**
  * @brief A modal panel over everything (dimmed backdrop on the top layer).
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 3
  * @utility
  * @return The panel; delete its parent (the backdrop) to close it.
  */
@@ -78,22 +79,22 @@ static lv_obj_t *modal_panel(const char *title, int32_t w, int32_t h)
     lv_obj_t *backdrop = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(backdrop);
     lv_obj_set_size(backdrop, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(backdrop, ui_theme_color(UI_ROLE_SCREEN), 0);
+    ui_bind_fill_role(backdrop, UI_ROLE_SCREEN);
     lv_obj_set_style_bg_opa(backdrop, LV_OPA_60, 0);
     lv_obj_add_flag(backdrop, LV_OBJ_FLAG_CLICKABLE);   // swallow taps behind the panel
 
     lv_obj_t *panel = lv_obj_create(backdrop);
     lv_obj_set_size(panel, w, h);
     lv_obj_center(panel);
-    lv_obj_set_style_bg_color(panel, ui_theme_color(UI_ROLE_SURFACE_RAISED), 0);
-    lv_obj_set_style_border_color(panel, ui_theme_color(UI_ROLE_BORDER), 0);
+    ui_bind_fill(panel, UI_SLOT_DIALOG);
+    ui_bind_border(panel, UI_ROLE_BORDER);
     lv_obj_set_style_radius(panel, 16, 0);
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *lbl = lv_label_create(panel);
     lv_label_set_text(lbl, title);
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(lbl, ui_theme_color(UI_ROLE_TEXT), 0);
+    ui_bind_text(lbl, UI_ROLE_TEXT);
     lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 0);
     return panel;
 }
@@ -223,21 +224,24 @@ static void slot_time_cb(lv_event_t *e)
 }
 
 /**
- * @brief A grid button: @p text on @p fill (text legible on it), calling @p cb with @p data
+ * @brief A grid button: @p text on a swatch or the control slot (text legible on it), calling
+ *        @p cb with @p data
  *        when tapped.
  * v2: the fill is a theme colour; the label is made legible on it.
- * @version 2
+ * v3: @p swatch: a profile swatch index, or -1 for the control slot (bound to the theme).
+ * @version 3
  * @utility
  * @return The button.
  */
-static lv_obj_t *grid_button(int32_t x, int32_t y, int32_t w, const char *text, lv_color_t fill,
+static lv_obj_t *grid_button(int32_t x, int32_t y, int32_t w, const char *text, int swatch,
                              lv_event_cb_t cb, intptr_t data)
 {
     lv_obj_t *btn = lv_button_create(s_grid);
     lv_obj_set_pos(btn, x, y);
     lv_obj_set_size(btn, w, GRID_ROW_H - 6);
-    lv_obj_set_style_bg_color(btn, fill, 0);
-    lv_obj_set_style_text_color(btn, ui_theme_text_on(UI_ROLE_TEXT, fill), 0);
+    if (swatch < 0) ui_bind_fill(btn, UI_SLOT_CONTROL);
+    else lv_obj_set_style_bg_color(btn, ui_theme_swatch(swatch), 0);
+    ui_bind_text(btn, UI_ROLE_TEXT);
     lv_obj_set_style_radius(btn, 8, 0);
     lv_obj_set_style_shadow_width(btn, 0, 0);
     lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, (void *)data);
@@ -254,7 +258,8 @@ static lv_obj_t *grid_button(int32_t x, int32_t y, int32_t w, const char *text, 
  * @brief (Re)build the week grid: a row of slot start times, then one row of profile cells per
  *        day.
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 3
  * @req REQ-BG-004
  */
 static void grid_build(void)
@@ -266,19 +271,19 @@ static void grid_build(void)
     for (int i = 0; i < n; i++) {
         char hhmm[8];
         snprintf(hhmm, sizeof(hhmm), "%02u:%02u", s_edit.slot_start[i] / 60, s_edit.slot_start[i] % 60);
-        grid_button(GRID_DAY_W + i * col_w, 0, col_w - 6, hhmm, ui_theme_color(UI_ROLE_SURFACE_INSET), slot_time_cb, i);
+        grid_button(GRID_DAY_W + i * col_w, 0, col_w - 6, hhmm, -1, slot_time_cb, i);
     }
     if (n < BG_SCHED_SLOTS) {
-        grid_button(GRID_DAY_W + n * col_w, 0, GRID_ADD_W - 6, LV_SYMBOL_PLUS, ui_theme_color(UI_ROLE_SURFACE_INSET),
+        grid_button(GRID_DAY_W + n * col_w, 0, GRID_ADD_W - 6, LV_SYMBOL_PLUS, -1,
                     slot_add_cb, 0);
     }
     for (int d = 0; d < BG_SCHED_DAYS; d++) {
         int32_t y = (d + 1) * GRID_ROW_H;
-        grid_button(0, y, GRID_DAY_W - 6, DAY_NAMES[d], ui_theme_color(UI_ROLE_SURFACE_INSET), day_click_cb, d);
+        grid_button(0, y, GRID_DAY_W - 6, DAY_NAMES[d], -1, day_click_cb, d);
         for (int i = 0; i < n; i++) {
             int p = s_edit.grid[d][i];
             grid_button(GRID_DAY_W + i * col_w, y, col_w - 6, s_edit.profiles[p].name,
-                        ui_theme_swatch(p), cell_click_cb, d * BG_SCHED_SLOTS + i);
+                        p, cell_click_cb, d * BG_SCHED_SLOTS + i);
         }
     }
 }
@@ -356,7 +361,8 @@ static lv_obj_t *panel_button(lv_obj_t *panel, const char *text, lv_align_t alig
 /**
  * @brief Edit slot @p slot's start time (hour and 5-minute rollers), or remove the slot.
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 3
  * @req REQ-BG-004
  */
 static void time_popup(int slot)
@@ -380,7 +386,7 @@ static void time_popup(int slot)
     lv_obj_align(rm, LV_ALIGN_TOP_MID, 70, 50);
     lv_obj_t *note = lv_label_create(panel);  // child 3
     lv_label_set_text(note, "");
-    lv_obj_set_style_text_color(note, ui_theme_color(UI_ROLE_ERROR), 0);
+    ui_bind_text(note, UI_ROLE_ERROR);
     lv_obj_align(note, LV_ALIGN_BOTTOM_MID, 0, -64);
 
     panel_button(panel, "Save", LV_ALIGN_BOTTOM_RIGHT, 0, time_save_cb, panel);
@@ -419,7 +425,8 @@ static void schedule_delete_cb(lv_event_t *e)
 /**
  * @brief Build the schedule screen: hint, "Profiles" button and the week grid.
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 3
  * @req REQ-BG-004
  * @req REQ-UI-001
  * @return The sub-screen container.
@@ -440,7 +447,7 @@ lv_obj_t *create_sub_schedule(lv_obj_t *parent)
 
     lv_obj_t *hint = lv_label_create(cont);
     lv_label_set_text(hint, "Tap a cell for the next profile. Tap a day to copy it to every day.");
-    lv_obj_set_style_text_color(hint, ui_theme_color(UI_ROLE_TEXT_MUTED), 0);
+    ui_bind_text(hint, UI_ROLE_TEXT_MUTED);
     lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 54);
 
     s_grid = lv_obj_create(cont);
@@ -488,7 +495,8 @@ static void profile_add_cb(lv_event_t *e)
 /**
  * @brief (Re)fill the profiles list.
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 3
  * @req REQ-BG-004
  */
 static void profile_list_build(void)
@@ -497,9 +505,8 @@ static void profile_list_build(void)
     lv_obj_clean(s_profile_list);
     for (int i = 0; i < s_edit.profile_count; i++) {
         lv_obj_t *btn = lv_list_add_button(s_profile_list, LV_SYMBOL_IMAGE, s_edit.profiles[i].name);
-        lv_color_t sw = ui_theme_swatch(i);
-        lv_obj_set_style_bg_color(btn, sw, 0);
-        lv_obj_set_style_text_color(btn, ui_theme_text_on(UI_ROLE_TEXT, sw), 0);
+        lv_obj_set_style_bg_color(btn, ui_theme_swatch(i), 0);
+        ui_bind_text(btn, UI_ROLE_TEXT);
         lv_obj_add_event_cb(btn, profile_open_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
     }
     if (s_edit.profile_count < BG_SCHED_PROFILES) {
@@ -743,7 +750,8 @@ static void profile_delete_cb(lv_event_t *e)
 /**
  * @brief One settings row: a caption and a full-width value button calling @p cb.
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 3
  * @utility
  * @return The value button's label.
  */
@@ -753,7 +761,7 @@ static lv_obj_t *profile_row(lv_obj_t *cont, int row, const char *caption, lv_ev
     lv_obj_t *cap = lv_label_create(cont);
     lv_label_set_text(cap, caption);
     lv_obj_set_style_text_font(cap, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(cap, ui_theme_color(UI_ROLE_TEXT), 0);
+    ui_bind_text(cap, UI_ROLE_TEXT);
     lv_obj_align(cap, LV_ALIGN_TOP_LEFT, 0, y + 14);
     if (!cb) return cap;
     lv_obj_t *btn = lv_button_create(cont);
@@ -768,7 +776,8 @@ static lv_obj_t *profile_row(lv_obj_t *cont, int row, const char *caption, lv_ev
 /**
  * @brief The brightness row: a slider and a "Same as Settings" switch.
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 3
  * @utility
  */
 static void brightness_row(lv_obj_t *cont)
@@ -786,7 +795,7 @@ static void brightness_row(lv_obj_t *cont)
     lv_obj_add_event_cb(s_inherit_bright, bright_inherit_cb, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_t *lbl = lv_label_create(cont);
     lv_label_set_text(lbl, "Same as\nSettings");
-    lv_obj_set_style_text_color(lbl, ui_theme_color(UI_ROLE_TEXT_MUTED), 0);
+    ui_bind_text(lbl, UI_ROLE_TEXT_MUTED);
     lv_obj_align(lbl, LV_ALIGN_TOP_RIGHT, -40, y + 6);
 }
 
@@ -795,7 +804,8 @@ static void brightness_row(lv_obj_t *cont)
  *        each "Same as Settings" until set; "Delete profile" when it is not the last one.
  * v2: colours from the theme roles (ui_theme), no literals.
  * v3: a Theme row (was Text colour); colours from the theme roles.
- * @version 3
+ * v4: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 4
  * @req REQ-BG-004
  * @req REQ-UI-001
  * @return The sub-screen container.
@@ -811,9 +821,8 @@ lv_obj_t *create_sub_sched_profile(lv_obj_t *parent)
         lv_obj_t *del = lv_button_create(cont);
         lv_obj_set_size(del, 220, 50);
         lv_obj_align(del, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-        lv_color_t danger = ui_theme_color(UI_ROLE_ERROR_STRONG);
-        lv_obj_set_style_bg_color(del, danger, 0);
-        lv_obj_set_style_text_color(del, ui_theme_text_on(UI_ROLE_TEXT, danger), 0);
+        ui_bind_fill_role(del, UI_ROLE_ERROR_STRONG);
+        ui_bind_text(del, UI_ROLE_TEXT);
         lv_obj_add_event_cb(del, profile_delete_cb, LV_EVENT_CLICKED, NULL);
         lv_obj_t *lbl = lv_label_create(del);
         lv_label_set_text(lbl, LV_SYMBOL_TRASH " Delete profile");

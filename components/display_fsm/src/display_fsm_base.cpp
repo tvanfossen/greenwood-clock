@@ -10,7 +10,7 @@
 #include "display_widgets.h"
 #include "display_scheduler.h"
 #include "frame_capture.h"
-#include "ui_theme.h"
+#include "ui_theme_bind.h"
 #include "nws.h"
 #include "esp_log.h"
 
@@ -283,7 +283,8 @@ void DisplayFsm::transit_to(display_state_id_t id)
 /**
  * @brief Create the carousel dot indicator (one dot per carousel state) at the bottom of the top layer; once only.
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 3
  * @req REQ-DISP-003
  */
 void DisplayFsm::create_dot_indicator()
@@ -306,7 +307,7 @@ void DisplayFsm::create_dot_indicator()
         lv_obj_remove_style_all(dot);
         lv_obj_set_size(dot, DOT_SIZE_INACTIVE, DOT_SIZE_INACTIVE);
         lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(dot, ui_theme_color(UI_ROLE_TEXT), 0);
+        ui_bind_fill_role(dot, UI_ROLE_TEXT);
         lv_obj_set_style_bg_opa(dot, LV_OPA_40, 0);
         lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
 

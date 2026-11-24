@@ -8,7 +8,7 @@
 #include "display_states.h"
 #include "display_scheduler.h"
 #include "display_widgets.h"
-#include "ui_theme.h"
+#include "ui_theme_bind.h"
 #include "display_fsm.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -91,7 +91,8 @@ void PhotoSlideshow::prefetch()
 /**
  * @brief Enter: minimize the clock and create the rotator; with no photos show a "No photos" panel, otherwise start the 7 s advance timer and post the first advance.
  * v2: colours from the theme roles (ui_theme), no literals.
- * @version 2
+ * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 3
  * @req REQ-PHOTO-001
  */
 void PhotoSlideshow::entry()
@@ -107,8 +108,8 @@ void PhotoSlideshow::entry()
         s_empty_label = lv_obj_create(s_screen);
         lv_obj_set_size(s_empty_label, 400, 120);
         lv_obj_align(s_empty_label, LV_ALIGN_CENTER, 0, 0);
-        lv_obj_set_style_bg_color(s_empty_label, ui_theme_color(UI_ROLE_SURFACE), 0);
         lv_obj_set_style_bg_opa(s_empty_label, LV_OPA_70, 0);
+        ui_bind_fill(s_empty_label, UI_SLOT_CHIP);
         lv_obj_set_style_radius(s_empty_label, 12, 0);
         lv_obj_set_style_border_width(s_empty_label, 0, 0);
         lv_obj_set_style_pad_all(s_empty_label, 16, 0);
@@ -116,7 +117,7 @@ void PhotoSlideshow::entry()
 
         lv_obj_t *lbl = lv_label_create(s_empty_label);
         lv_label_set_text(lbl, "No photos\nUpload via web control");
-        lv_obj_set_style_text_color(lbl, ui_theme_color(UI_ROLE_TEXT_MUTED), 0);
+        ui_bind_text(lbl, UI_ROLE_TEXT_MUTED);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_24, 0);
         lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);

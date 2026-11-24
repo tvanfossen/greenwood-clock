@@ -10,7 +10,7 @@
 #include "display_states.h"
 #include "display_scheduler.h"
 #include "display_widgets.h"
-#include "ui_theme.h"
+#include "ui_theme_bind.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 
@@ -25,7 +25,8 @@ json_layout_t *SurpriseMessage::s_layout = nullptr;
  *     configured duration, so the old order showed every fresh surprise for the 30 s
  *     default that exit() restores, ignoring the posted duration_s.
  * v3: colours from the theme roles (ui_theme), no literals.
- * @version 3
+ * v4: colours bound to the theme (ui_bind_*): repainted live on a theme change.
+ * @version 4
  * @req REQ-SURP-001
  * @req REQ-DISP-005
  */
@@ -41,7 +42,7 @@ void SurpriseMessage::entry()
             // Show fallback text
             lv_obj_t *lbl = lv_label_create(s_screen);
             lv_label_set_text(lbl, "Surprise!");
-            lv_obj_set_style_text_color(lbl, ui_theme_color(UI_ROLE_ACCENT_ALT), 0);
+            ui_bind_text(lbl, UI_ROLE_ACCENT_ALT);
             lv_obj_set_style_text_font(lbl, &lv_font_montserrat_32, 0);
             lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
         }
@@ -53,7 +54,7 @@ void SurpriseMessage::entry()
         // No JSON — show generic message
         lv_obj_t *lbl = lv_label_create(s_screen);
         lv_label_set_text(lbl, "Surprise!");
-        lv_obj_set_style_text_color(lbl, ui_theme_color(UI_ROLE_ACCENT_ALT), 0);
+        ui_bind_text(lbl, UI_ROLE_ACCENT_ALT);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_32, 0);
         lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
     }

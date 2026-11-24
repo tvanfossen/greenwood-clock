@@ -1,6 +1,7 @@
 /**
  * @file ui_theme_json.c
- * @version 1
+ * v2: optional "slots" map.
+ * @version 2
  * @brief Parse a theme file (three OKLCH cores and a contrast target) into a ui_theme_t.
  *        Pure C over cJSON: host-tested.
  */
@@ -51,8 +52,30 @@ static bool read_contrast(const cJSON *root, float *out)
 }
 
 /**
- * @brief Parse a theme file into @p out.
+ * @brief Apply the optional "slots" object of @p root ({"slot": "role"}) onto @p slots.
  * @version 1
+ * @utility
+ * @return Whether it is absent, or an object whose every entry names a slot and a role.
+ */
+static bool read_slots(const cJSON *root, uint8_t slots[UI_SLOT_COUNT])
+{
+    const cJSON *obj = cJSON_GetObjectItemCaseSensitive(root, "slots");
+    bool ok = !obj || cJSON_IsObject(obj);
+    const cJSON *e = obj ? obj->child : NULL;
+    for (; ok && e; e = e->next) {
+        ui_slot_t slot;
+        ui_role_t role;
+        ok = cJSON_IsString(e) && ui_theme_slot_by_name(e->string, &slot) &&
+             ui_theme_role_by_name(e->valuestring, &role);
+        if (ok) slots[slot] = (uint8_t)role;
+    }
+    return ok;
+}
+
+/**
+ * @brief Parse a theme file into @p out.
+ * v2: optional "slots".
+ * @version 2
  * @req REQ-UI-003
  * @return Whether @p json is a complete, in-range theme.
  */
@@ -61,10 +84,12 @@ bool ui_theme_parse(const char *json, ui_theme_t *out)
     cJSON *root = json ? cJSON_Parse(json) : NULL;
     ui_theme_t t;
     memset(&t, 0, sizeof(t));
+    memcpy(t.slots, UI_THEME_BASE.slots, sizeof(t.slots));
     const cJSON *name = cJSON_GetObjectItemCaseSensitive(root, "name");
     bool ok = cJSON_IsString(name) && name->valuestring[0] &&
               read_oklch(root, "ink", &t.ink) && read_oklch(root, "surface", &t.surface) &&
-              read_oklch(root, "accent", &t.accent) && read_contrast(root, &t.contrast);
+              read_oklch(root, "accent", &t.accent) && read_contrast(root, &t.contrast) &&
+              read_slots(root, t.slots);
     if (ok) {
         strncpy(t.name, name->valuestring, sizeof(t.name) - 1);
         *out = t;
