@@ -2,7 +2,8 @@
  * @file preview.c
  * v2: theme bindings; a live-switch scene.
  * v3: the home clock scene.
- * @version 3
+ * v4: schedule screens (list, a daily profile, a conflicting one).
+ * @version 4
  * @brief Host theme preview: renders the firmware's own widgets with the real LVGL fork (built
  *        from the device sdkconfig) and the real theme code, one PNG-ready frame per theme and
  *        scene, so a theme can be judged before anything goes to the device.
@@ -10,6 +11,7 @@
  * Usage: theme_preview <out_dir> <background LVGL path, e.g. A:/backgrounds/x.png | -> <theme.json>...
  * Writes <out_dir>/<theme-stem>_<scene>.ppm (RGB888) for each theme and scene:
  *   clock    — the home screen: the full-size clock over the background
+ *   sched_list / sched_edit_day / sched_edit_conflict — the schedule prototype
  *   weather  — the weather screen: card, forecast strip and a Severe alert over the background
  *   gallery  — every role: surfaces and text tiers, stock widgets, the alert severities, the
  *              accent palette (leaves, swatches)
@@ -30,6 +32,7 @@
 #include "display_fsm.h"   // lottie_load_job_t (the seam stubbed below)
 #include "info_panel.h"
 #include "theme_editor.h"
+#include "sched_view.h"
 #include "alert_card.h"
 #include "settings_frame.h"
 #include "sky_panel.h"
@@ -479,6 +482,103 @@ static void scene_clock(void)
     clock_in(CLOCK_MODE_FULL);
 }
 
+static void noop_cb(lv_event_t *e);
+
+/**
+ * @brief A sample profile: every day from @p from to @p to (clock or sun edges).
+ * @version 1
+ * @utility
+ * @return The profile.
+ */
+static sched_rule_t daily(const char *name, sched_time_t from, sched_time_t to,
+                          const char *image, int brightness)
+{
+    sched_rule_t r = { .repeat = SCHED_EVERY_DAY, .start = from, .end = to, .priority = 1,
+                       .brightness = (int8_t)brightness };
+    snprintf(r.name, sizeof(r.name), "%s", name);
+    snprintf(r.image, sizeof(r.image), "%s", image);
+    snprintf(r.theme, sizeof(r.theme), "default");
+    return r;
+}
+
+/**
+ * @brief A sample profile: every year from @p m1 / @p d1 to @p m2 / @p d2, all day.
+ * @version 1
+ * @utility
+ * @return The profile.
+ */
+static sched_rule_t yearly(const char *name, int m1, int d1, int m2, int d2, int prio,
+                           const char *image, const char *anim)
+{
+    sched_rule_t r = { .repeat = SCHED_YEARLY, .from = { 0, (uint8_t)m1, (uint8_t)d1 },
+                       .to = { 0, (uint8_t)m2, (uint8_t)d2 }, .all_day = true,
+                       .priority = (uint8_t)prio, .brightness = SCHED_INHERIT };
+    snprintf(r.name, sizeof(r.name), "%s", name);
+    snprintf(r.image, sizeof(r.image), "%s", image);
+    snprintf(r.anim, sizeof(r.anim), "%s", anim);
+    return r;
+}
+
+#define AT(h, m)      ((sched_time_t){ SCHED_AT_CLOCK, (int16_t)((h) * 60 + (m)) })
+#define SUNSET(off)   ((sched_time_t){ SCHED_AT_SUNSET, (int16_t)(off) })
+#define SCHED_SAMPLES 8
+
+/**
+ * @brief The sample schedule: four daily profiles (two edges on the sun) and four dated ones.
+ * @version 1
+ * @utility
+ */
+static void sample_schedule(sched_rule_t r[SCHED_SAMPLES], sched_row_state_t st[SCHED_SAMPLES])
+{
+    r[0] = daily("Morning", AT(7, 0), AT(12, 0), "A:/backgrounds/winter_morning.png", SCHED_INHERIT);
+    r[1] = daily("Afternoon", AT(12, 0), SUNSET(0), "A:/backgrounds/winter_afternoon.png",
+                 SCHED_INHERIT);
+    r[2] = daily("Evening", SUNSET(0), AT(22, 0), "", SCHED_INHERIT);
+    r[3] = daily("Night", AT(22, 0), AT(7, 0), "A:/backgrounds/night_winter.png", 12);
+    r[4] = yearly("Winter break", 12, 20, 1, 2, 2, "A:/backgrounds/snowfall.gif", "Snowfall");
+    r[5] = yearly("Christmas", 12, 24, 12, 25, 3, "A:/backgrounds/christmas_village.gif",
+                  "Santa & reindeer");
+    r[6] = yearly("Valentine's Day", 2, 14, 2, 14, 2, "", "Hearts");
+    r[7] = yearly("Birthday", 6, 3, 6, 3, 3, "", "Happy birthday");
+    memset(st, 0, sizeof(sched_row_state_t) * SCHED_SAMPLES);
+    st[1].active = true;
+    snprintf(st[4].note, sizeof(st[4].note), "Hidden Dec 24 - Dec 25 by Christmas (3)");
+}
+
+/**
+ * @brief The schedule list over the background, under the top-bar clock; scrolled to the
+ *        end when @p scrolled.
+ * @version 1
+ * @utility
+ */
+static void scene_sched_list(bool scrolled)
+{
+    sched_rule_t r[SCHED_SAMPLES];
+    sched_row_state_t st[SCHED_SAMPLES];
+    sample_schedule(r, st);
+    lv_obj_t *scr = fresh_screen(true);
+    clock_in(CLOCK_MODE_TOPBAR);
+    lv_obj_t *frame = sched_list_create(scr, r, st, SCHED_SAMPLES, noop_cb);
+    if (scrolled) lv_obj_scroll_to_y(lv_obj_get_child(frame, -1), LV_COORD_MAX, LV_ANIM_OFF);
+}
+
+/**
+ * @brief Sample profile @p i in the editor, with @p problem (NULL: none); its priority
+ *        set to @p prio when > 0.
+ * @version 1
+ * @utility
+ */
+static void scene_sched_edit(int i, int prio, const char *problem)
+{
+    sched_rule_t r[SCHED_SAMPLES];
+    sched_row_state_t st[SCHED_SAMPLES];
+    sample_schedule(r, st);
+    if (prio > 0) r[i].priority = (uint8_t)prio;
+    lv_obj_t *scr = fresh_screen(true);
+    clock_in(CLOCK_MODE_TOPBAR);
+    sched_edit_create(scr, &r[i], problem, noop_cb);
+}
+
 static bool install_theme(const char *path, ui_theme_t *t);
 
 /**
@@ -700,7 +800,8 @@ static void render_edit_demo(const char *out_dir, const char *path)
  * v5: sky scenes (day, night, dawn).
  * v6: weather at noon, dusk and night.
  * v7: the home clock.
- * @version 7
+ * v8: the schedule prototype.
+ * @version 8
  * @utility
  * @return Whether the theme parsed.
  */
@@ -712,6 +813,19 @@ static bool render_theme(const char *out_dir, const char *path)
     stem_of(path, stem, sizeof(stem));
     scene_clock();
     snprintf(file, sizeof(file), "%s/%s_clock.ppm", out_dir, stem);
+    write_frame(file);
+    scene_sched_list(false);
+    snprintf(file, sizeof(file), "%s/%s_sched_list.ppm", out_dir, stem);
+    write_frame(file);
+    scene_sched_list(true);
+    snprintf(file, sizeof(file), "%s/%s_sched_list_end.ppm", out_dir, stem);
+    write_frame(file);
+    scene_sched_edit(3, 0, NULL);
+    snprintf(file, sizeof(file), "%s/%s_sched_edit_day.ppm", out_dir, stem);
+    write_frame(file);
+    scene_sched_edit(4, 3, "Priority 3 is also Christmas, which overlaps this on Dec 24 - Dec 25. "
+                           "Change the priority or the dates to save.");
+    snprintf(file, sizeof(file), "%s/%s_sched_edit_conflict.ppm", out_dir, stem);
     write_frame(file);
     scene_weather(12, 9);
     snprintf(file, sizeof(file), "%s/%s_weather.ppm", out_dir, stem);

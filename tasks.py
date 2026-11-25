@@ -64,6 +64,7 @@ HOST_TESTS = {
     "radar_frames": ("nws/src/nws_radar_frames",),
     "conditions_merge": ("nws/src/nws_conditions_merge",),
     "sky_data": ("sky_data", "astro_calc"),
+    "sched_rule": ("sched_rule", "sky_data", "astro_calc"),
 }
 
 #: Include directories for the host tests.
@@ -742,6 +743,8 @@ THEME_PREVIEW_SRCS = (
     "components/display_fsm/src/sky_data.c",
     "components/display_fsm/src/sky_panel.c",
     "components/display_fsm/src/sky_dial.c",
+    "components/display_fsm/src/sched_rule.c",
+    "components/display_fsm/src/sched_view.c",
     "components/display_fsm/src/astro_calc.c",
     "components/display_fsm/src/settings_frame.c",
     "components/display_fsm/src/clock_widget.c",
