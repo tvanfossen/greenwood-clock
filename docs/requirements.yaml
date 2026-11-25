@@ -507,7 +507,7 @@ requirements:
       profile; a compiled-in base theme reproduces the original look. Colours that come from
       images, GIFs and Lottie files are their own and are not themed.
     acceptance_criteria: >-
-      Switching between the Greenwood and Sassafras themes recolours the clock at once and
+      Switching between the Default and Sassafras themes recolours the clock at once and
       every other screen (weather, radar, astronomy, ambient, photos, settings, alerts, the web
       panel) on its next showing, with no colour left over from the previous theme; text on
       every panel reads at the theme's contrast target where the backdrop allows it.

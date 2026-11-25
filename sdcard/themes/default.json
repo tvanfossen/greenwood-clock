@@ -1,6 +1,6 @@
 {
-  "name": "Greenwood Day",
-  "ink": [0.000, 0.000, 0.0],
+  "name": "Default",
+  "ink": [1.000, 0.000, 0.0],
   "surface": [0.158, 0.042, 280.6],
   "accent": [0.834, 0.117, 87.4],
   "contrast": 7.0

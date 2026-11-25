@@ -9,7 +9,7 @@
  *   "slots":    ["07:00", "12:00", "17:00", "22:00"],            // shared start times
  *   "profiles": [{"name": "Winter morning",
  *                 "image": "A:/backgrounds/winter_morning.png",   // "" or absent = inherit
- *                 "theme": "greenwood-night",                     // null/absent = inherit
+ *                 "theme": "sassafras",                     // null/absent = inherit
  *                 "brightness": 40,                               // null/absent = inherit
  *                 "anim": 2}],                                    // clock_anim_t; null = inherit
  *   "days":     [[0,1,2,3], ... 7 rows, Sunday first]            // profile index per slot

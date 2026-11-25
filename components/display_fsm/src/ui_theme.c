@@ -1,7 +1,8 @@
 /**
  * @file ui_theme.c
  * v2: slots (which role fills each themed place).
- * @version 2
+ * v3: the base theme is named "Default" (was "Greenwood").
+ * @version 3
  * @brief The UI colour theme: three OKLCH cores derived into named roles. The only file
  *        that writes colour values down (see ui_theme.h).
  *
@@ -39,7 +40,7 @@
 }
 
 const ui_theme_t UI_THEME_BASE = {
-    .name     = "Greenwood",
+    .name     = "Default",
     .ink      = { 1.000f, 0.000f, 0.0f },      // white
     .surface  = { 0.158f, 0.042f, 280.6f },    // navy panel
     .accent   = { 0.834f, 0.117f, 87.4f },     // gold

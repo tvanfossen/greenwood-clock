@@ -36,7 +36,7 @@ extern "C" {
 typedef struct {
     char     name[24];     /**< Shown in the settings screen. */
     char     image[96];    /**< LVGL path ("A:/backgrounds/x.png"); "" = inherit. */
-    char     theme[BG_THEME_LEN]; /**< Theme file stem ("greenwood-night"); "" = inherit. */
+    char     theme[BG_THEME_LEN]; /**< Theme file stem ("sassafras"); "" = inherit. */
     int8_t   brightness;   /**< 0..100 %, or BG_INHERIT. */
     int8_t   anim;         /**< clock_anim_t value, or BG_INHERIT. */
 } bg_profile_t;

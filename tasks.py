@@ -311,7 +311,7 @@ def set_anim(c, name, host=DEFAULT_HOST):
         print(body.decode(errors="replace"))
 
 
-## @brief Set the global UI theme (a file stem in /sdcard/themes, e.g. greenwood, sassafras);
+## @brief Set the global UI theme (a file stem in /sdcard/themes, e.g. default, sassafras);
 ## with no name, list the installed themes and show the current one.
 ## @req REQ-TOOL-001
 ## @req REQ-UI-003

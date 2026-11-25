@@ -20,8 +20,8 @@ extern "C" {
 
 /** One installed theme: its file stem and the name inside it. */
 typedef struct {
-    char stem[BG_THEME_LEN];          /**< File name without ".json" ("greenwood-night"). */
-    char name[UI_THEME_NAME_LEN];     /**< Display name ("Greenwood Night"). */
+    char stem[BG_THEME_LEN];          /**< File name without ".json" ("sassafras"). */
+    char name[UI_THEME_NAME_LEN];     /**< Display name ("Sassafras"). */
 } theme_entry_t;
 
 /**

@@ -1,7 +1,8 @@
 /**
  * @file theme_pref.h
- * @version 1
- * @brief The global UI theme: the file stem of a theme in /sdcard/themes ("greenwood").
+ * v2: default stem "default" (was "greenwood").
+ * @version 2
+ * @brief The global UI theme: the file stem of a theme in /sdcard/themes ("default").
  *
  * Its own NVS key beside the settings blob, like clock_anim_pref: a field in clock_settings_t
  * would bump SETTINGS_VERSION, and a version mismatch resets every setting (WiFi included).
@@ -19,7 +20,7 @@ extern "C" {
 #endif
 
 /** The theme used when none is stored (the base look). */
-#define THEME_PREF_DEFAULT "greenwood"
+#define THEME_PREF_DEFAULT "default"
 
 /**
  * @brief Read the stored theme name into @p out (BG_THEME_LEN bytes); THEME_PREF_DEFAULT when

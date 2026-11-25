@@ -2,7 +2,8 @@
  * @file test_ui_theme.c
  * v2: slots (which role fills each themed place) — defaults, file overrides, refusals.
  * v3: JSON round trip (ui_theme_to_json).
- * @version 3
+ * v4: one shipped base theme (default.json); the greenwood day/night variants are gone.
+ * @version 4
  * @brief Host tests for the OKLCH theme: the base theme reproduces the clock's original
  *        colours; every shipped theme's text roles meet their contrast targets; text over
  *        any backdrop keeps its hue and meets its target; theme files parse (and the base
@@ -36,9 +37,7 @@ static int s_checks   = 0;
 #define HUE_SLACK 6.0f
 
 static const char *const THEME_FILES[] = {
-    "sdcard/themes/greenwood.json",
-    "sdcard/themes/greenwood-day.json",
-    "sdcard/themes/greenwood-night.json",
+    "sdcard/themes/default.json",
     "sdcard/themes/sassafras.json",
 };
 #define THEME_FILE_COUNT (sizeof(THEME_FILES) / sizeof(THEME_FILES[0]))
@@ -215,13 +214,14 @@ static void test_polarity(void)
 /**
  * @brief The base theme file equals the compiled fallback (one look, two copies).
  * v2: slots compared too.
- * @version 2
+ * v3: the base file is default.json.
+ * @version 3
  * @utility
  */
 static void test_base_file_matches(void)
 {
     ui_theme_t t;
-    CHECK(load_theme("sdcard/themes/greenwood.json", &t), "greenwood parses");
+    CHECK(load_theme("sdcard/themes/default.json", &t), "default parses");
     CHECK(strcmp(t.name, UI_THEME_BASE.name) == 0, "name");
     CHECK(memcmp(&t.ink, &UI_THEME_BASE.ink, sizeof(t.ink)) == 0, "ink");
     CHECK(memcmp(&t.surface, &UI_THEME_BASE.surface, sizeof(t.surface)) == 0, "surface");

@@ -2272,7 +2272,7 @@ static esp_err_t assets_upload_handler(httpd_req_t *req)
 
 /**
  * @brief Get device settings. GET /api/settings
- *        → {"brightness":N,"theme":"greenwood","background_image":"A:/..","clock_anim":"Snowfall"}
+ *        → {"brightness":N,"theme":"default","background_image":"A:/..","clock_anim":"Snowfall"}
  * v3: "theme" (the global theme file name) replaces "text_color".
  * @version 3
  * @req REQ-ANIM-001

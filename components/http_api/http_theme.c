@@ -3,8 +3,8 @@
  * @version 1
  * @brief GET /api/themes and GET /api/theme.
  *
- * GET /api/themes → [{"stem": "greenwood", "name": "Greenwood"}, ...]   (files in /sdcard/themes)
- * GET /api/theme  → {"name": "Greenwood", "dark": true,
+ * GET /api/themes → [{"stem": "default", "name": "Default"}, ...]   (files in /sdcard/themes)
+ * GET /api/theme  → {"name": "Default", "dark": true,
  *                    "roles": {"screen": "#rrggbb", "surface": "#rrggbb", ..., "light": "#rrggbb"},
  *                    "on":    {"accent": "#rrggbb", ...}}   // legible text ON each role as a fill
  * The roles are the device's own derived colours, so the web panel draws with exactly what

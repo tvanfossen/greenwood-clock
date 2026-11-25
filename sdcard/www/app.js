@@ -371,7 +371,8 @@ async function populateBackgroundSelect(sel, bg) {
 /**
  * Fill brightness, theme and the background dropdown (backgrounds assets plus the current value) from GET /api/settings, /api/themes and /api/assets/list.
  * v3: theme dropdown (was a text colour).
- * @version 3
+ * v4: falls back to the 'default' theme (was 'greenwood').
+ * @version 4
  * @req REQ-UI-002
  */
 async function refreshSettings() {
@@ -379,7 +380,7 @@ async function refreshSettings() {
     const data = await api('/api/settings');
     document.getElementById('set-brightness').value = data.brightness || 50;
     document.getElementById('brightness-val').textContent = (data.brightness || 50) + '%';
-    await populateThemeSelect(data.theme || 'greenwood');
+    await populateThemeSelect(data.theme || 'default');
 
     // Populate background dropdown from assets
     await populateBackgroundSelect(document.getElementById('set-background'),
