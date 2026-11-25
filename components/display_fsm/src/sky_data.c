@@ -6,7 +6,13 @@
  */
 #include "sky_data.h"
 
+#include <math.h>
+#include <stdio.h>
 #include <string.h>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 /** A yearly sky event on a fixed (approximate) date. */
 typedef struct {
@@ -62,6 +68,59 @@ static int wrap_day(int m)
 {
     m %= 1440;
     return m < 0 ? m + 1440 : m;
+}
+
+/**
+ * @brief Format local minute-of-day @p m as "7:03 AM".
+ * @version 1
+ * @req REQ-ASTRO-001
+ */
+void sky_fmt_clock(int m, char *out, size_t n)
+{
+    int h = m / 60;
+    snprintf(out, n, "%d:%02d %s", h % 12 ? h % 12 : 12, m % 60, h < 12 ? "AM" : "PM");
+}
+
+/**
+ * @brief Wrap @p deg into (-180, 180].
+ * @version 1
+ * @utility
+ * @return Degrees.
+ */
+static float wrap_deg(float deg)
+{
+    deg = fmodf(deg, 360.0f);
+    if (deg > 180.0f) deg -= 360.0f;
+    if (deg <= -180.0f) deg += 360.0f;
+    return deg;
+}
+
+/**
+ * @brief The sun's place on the sky wheel (see sky_data.h).
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @return Degrees in (-180, 180].
+ */
+float sky_sun_angle(const sky_data_t *d)
+{
+    int day = d->sunset_min - d->sunrise_min;
+    if (d->sunrise_min < 0 || day <= 0) return 180.0f;
+    if (d->part == SKY_DAY) return -90.0f + 180.0f * (float)(d->now_min - d->sunrise_min) / day;
+    int since = (d->now_min - d->sunset_min + 1440) % 1440;   // minutes since sunset
+    return wrap_deg(90.0f + 180.0f * (float)since / (float)(1440 - day));
+}
+
+/**
+ * @brief The moon's place on the sky wheel (see sky_data.h).
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @return Degrees in (-180, 180].
+ */
+float sky_moon_angle(const sky_data_t *d)
+{
+    int noon = d->sunrise_min >= 0 ? (d->sunrise_min + d->sunset_min) / 2 : 720;
+    float sun = 360.0f * (float)(d->now_min - noon) / 1440.0f;
+    return wrap_deg(sun - 360.0f * d->moon_frac);
 }
 
 /**
@@ -130,7 +189,8 @@ static void sun_part(time_t now, const struct tm *t, float lat, float lon, sky_d
 
 /**
  * @brief Compute the sky at @p now for @p lat / @p lon with Kp @p kp.
- * @version 1
+ * v2: moon_frac (the month fraction, from the lit fraction and side).
+ * @version 2
  * @req REQ-ASTRO-001
  * @req REQ-AMB-001
  */
@@ -143,6 +203,10 @@ void sky_data_compute(time_t now, float lat, float lon, float kp, sky_data_t *ou
     sun_part(now, &t, lat, lon, out);
     astro_calc_moon_phase(t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, &out->moon);
     out->waxing = out->moon.days_to_full < out->moon.days_to_new;
+    // Back from the lit fraction: f = (1 - cos 2 pi x) / 2, waxing x in [0, .5].
+    float f = out->moon.illumination_pct / 100.0f;
+    float x = acosf(fminf(fmaxf(1.0f - 2.0f * f, -1.0f), 1.0f)) / (2.0f * (float)M_PI);
+    out->moon_frac = out->waxing ? x : 1.0f - x;
     out->kp = kp > 0.0f ? kp : 0.0f;
     out->aurora_prob = out->kp > 0.0f ? astro_calc_aurora_probability(kp, lat) : 0.0f;
     out->season = next_event(now, SEASONS, COUNT(SEASONS), &out->season_days);

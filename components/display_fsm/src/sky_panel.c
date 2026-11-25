@@ -32,17 +32,6 @@
 LV_FONT_DECLARE(nunito_48);
 
 /**
- * @brief Format local minute-of-day @p m as "7:03 AM".
- * @version 1
- * @utility
- */
-static void fmt_clock(int m, char *out, size_t n)
-{
-    int h = m / 60;
-    snprintf(out, n, "%d:%02d %s", h % 12 ? h % 12 : 12, m % 60, h < 12 ? "AM" : "PM");
-}
-
-/**
  * @brief Format a span of @p m minutes as "2h 13m" (or "13m").
  * @version 1
  * @utility
@@ -66,12 +55,12 @@ static void fmt_days(int days, char *out, size_t n)
 }
 
 /**
- * @brief A card: the card slot's fill at 70 % over the picture, rounded, not scrolling.
+ * @brief A sky card (see sky_panel.h).
  * @version 1
- * @utility
+ * @req REQ-ASTRO-001
  * @return The card.
  */
-static lv_obj_t *card(lv_obj_t *parent, int32_t x, int32_t y, int32_t w, int32_t h)
+lv_obj_t *sky_card_create(lv_obj_t *parent, int32_t x, int32_t y, int32_t w, int32_t h)
 {
     lv_obj_t *c = lv_obj_create(parent);
     lv_obj_set_pos(c, x, y);
@@ -140,7 +129,8 @@ static void day_arc(lv_obj_t *parent, const sky_data_t *d)
 
 /**
  * @brief The arc's centre (time to the next turn of the day) and its end labels.
- * @version 1
+ * v2: times via sky_fmt_clock (shared).
+ * @version 2
  * @utility
  */
 static void arc_labels(lv_obj_t *parent, const sky_data_t *d)
@@ -161,11 +151,11 @@ static void arc_labels(lv_obj_t *parent, const sky_data_t *d)
     text_centered(parent, &nunito_48, UI_ROLE_TEXT, mid, 96, 340, big);
     text_centered(parent, &lv_font_montserrat_20, UI_ROLE_TEXT_MUTED, mid, 152, 340, small);
     if (d->sunrise_min < 0) return;
-    fmt_clock(d->sunrise_min, buf, sizeof(buf));
+    sky_fmt_clock(d->sunrise_min, buf, sizeof(buf));
     text_centered(parent, &lv_font_montserrat_20, UI_ROLE_TEXT, mid - end, 200, 140, buf);
     text_centered(parent, &lv_font_montserrat_16, UI_ROLE_TEXT_FAINT, mid - end, 226, 140,
                   "Sunrise");
-    fmt_clock(d->sunset_min, buf, sizeof(buf));
+    sky_fmt_clock(d->sunset_min, buf, sizeof(buf));
     text_centered(parent, &lv_font_montserrat_20, UI_ROLE_TEXT, mid + end, 200, 140, buf);
     text_centered(parent, &lv_font_montserrat_16, UI_ROLE_TEXT_FAINT, mid + end, 226, 140,
                   "Sunset");
@@ -185,7 +175,8 @@ static void row(lv_obj_t *parent, int i, const char *key, const char *value)
 
 /**
  * @brief The next golden hour: the morning one until it ends, then the evening one.
- * @version 1
+ * v2: times via sky_fmt_clock (shared).
+ * @version 2
  * @utility
  */
 static void fmt_golden(const sky_data_t *d, char *out, size_t n)
@@ -196,8 +187,8 @@ static void fmt_golden(const sky_data_t *d, char *out, size_t n)
         to = d->sunrise_min + GOLDEN_MIN;
     }
     char a[16], b[16];
-    fmt_clock(from, a, sizeof(a));
-    fmt_clock(to, b, sizeof(b));
+    sky_fmt_clock(from, a, sizeof(a));
+    sky_fmt_clock(to, b, sizeof(b));
     snprintf(out, n, "%s - %s%s", a, b, d->part == SKY_NIGHT_AFTER ? " tomorrow" : "");
 }
 
@@ -261,46 +252,49 @@ static float disc_px(float dx, float dy, float r, float term, float side, lv_col
 }
 
 /**
- * @brief The moon drawn as it looks tonight: lit by @p illum_pct, from the right while
- *        @p waxing (northern hemisphere), the shadowed part in a deep tone.
+ * @brief The moon as it looks (see sky_panel.h).
  * @version 1
- * @utility
+ * @req REQ-ASTRO-001
+ * @return The disc, or NULL when out of memory.
  */
-static void moon_disc(lv_obj_t *parent, float illum_pct, bool waxing, int32_t x, int32_t y)
+lv_obj_t *sky_moon_create(lv_obj_t *parent, const sky_data_t *d, int32_t diameter, int32_t x,
+                          int32_t y)
 {
-    lv_draw_buf_t *buf = lv_draw_buf_create(DISC_D, DISC_D, LV_COLOR_FORMAT_ARGB8888, 0);
-    if (!buf) return;
+    lv_draw_buf_t *buf = lv_draw_buf_create(diameter, diameter, LV_COLOR_FORMAT_ARGB8888, 0);
+    if (!buf) return NULL;
     lv_obj_t *cv = lv_canvas_create(parent);
     lv_canvas_set_draw_buf(cv, buf);
     lv_obj_add_event_cb(cv, free_buf_cb, LV_EVENT_DELETE, buf);
     lv_canvas_fill_bg(cv, ui_theme_color(UI_ROLE_SCREEN), LV_OPA_TRANSP);
     lv_obj_set_pos(cv, x, y);
     lv_obj_set_style_radius(cv, LV_RADIUS_CIRCLE, 0);   // a rim, so a lit disc shows on a
-    lv_obj_set_style_border_width(cv, 2, 0);             // light card
+    lv_obj_set_style_border_width(cv, diameter >= 60 ? 2 : 1, 0);   // light card
     ui_bind_border(cv, UI_ROLE_BORDER);
     // Terminator at x = term * w(y): +1 = none lit (new), -1 = all lit (full).
-    const float r = DISC_D / 2.0f - 1.0f, term = 1.0f - 2.0f * illum_pct / 100.0f;
+    const float r = diameter / 2.0f - 1.0f, term = 1.0f - 2.0f * d->moon.illumination_pct / 100.0f;
+    const float side = d->waxing ? 1.0f : -1.0f, half = diameter / 2.0f;
     const lv_color_t lit = ui_theme_color(UI_ROLE_LIGHT), dark = ui_theme_tone(0.3f);
-    for (int py = 0; py < DISC_D; py++) {
-        for (int px = 0; px < DISC_D; px++) {
+    for (int py = 0; py < diameter; py++) {
+        for (int px = 0; px < diameter; px++) {
             lv_color_t c;
-            float cover = disc_px(px + 0.5f - DISC_D / 2.0f, py + 0.5f - DISC_D / 2.0f, r, term,
-                                  waxing ? 1.0f : -1.0f, lit, dark, &c);
+            float cover = disc_px(px + 0.5f - half, py + 0.5f - half, r, term, side, lit, dark, &c);
             if (cover > 0.0f) lv_canvas_set_px(cv, px, py, c, (lv_opa_t)(cover * 255.0f));
         }
     }
+    return cv;
 }
 
 /**
  * @brief The moon card: the disc and its phase, illumination and days to full and new.
- * @version 1
+ * v2: the shared card and moon disc (sky_card_create, sky_moon_create).
+ * @version 2
  * @utility
  */
 static void moon_card(lv_obj_t *root, const sky_data_t *d)
 {
-    lv_obj_t *c = card(root, MOON_X, MOON_Y, MOON_W, MOON_H);
+    lv_obj_t *c = sky_card_create(root, MOON_X, MOON_Y, MOON_W, MOON_H);
     const int32_t inner_h = MOON_H - 2 * PAD;
-    moon_disc(c, d->moon.illumination_pct, d->waxing, 0, (inner_h - DISC_D) / 2);
+    sky_moon_create(c, d, DISC_D, 0, (inner_h - DISC_D) / 2);
     const int32_t x = DISC_D + 20, y = (inner_h - 150) / 2;
     char buf[48];
     text_at(c, &lv_font_montserrat_24, UI_ROLE_TEXT, x, y, d->moon.phase_name);
@@ -321,7 +315,8 @@ static void moon_card(lv_obj_t *root, const sky_data_t *d)
 
 /**
  * @brief Build the sky screen's cards on @p screen from @p d.
- * @version 1
+ * v2: the shared card (sky_card_create).
+ * @version 2
  * @req REQ-ASTRO-001
  * @req REQ-AMB-001
  * @return The holder of both cards.
@@ -332,7 +327,7 @@ lv_obj_t *sky_panel_create(lv_obj_t *screen, const sky_data_t *d)
     lv_obj_remove_style_all(root);
     lv_obj_set_size(root, lv_pct(100), lv_pct(100));
     lv_obj_remove_flag(root, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
-    lv_obj_t *sun = card(root, SUN_X, SUN_Y, SUN_W, SUN_H);
+    lv_obj_t *sun = sky_card_create(root, SUN_X, SUN_Y, SUN_W, SUN_H);
     day_arc(sun, d);
     arc_labels(sun, d);
     detail_rows(sun, d);

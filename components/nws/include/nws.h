@@ -55,6 +55,7 @@ typedef struct nws_forecast_period_t {
     char  wind_speed[16];           // "10 to 15 mph"
     char  wind_direction[4];        // "NW"
     bool  is_daytime;
+    int   precip_pct;               // chance of precipitation (%), -1 when not given
 } nws_forecast_period_t;
 
 typedef struct nws_forecast_t {
@@ -107,6 +108,7 @@ typedef struct nws_location_t {
  * @param lon   Longitude
  * @param out   Resolved location info
  * @return ESP_OK on success
+ * @version 1
  */
 esp_err_t nws_resolve_location(float lat, float lon, nws_location_t *out);
 
@@ -130,6 +132,7 @@ esp_err_t nws_fetch_alerts(float lat, float lon, nws_alerts_t *out);
  * @param png_buf   Output: SPIRAM-allocated PNG data
  * @param png_len   Output: length of PNG data
  * @return ESP_OK on success
+ * @version 1
  */
 esp_err_t nws_fetch_radar(float lat, float lon, int64_t id, uint8_t **png_buf,
                           size_t *png_len);
@@ -138,6 +141,7 @@ esp_err_t nws_fetch_radar(float lat, float lon, int64_t id, uint8_t **png_buf,
  * @brief Fetch current Kp index from NOAA SWPC.
  * @param kp_out  Most recent Kp value (0.0-9.0)
  * @return ESP_OK on success
+ * @version 1
  */
 esp_err_t nws_fetch_kp_index(float *kp_out);
 
@@ -155,11 +159,14 @@ float                   nws_get_kp_index(void);
  * @param len_out  Output: length of PNG data in bytes
  * @return Pointer to SPIRAM-allocated PNG data, or NULL if no radar cached.
  *         Pointer is valid until next radar fetch. Caller must NOT free.
+ * @version 1
  */
 const uint8_t *nws_get_radar_png(size_t *len_out);
 
 /**
  * @brief When the cached radar image (nws_get_radar_png) is valid from (epoch s), or 0.
+ * @version 1
+ * @return Epoch seconds, or 0 when none is cached.
  */
 time_t nws_get_radar_ts(void);
 
@@ -167,6 +174,7 @@ time_t nws_get_radar_ts(void);
  * @brief Check if cached radar data shows precipitation.
  * Uses PNG size heuristic (>20KB = precipitation present).
  * @return true if radar data exists and indicates precipitation.
+ * @version 1
  */
 bool nws_radar_has_precipitation(void);
 
@@ -177,22 +185,34 @@ bool nws_radar_has_precipitation(void);
 /**
  * @brief Write a fetched radar PNG to the SD history as the frame valid at @p ts and prune
  *        old frames. NWS task only; skipped before SNTP time or without an SD card.
+ * @version 1
  */
 void nws_radar_history_save(const uint8_t *png, size_t len, time_t ts);
 
-/** @brief Whether the history holds the frame valid at @p ts. */
+/**
+ * @brief Whether the history holds the frame valid at @p ts.
+ * @version 1
+ * @return true when the frame's file exists.
+ */
 bool nws_radar_history_has(time_t ts);
 
-/** @brief Delete every history frame whose time is not among the @p n in @p keep. */
+/**
+ * @brief Delete every history frame whose time is not among the @p n in @p keep.
+ * @version 1
+ */
 void nws_radar_history_keep(const time_t *keep, int n);
 
 /**
  * @brief List history frame times within the max age, ascending, at most @p max.
  * @return Number of entries written to @p ts_out.
+ * @version 1
  */
 int nws_radar_history_list(time_t *ts_out, int max);
 
-/** @brief Build the SD path of the history frame taken at @p ts. */
+/**
+ * @brief Build the SD path of the history frame taken at @p ts.
+ * @version 1
+ */
 void nws_radar_history_path(time_t ts, char *out, size_t out_sz);
 
 // ============================================================================
@@ -206,6 +226,7 @@ void nws_radar_history_path(time_t ts, char *out, size_t out_sz);
  * @param event_cb  Callback for delivering display events (e.g. display_fsm_send_event).
  *                  If NULL, events are logged but not delivered.
  * @return ESP_OK on success
+ * @version 1
  */
 esp_err_t nws_init(float lat, float lon, nws_event_cb_t event_cb);
 

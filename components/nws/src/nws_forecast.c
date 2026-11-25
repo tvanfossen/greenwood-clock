@@ -1,6 +1,7 @@
 /**
  * @file nws_forecast.c
- * @version 1
+ * v2: each period's chance of precipitation.
+ * @version 2
  * @brief Fetch the 7-day forecast from the NWS gridpoints endpoint.
  */
 
@@ -12,8 +13,9 @@ static const char *TAG = "nws_fc";
 
 /**
  * @brief Copy one forecast period (name, detailed/short forecast, wind,
- *        temperature, unit defaulting to 'F', isDaytime) into @p out.
- * @version 1
+ *        temperature, unit defaulting to 'F', isDaytime, chance of precipitation) into @p out.
+ * v2: probabilityOfPrecipitation.value (-1 when absent or null).
+ * @version 2
  * @req REQ-WX-003
  */
 static void parse_period(const cJSON *period_json, nws_forecast_period_t *out)
@@ -39,6 +41,10 @@ static void parse_period(const cJSON *period_json, nws_forecast_period_t *out)
 
     const cJSON *daytime = cJSON_GetObjectItemCaseSensitive(period_json, "isDaytime");
     out->is_daytime = cJSON_IsTrue(daytime);
+
+    const cJSON *pop = cJSON_GetObjectItemCaseSensitive(period_json, "probabilityOfPrecipitation");
+    const cJSON *pop_v = pop ? cJSON_GetObjectItemCaseSensitive(pop, "value") : NULL;
+    out->precip_pct = cJSON_IsNumber(pop_v) ? pop_v->valueint : -1;   // null: none given
 }
 
 /**

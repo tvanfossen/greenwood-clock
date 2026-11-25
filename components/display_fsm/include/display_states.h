@@ -16,6 +16,12 @@
 // ClockFull — home state, full-screen clock
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief ClockFull state: the home screen, full-size clock.
+ * @version 1
+ * @req REQ-CLOCK-001
+ * @return Not applicable: type declaration (clew-guard parses this struct header as a function).
+ */
 struct ClockFull : DisplayFsm
 {
     /**
@@ -38,10 +44,19 @@ struct ClockFull : DisplayFsm
 // WeatherOverlay — minimized clock + conditions + forecast
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief WeatherOverlay state: conditions card, forecast strip and sky dial.
+ * v2: the sky dial (s_dial).
+ * @version 2
+ * @req REQ-WX-002
+ * @req REQ-WX-007
+ * @return Not applicable: type declaration (clew-guard parses this struct header as a function).
+ */
 struct WeatherOverlay : DisplayFsm
 {
     static weather_card_t    *s_card;
     static forecast_strip_t  *s_strip;
+    static lv_obj_t          *s_dial;    // sun / moon dial under the clock
 
     void entry() override;
     void exit() override;

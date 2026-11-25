@@ -4,7 +4,8 @@
  * v3: panel text colours judged against the panel's composite backdrop; Lottie top right.
  * v4: colours are theme bindings (ui_theme_bind); the set_color / set_contrast calls are gone.
  * v5: degree signs; forecast high and low on two lines.
- * @version 5
+ * v6: chance of precipitation per day, wind gusts, feels-like only when it differs.
+ * @version 6
  * @brief Layer 1: WeatherCard + ForecastStrip widgets.
  *
  * Caller must hold LVGL lock for all functions, EXCEPT forecast_icons_rescan() (SD I/O: off-lock).
@@ -19,6 +20,7 @@
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -348,13 +350,51 @@ lv_obj_t *weather_card_container(const weather_card_t *w)
     return w ? w->container : NULL;
 }
 
+/** The feels-like temperature shows only when it is this far (F) from the actual. */
+#define FEELS_SHOW_F 3.0f
+
+/**
+ * @brief Set the feels-like line: shown only when it differs from the actual temperature by
+ *        FEELS_SHOW_F or more (and both are known).
+ * @version 1
+ * @utility
+ * @return Whether it shows.
+ */
+static bool card_set_feels(weather_card_t *w, const nws_conditions_t *cond)
+{
+    bool known = cond->feels_like_c > -200.0f && cond->temp_c > -200.0f;
+    float feels = c_to_f(cond->feels_like_c);
+    bool show = known && fabsf(feels - c_to_f(cond->temp_c)) >= FEELS_SHOW_F;
+    if (show) lv_label_set_text_fmt(w->lbl_feels, "Feels like %.0f\xC2\xB0" "F", (double)feels);
+    lv_obj_set_flag(w->lbl_feels, LV_OBJ_FLAG_HIDDEN, !show);
+    return show;
+}
+
+/**
+ * @brief Set the wind line, with the gusts when they are a few mph above the wind.
+ * @version 1
+ * @utility
+ */
+static void card_set_wind(weather_card_t *w, const nws_conditions_t *cond)
+{
+    float speed = kmh_to_mph(cond->wind_speed_kmh), gust = kmh_to_mph(cond->wind_gust_kmh);
+    if (gust >= speed + 3.0f) {
+        lv_label_set_text_fmt(w->lbl_wind, "Wind %s %.0f mph, gusts %.0f",
+                              cond->wind_dir_cardinal, (double)speed, (double)gust);
+    } else {
+        lv_label_set_text_fmt(w->lbl_wind, "Wind %s %.0f mph", cond->wind_dir_cardinal,
+                              (double)speed);
+    }
+}
+
 /**
  * @brief Refresh the card labels from current conditions (F / mph; "--" for missing
  *        temperatures and humidity) and re-align them. Ignores NULL or invalid input.
  * v2: "--" for missing values (the em dash is not in the font: it drew nothing); humidity too
  *     (showed "-1%").
  * v3: degree sign on the feels-like temperature.
- * @version 3
+ * v4: feels-like only when it differs by 3 F or more; wind gusts.
+ * @version 4
  * @req REQ-WX-002
  */
 void weather_card_update(weather_card_t *w, const nws_conditions_t *cond)
@@ -378,18 +418,8 @@ void weather_card_update(weather_card_t *w, const nws_conditions_t *cond)
     // Description
     lv_label_set_text(w->lbl_description, cond->description);
 
-    // Feels like
-    if (cond->feels_like_c <= -200.0f) {
-        lv_label_set_text(w->lbl_feels, "Feels like --");
-    } else {
-        snprintf(buf, sizeof(buf), "Feels like %.0f\xC2\xB0" "F", c_to_f(cond->feels_like_c));
-        lv_label_set_text(w->lbl_feels, buf);
-    }
-
-    // Wind
-    snprintf(buf, sizeof(buf), "Wind %s %.0f mph",
-             cond->wind_dir_cardinal, kmh_to_mph(cond->wind_speed_kmh));
-    lv_label_set_text(w->lbl_wind, buf);
+    bool feels = card_set_feels(w, cond);
+    card_set_wind(w, cond);
 
     // Humidity
     if (cond->humidity < 0) snprintf(buf, sizeof(buf), "Humidity --");
@@ -399,7 +429,8 @@ void weather_card_update(weather_card_t *w, const nws_conditions_t *cond)
     // Re-align after text changes
     lv_obj_align_to(w->lbl_description, w->lbl_temp, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
     lv_obj_align_to(w->lbl_feels, w->lbl_description, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 8);
-    lv_obj_align_to(w->lbl_wind, w->lbl_feels, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
+    lv_obj_align_to(w->lbl_wind, feels ? w->lbl_feels : w->lbl_description,
+                    LV_ALIGN_OUT_BOTTOM_LEFT, 0, feels ? 4 : 8);
     lv_obj_align_to(w->lbl_humidity, w->lbl_wind, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
 }
 
@@ -487,6 +518,7 @@ struct forecast_strip_t {
         lv_obj_t *img_icon;        /* static condition icon (sdcard/icons/weather) */
         lv_obj_t *lbl_hi;
         lv_obj_t *lbl_lo;
+        lv_obj_t *lbl_pop;         /* chance of precipitation, by the icon */
     } days[FORECAST_DAYS];
 };
 
@@ -514,7 +546,8 @@ static lv_obj_t *strip_label(lv_obj_t *col, const lv_font_t *font, ui_role_t rol
  * @brief Create day column @p i: name, condition icon (text fallback), the high and, below
  *        it, the low.
  * v2: high and low on two lines (was "hi/lo" on one).
- * @version 2
+ * v3: the chance of precipitation at the icon's lower right.
+ * @version 3
  * @utility
  */
 static void strip_create_column(forecast_strip_t *s, int i)
@@ -545,6 +578,9 @@ static void strip_create_column(forecast_strip_t *s, int i)
                                     86, "--");
     s->days[i].lbl_lo = strip_label(col, &lv_font_montserrat_20, UI_ROLE_TEXT_MUTED,
                                     LV_ALIGN_TOP_MID, 110, "--");
+    s->days[i].lbl_pop = strip_label(col, &lv_font_montserrat_16, UI_ROLE_TEXT, LV_ALIGN_TOP_MID,
+                                     70, "");
+    lv_obj_set_x(s->days[i].lbl_pop, 42);
 }
 
 /**
@@ -655,11 +691,28 @@ static void strip_day_name(int day_idx, char *out, size_t out_sz)
     snprintf(out, out_sz, "%s %d/%d", wday, ti.tm_mon + 1, ti.tm_mday);
 }
 
+/** Below this chance of precipitation a day shows none. */
+#define POP_SHOW_PCT 20
+
+/**
+ * @brief Show @p pct (the day's chance of precipitation, -1 unknown) when it is worth
+ *        reading, else nothing.
+ * @version 1
+ * @utility
+ */
+static void strip_set_pop(lv_obj_t *lbl, int pct)
+{
+    if (pct >= POP_SHOW_PCT) lv_label_set_text_fmt(lbl, "%d%%", pct);
+    else lv_label_set_text(lbl, "");
+}
+
 /**
  * @brief Fill one column from a forecast period (night period @p p only for "Tonight"): the
- *        high ("Tonight" has none) over the low, in degrees.
+ *        high ("Tonight" has none) over the low, in degrees, and the chance of precipitation
+ *        (the day's or night's, whichever is higher).
  * v2: high and low on two lines with degree signs; a missing low shows "--".
- * @version 2
+ * v3: chance of precipitation.
+ * @version 3
  * @utility
  */
 static void strip_fill_day(forecast_strip_t *s, int day, const nws_forecast_t *fc, int i)
@@ -671,12 +724,16 @@ static void strip_fill_day(forecast_strip_t *s, int day, const nws_forecast_t *f
         lv_label_set_text(s->days[day].lbl_name, buf);
         lv_label_set_text_fmt(s->days[day].lbl_hi, "%d\xC2\xB0", p->temperature);
         bool has_night = i + 1 < fc->period_count && !fc->periods[i + 1].is_daytime;
-        if (has_night) lv_label_set_text_fmt(s->days[day].lbl_lo, "%d\xC2\xB0", fc->periods[i + 1].temperature);
+        const nws_forecast_period_t *night = has_night ? &fc->periods[i + 1] : NULL;
+        if (night) lv_label_set_text_fmt(s->days[day].lbl_lo, "%d\xC2\xB0", night->temperature);
         else lv_label_set_text(s->days[day].lbl_lo, "--");
+        strip_set_pop(s->days[day].lbl_pop, night && night->precip_pct > p->precip_pct
+                                                ? night->precip_pct : p->precip_pct);
     } else {
         lv_label_set_text(s->days[day].lbl_name, "Tonight");
         lv_label_set_text(s->days[day].lbl_hi, "");
         lv_label_set_text_fmt(s->days[day].lbl_lo, "%d\xC2\xB0", p->temperature);
+        strip_set_pop(s->days[day].lbl_pop, p->precip_pct);
     }
     strip_set_condition(s, day, p->short_forecast, p->is_daytime);
 }

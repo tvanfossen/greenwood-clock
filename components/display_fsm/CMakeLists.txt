@@ -36,6 +36,7 @@ idf_component_register(
         "src/astro_calc.c"
         "src/sky_data.c"
         "src/sky_panel.c"
+        "src/sky_dial.c"
         "src/image_rotator.c"
         "src/json_layout.c"
         "src/state_clock.cpp"

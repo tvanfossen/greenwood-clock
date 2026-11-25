@@ -31,6 +31,7 @@
 #include "alert_card.h"
 #include "settings_frame.h"
 #include "sky_panel.h"
+#include "sky_dial.h"
 #include "nws.h"
 #include "src/libs/lodepng/lodepng.h"
 
@@ -260,7 +261,8 @@ static void clock_in(int mode)
 
 /**
  * @brief Fill @p c and @p fc with plausible weather (no network on the host).
- * @version 1
+ * v2: gusts and chances of precipitation (one day under the 20% cut-off).
+ * @version 2
  * @utility
  */
 static void fake_weather(nws_conditions_t *c, nws_forecast_t *fc)
@@ -273,6 +275,7 @@ static void fake_weather(nws_conditions_t *c, nws_forecast_t *fc)
     c->feels_like_c = -3.0f;
     c->humidity = 64;
     c->wind_speed_kmh = 11.0f;
+    c->wind_gust_kmh = 35.0f;
     strcpy(c->wind_dir_cardinal, "SE");
     strcpy(c->description, "Partly Cloudy");
     c->valid = true;
@@ -284,21 +287,47 @@ static void fake_weather(nws_conditions_t *c, nws_forecast_t *fc)
         p->temperature = i % 2 ? 22 + i : 39 + i;
         p->temp_unit = 'F';
         p->is_daytime = (i % 2) == 0;
+        static const int POP[7] = { 10, 30, 80, 60, 70, 20, 90 };
+        p->precip_pct = i % 2 ? POP[i / 2] - 10 : POP[i / 2];
     }
     fc->period_count = 14;
     fc->valid = true;
 }
 
 /**
- * @brief The weather screen: card, forecast strip and a Severe alert over the background.
- * v2: a real event name; no contrast calls (bindings).
- * v3: the real clock, minimized.
- * @version 3
+ * @brief Local time @p hour : @p min on 2026-@p mon-@p day at the public sample place
+ *        (Chicago, not the device's): the clock set to it and the sky computed for it.
+ * @version 1
  * @utility
  */
-static void scene_weather(void)
+static void sample_moment(int mon, int day, int hour, int min, sky_data_t *d)
+{
+    setenv("TZ", "CST6CDT,M3.2.0,M11.1.0", 1);
+    tzset();
+    struct tm tm = { .tm_year = 126, .tm_mon = mon - 1, .tm_mday = day, .tm_hour = hour,
+                     .tm_min = min, .tm_isdst = -1 };
+    time_t t = mktime(&tm);
+    localtime_r(&t, &tm);
+    clock_in(CLOCK_MODE_MINIMIZED);
+    clock_widget_update(s_clock, &tm);
+    sky_data_compute(t, 41.88f, -87.63f, 2.3f, d);
+}
+
+/**
+ * @brief The weather screen at local @p hour : @p min on 24 Nov: card, forecast strip, sky
+ *        dial and a Severe alert over the background.
+ * v2: a real event name; no contrast calls (bindings).
+ * v3: the real clock, minimized.
+ * v4: the sky dial, at a given time.
+ * @version 4
+ * @utility
+ */
+static void scene_weather(int hour, int min)
 {
     lv_obj_t *scr = fresh_screen(true);
+    sky_data_t sky;
+    sample_moment(11, 24, hour, min, &sky);
+    sky_dial_create(scr, &sky, 588, 250, 420, 166);
     nws_conditions_t c;
     nws_forecast_t fc;
     fake_weather(&c, &fc);
@@ -313,7 +342,7 @@ static void scene_weather(void)
     strcpy(a.severity, "Severe");
     strcpy(a.headline, "until 7 PM: heavy snow, 6 to 10 inches");
     alert_banner_show(ab, &a);
-    clock_in(CLOCK_MODE_MINIMIZED);
+    settle(900);
 }
 
 /**
@@ -524,13 +553,14 @@ static void fake_alerts(void)
 
 /**
  * @brief The alert details card over the weather screen (as a banner tap opens it).
- * @version 1
+ * v2: the weather scene takes a time.
+ * @version 2
  * @utility
  */
 static void scene_alert(void)
 {
     fake_alerts();
-    scene_weather();
+    scene_weather(12, 9);
     alert_card_open(lv_layer_top(), &s_alerts, 0);
 }
 
@@ -538,22 +568,15 @@ static void scene_alert(void)
  * @brief The sky screen (sun and moon cards under the minimised clock) at local
  *        @p hour : @p min on 2026-@p mon-@p day, at a public sample place (Chicago, not the
  *        device's).
- * @version 1
+ * v2: through sample_moment (shared with the weather scene).
+ * @version 2
  * @utility
  */
 static void scene_sky(int mon, int day, int hour, int min)
 {
-    setenv("TZ", "CST6CDT,M3.2.0,M11.1.0", 1);
-    tzset();
-    struct tm tm = { .tm_year = 126, .tm_mon = mon - 1, .tm_mday = day, .tm_hour = hour,
-                     .tm_min = min, .tm_isdst = -1 };
-    time_t t = mktime(&tm);
-    localtime_r(&t, &tm);
     lv_obj_t *scr = fresh_screen(true);
-    clock_in(CLOCK_MODE_MINIMIZED);
-    clock_widget_update(s_clock, &tm);
     sky_data_t d;
-    sky_data_compute(t, 41.88f, -87.63f, 2.3f, &d);
+    sample_moment(mon, day, hour, min, &d);
     sky_panel_create(scr, &d);
     settle(900);
 }
@@ -615,14 +638,15 @@ static bool install_theme(const char *path, ui_theme_t *t)
 /**
  * @brief Build the weather scene under theme @p first, switch to @p path in place and write
  *        <stem>_live.ppm: the live repaint, no widget rebuilt.
- * @version 1
+ * v2: the weather scene takes a time.
+ * @version 2
  * @utility
  */
 static void render_live(const char *out_dir, const char *first, const char *path)
 {
     ui_theme_t t;
     if (!install_theme(first, &t)) return;
-    scene_weather();
+    scene_weather(12, 9);
     if (!install_theme(path, &t)) return;
     char stem[64], file[512];
     stem_of(path, stem, sizeof(stem));
@@ -661,7 +685,8 @@ static void render_edit_demo(const char *out_dir, const char *path)
  * v3: editor scenes per tab.
  * v4: settings and alert-card scenes.
  * v5: sky scenes (day, night, dawn).
- * @version 5
+ * v6: weather at noon, dusk and night.
+ * @version 6
  * @utility
  * @return Whether the theme parsed.
  */
@@ -671,8 +696,14 @@ static bool render_theme(const char *out_dir, const char *path)
     if (!install_theme(path, &t)) return false;
     char stem[64], file[512];
     stem_of(path, stem, sizeof(stem));
-    scene_weather();
+    scene_weather(12, 9);
     snprintf(file, sizeof(file), "%s/%s_weather.ppm", out_dir, stem);
+    write_frame(file);
+    scene_weather(20, 40);
+    snprintf(file, sizeof(file), "%s/%s_weather_night.ppm", out_dir, stem);
+    write_frame(file);
+    scene_weather(16, 10);
+    snprintf(file, sizeof(file), "%s/%s_weather_dusk.ppm", out_dir, stem);
     write_frame(file);
     scene_gallery();
     snprintf(file, sizeof(file), "%s/%s_gallery.ppm", out_dir, stem);

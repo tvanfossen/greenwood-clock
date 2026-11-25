@@ -741,6 +741,7 @@ THEME_PREVIEW_SRCS = (
     "components/display_fsm/src/alert_card.c",
     "components/display_fsm/src/sky_data.c",
     "components/display_fsm/src/sky_panel.c",
+    "components/display_fsm/src/sky_dial.c",
     "components/display_fsm/src/astro_calc.c",
     "components/display_fsm/src/settings_frame.c",
     "components/display_fsm/src/clock_widget.c",

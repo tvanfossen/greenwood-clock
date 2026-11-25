@@ -10,6 +10,7 @@
 #include "astro_calc.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <time.h>
 
 #ifdef __cplusplus
@@ -33,6 +34,7 @@ typedef struct {
     sky_part_t   part;
     moon_phase_t moon;
     bool         waxing;
+    float        moon_frac;      /* where in its month: 0 new, 0.5 full */
     float        kp;             /* 0 when unknown */
     float        aurora_prob;    /* 0..1 */
     const char  *season;         /* next solstice / equinox */
@@ -57,6 +59,34 @@ void sky_data_compute(time_t now, float lat, float lon, float kp, sky_data_t *ou
  * @return Days, 0..365.
  */
 int sky_days_until(time_t now, int month, int day);
+
+/**
+ * @brief Format local minute-of-day @p m as "7:03 AM".
+ * @version 1
+ * @req REQ-ASTRO-001
+ */
+void sky_fmt_clock(int m, char *out, size_t n);
+
+/**
+ * @brief The sun's place on the sky wheel, in degrees from the top (clockwise): -90 at
+ *        sunrise (on the horizon, left), 0 midway through the day, +90 at sunset, 180 midway
+ *        through the night. Day and night each take half the wheel, so the sun crosses the
+ *        horizon exactly at sunrise and sunset.
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @return Degrees in (-180, 180]; 180 in polar night.
+ */
+float sky_sun_angle(const sky_data_t *d);
+
+/**
+ * @brief The moon's place on the sky wheel (degrees, as sky_sun_angle): it trails the sun by
+ *        its month fraction of a turn (new: with the sun, full: opposite), on a 24 h wheel
+ *        turning about the middle of the day. Within about an hour of the real moonrise.
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @return Degrees in (-180, 180].
+ */
+float sky_moon_angle(const sky_data_t *d);
 
 #ifdef __cplusplus
 }

@@ -20,6 +20,26 @@ extern "C" {
 #endif
 
 /**
+ * @brief A sky card on @p parent at (@p x, @p y), @p w x @p h: the card slot's fill at 70 %
+ *        over the picture, rounded, padded 16, not scrolling.
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @return The card.
+ */
+lv_obj_t *sky_card_create(lv_obj_t *parent, int32_t x, int32_t y, int32_t w, int32_t h);
+
+/**
+ * @brief The moon as it looks: a @p diameter px disc at (@p x, @p y) in @p parent, lit by
+ *        @p d's illumination from the right while waxing (northern hemisphere), the shadowed
+ *        part a deep tone, with a rim.
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @return The disc (a canvas; its buffer is freed with it), or NULL when out of memory.
+ */
+lv_obj_t *sky_moon_create(lv_obj_t *parent, const sky_data_t *d, int32_t diameter, int32_t x,
+                          int32_t y);
+
+/**
  * @brief Build the sky screen's cards on @p screen from @p d.
  * @version 1
  * @req REQ-ASTRO-001

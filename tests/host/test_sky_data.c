@@ -7,6 +7,7 @@
  */
 #include "sky_data.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -98,8 +99,49 @@ static void test_moon_and_kp(void)
 }
 
 /**
- * @brief Run the sky data tests in Chicago time; exit status is the failure count.
+ * @brief The sun on the wheel: on the horizon at sunrise and sunset, at the top midday,
+ *        under it at night; the full moon opposite the sun, the new moon with it.
  * @version 1
+ * @utility
+ */
+static void test_wheel(void)
+{
+    sky_data_t s = { .sunrise_min = 420, .sunset_min = 1020, .part = SKY_DAY };
+    s.now_min = 420;
+    CHECK(fabsf(sky_sun_angle(&s) + 90.0f) < 0.1f, "sunrise: -90, got %.1f",
+          (double)sky_sun_angle(&s));
+    s.now_min = 720;
+    CHECK(fabsf(sky_sun_angle(&s)) < 0.1f, "midday: 0");
+    s.part = SKY_NIGHT_AFTER;
+    s.now_min = 1020;
+    CHECK(fabsf(sky_sun_angle(&s) - 90.0f) < 0.1f, "sunset: 90");
+    s.now_min = 0;   // 7 h after sunset of a 14 h night: half way
+    CHECK(fabsf(fabsf(sky_sun_angle(&s)) - 180.0f) < 0.1f, "mid-night: 180, got %.1f",
+          (double)sky_sun_angle(&s));
+    s.part = SKY_NIGHT_BEFORE;
+    s.now_min = 300;
+    float a = sky_sun_angle(&s);
+    CHECK(a < -90.0f && a > -180.0f, "before dawn: below the left horizon, got %.1f", (double)a);
+    s.part = SKY_DAY;
+    s.now_min = 720;
+    s.moon_frac = 0.5f;
+    CHECK(fabsf(fabsf(sky_moon_angle(&s)) - 180.0f) < 0.1f, "full moon at noon: opposite");
+    s.now_min = 0;
+    CHECK(fabsf(sky_moon_angle(&s)) < 0.1f, "full moon at midnight: at the top");
+    s.moon_frac = 0.0f;
+    s.now_min = 720;
+    CHECK(fabsf(sky_moon_angle(&s)) < 0.1f, "new moon: with the sun");
+    s.moon_frac = 0.25f;   // first quarter: rises about noon, highest at sunset
+    s.now_min = 1080;
+    CHECK(fabsf(sky_moon_angle(&s)) < 0.1f, "first quarter highest at 18:00");
+    s.sunrise_min = -1;
+    CHECK(sky_sun_angle(&s) == 180.0f, "polar night: no sun");
+}
+
+/**
+ * @brief Run the sky data tests in Chicago time; exit status is the failure count.
+ * v2: the sky wheel test.
+ * @version 2
  * @utility
  * @return 0 when every check passed.
  */
@@ -110,6 +152,7 @@ int main(void)
     test_sun();
     test_days_until();
     test_moon_and_kp();
+    test_wheel();
     printf("sky_data: %d/%d checks passed\n", s_checks - s_failures, s_checks);
     return s_failures;
 }
