@@ -284,13 +284,11 @@ requirements:
     name: Weather screen context
     subsystem: WX
     description: >-
-      The weather screen also shows each day's chance of rain or snow (when 20% or more),
-      wind gusts, the feels-like temperature only when it differs by 3 F or more, and a sky
+      The weather screen also shows wind gusts, the feels-like temperature only when it differs by 3 F or more, and a sky
       dial under the clock: the sun and moon on a wheel behind the horizon where they are now
       (the moon in its phase), with the next sunrise and sunset.
     acceptance_criteria: >-
-      A day forecast at 60% shows "60%" by its icon and a 10% day shows none; a 5 mph wind
-      gusting 25 reads "gusts 25"; at sunset the sun sits on the horizon's right end, at
+      A 5 mph wind gusting 25 reads "gusts 25"; at sunset the sun sits on the horizon's right end, at
       midday at the top, and at night it is hidden while a full moon is up.
 
   # ---------------------------------------------------------------- RADAR

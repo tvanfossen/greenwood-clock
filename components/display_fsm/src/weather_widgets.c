@@ -5,7 +5,8 @@
  * v4: colours are theme bindings (ui_theme_bind); the set_color / set_contrast calls are gone.
  * v5: degree signs; forecast high and low on two lines.
  * v6: chance of precipitation per day, wind gusts, feels-like only when it differs.
- * @version 6
+ * v7: no chance of precipitation in the strip (it crowded the column).
+ * @version 7
  * @brief Layer 1: WeatherCard + ForecastStrip widgets.
  *
  * Caller must hold LVGL lock for all functions, EXCEPT forecast_icons_rescan() (SD I/O: off-lock).
@@ -518,7 +519,6 @@ struct forecast_strip_t {
         lv_obj_t *img_icon;        /* static condition icon (sdcard/icons/weather) */
         lv_obj_t *lbl_hi;
         lv_obj_t *lbl_lo;
-        lv_obj_t *lbl_pop;         /* chance of precipitation, by the icon */
     } days[FORECAST_DAYS];
 };
 
@@ -547,7 +547,8 @@ static lv_obj_t *strip_label(lv_obj_t *col, const lv_font_t *font, ui_role_t rol
  *        it, the low.
  * v2: high and low on two lines (was "hi/lo" on one).
  * v3: the chance of precipitation at the icon's lower right.
- * @version 3
+ * v4: no chance of precipitation.
+ * @version 4
  * @utility
  */
 static void strip_create_column(forecast_strip_t *s, int i)
@@ -578,9 +579,6 @@ static void strip_create_column(forecast_strip_t *s, int i)
                                     86, "--");
     s->days[i].lbl_lo = strip_label(col, &lv_font_montserrat_20, UI_ROLE_TEXT_MUTED,
                                     LV_ALIGN_TOP_MID, 110, "--");
-    s->days[i].lbl_pop = strip_label(col, &lv_font_montserrat_16, UI_ROLE_TEXT, LV_ALIGN_TOP_MID,
-                                     70, "");
-    lv_obj_set_x(s->days[i].lbl_pop, 42);
 }
 
 /**
@@ -691,29 +689,14 @@ static void strip_day_name(int day_idx, char *out, size_t out_sz)
     snprintf(out, out_sz, "%s %d/%d", wday, ti.tm_mon + 1, ti.tm_mday);
 }
 
-/** Below this chance of precipitation a day shows none. */
-#define POP_SHOW_PCT 20
-
-/**
- * @brief Show @p pct (the day's chance of precipitation, -1 unknown) when it is worth
- *        reading, else nothing.
- * @version 1
- * @utility
- */
-static void strip_set_pop(lv_obj_t *lbl, int pct)
-{
-    if (pct >= POP_SHOW_PCT) lv_label_set_text_fmt(lbl, "%d%%", pct);
-    else lv_label_set_text(lbl, "");
-}
-
 /**
  * @brief Fill one column from a forecast period (night period @p p only for "Tonight"): the
- *        high ("Tonight" has none) over the low, in degrees, and the chance of precipitation
- *        (the day's or night's, whichever is higher).
+ *        high ("Tonight" has none) over the low, in degrees.
  * v2: high and low on two lines with degree signs; a missing low shows "--".
  * v3: chance of precipitation.
  * v4: "Hi" / "Lo" written before each.
- * @version 4
+ * v5: no chance of precipitation.
+ * @version 5
  * @utility
  */
 static void strip_fill_day(forecast_strip_t *s, int day, const nws_forecast_t *fc, int i)
@@ -728,13 +711,10 @@ static void strip_fill_day(forecast_strip_t *s, int day, const nws_forecast_t *f
         const nws_forecast_period_t *night = has_night ? &fc->periods[i + 1] : NULL;
         if (night) lv_label_set_text_fmt(s->days[day].lbl_lo, "Lo %d\xC2\xB0", night->temperature);
         else lv_label_set_text(s->days[day].lbl_lo, "Lo --");
-        strip_set_pop(s->days[day].lbl_pop, night && night->precip_pct > p->precip_pct
-                                                ? night->precip_pct : p->precip_pct);
     } else {
         lv_label_set_text(s->days[day].lbl_name, "Tonight");
         lv_label_set_text(s->days[day].lbl_hi, "");
         lv_label_set_text_fmt(s->days[day].lbl_lo, "Lo %d\xC2\xB0", p->temperature);
-        strip_set_pop(s->days[day].lbl_pop, p->precip_pct);
     }
     strip_set_condition(s, day, p->short_forecast, p->is_daytime);
 }
