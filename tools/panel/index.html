@@ -54,6 +54,49 @@
     s.src = 'panel.js';
     document.body.appendChild(s);
   }
+  // Upload (called from the settings UI): pick a picture, make it 1024x600 (a background is
+  // cropped to fill; a photo is fitted whole over a blurred copy of itself), send it as PNG.
+  const KINDS = ['background', 'photo'];
+  function safeName(file) {
+    const base = file.name.replace(/\.[^.]*$/, '').replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 40);
+    return (base || 'picture') + '.png';
+  }
+  function draw(ctx, img, cover, blur) {
+    const W = 1024, H = 600;
+    const s = (cover ? Math.max : Math.min)(W / img.width, H / img.height);
+    const w = img.width * s, h = img.height * s;
+    ctx.filter = blur ? 'blur(24px)' : 'none';
+    ctx.drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
+  }
+  async function toPng(file, kind) {
+    const img = await createImageBitmap(file);
+    const c = document.createElement('canvas');
+    c.width = 1024; c.height = 600;
+    const ctx = c.getContext('2d');
+    draw(ctx, img, true, kind === 1);   // fill (blurred behind a photo)
+    if (kind === 1) draw(ctx, img, false, false);
+    return new Promise(res => c.toBlob(res, 'image/png'));
+  }
+  async function sendPicture(file, kind, token) {
+    const name = safeName(file);
+    const png = await toPng(file, kind);
+    const r = await fetch('/api/upload?kind=' + KINDS[kind] + '&name=' + encodeURIComponent(name),
+                          { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: png });
+    const ok = r.ok;
+    const msg = ok ? 'Sent: ' + name : (r.status === 401 ? 'Session ended: scan the code on the clock again'
+                                                       : 'The clock refused it (' + r.status + ')');
+    Module.ccall('panel_upload_done', null, ['number', 'string', 'string'], [ok ? 1 : 0, name, msg]);
+  }
+  window.panelUpload = function (kind, token) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = () => {
+      if (input.files.length) sendPicture(input.files[0], kind, token).catch(e =>
+        Module.ccall('panel_upload_done', null, ['number', 'string', 'string'], [0, '', String(e)]));
+    };
+    input.click();
+  };
   start();
 </script>
 </body>

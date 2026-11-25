@@ -1,11 +1,12 @@
 /**
  * @file settings_backend.h
- * @version 1
+ * v2: optional upload (the phone sends a picture).
+ * @version 2
  * @brief What the settings screens (settings_app) need from the device they run for: read and
  *        change the settings, the lists to choose from, the schedule, the sun, and the few
- *        device-only screens. Two implementations: the clock's own (settings_backend_esp.c:
- *        NVS, SD, the display) and the phone panel's (state fetched once, changes POSTed to
- *        the clock). Calls are made under the LVGL lock; an implementation that blocks
+ *        device-only screens. Two implementations: the clock's own (state_settings.cpp:
+ *        NVS, SD, the display) and the phone panel's (tools/panel/settings_http.c: state
+ *        fetched once, changes POSTed to the clock). Calls are made under the LVGL lock; an implementation that blocks
  *        (SD, NVS, network) releases it itself, and answers slow work through a callback.
  */
 #pragma once
@@ -41,6 +42,12 @@ typedef struct {
     char anim[SCHED_ANIM_LEN];         /**< Clock animation name. */
 } settings_values_t;
 
+/** What a picture is uploaded as. */
+typedef enum {
+    SETTINGS_UPLOAD_BACKGROUND = 0,   /**< Cropped to fill 1024x600; joins the backgrounds. */
+    SETTINGS_UPLOAD_PHOTO,            /**< Fitted into 1024x600; joins the photo album. */
+} settings_upload_t;
+
 /** The answer to a change that takes a while: whether it worked, and why not. */
 typedef void (*settings_done_cb_t)(bool ok, const char *why, void *ctx);
 
@@ -61,6 +68,7 @@ typedef struct {
     lv_obj_t *(*wifi_create)(lv_obj_t *parent);      /**< Optional: the Wi-Fi screen. */
     lv_obj_t *(*phone_create)(lv_obj_t *parent);     /**< Optional: pair a phone (QR). */
     lv_obj_t *(*preview_create)(lv_obj_t *parent);   /**< Optional: animation preview. */
+    void (*upload)(settings_upload_t kind, settings_done_cb_t done, void *ctx);   /**< Optional: pick and send a picture. */
     void (*reboot)(void);                            /**< Optional. */
     void (*leave)(void);                             /**< Back from the menu. */
 } settings_backend_t;

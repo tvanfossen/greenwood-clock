@@ -1,6 +1,7 @@
 /**
  * @file http_auth.h
- * @version 1
+ * v2: /api/assets/upload is admin-only.
+ * @version 2
  * @brief Every URI is registered through http_auth_register, which puts a gate in front of
  *        its handler: the level a request needs comes from the path (auth.h) and a request
  *        without the right bearer token gets 401. Also POST /api/pair, where a phone trades
@@ -8,7 +9,8 @@
  *
  *   PUBLIC   /api/pair, static files (/www/...: the panel itself carries no data)
  *   ADMIN    /ota..., /debug/..., /files/..., /api/coredump..., /api/sdcard/...,
- *            /api/debug/..., /api/logs/..., /api/boot_history, /api/disk, /api/screenshot
+ *            /api/debug/..., /api/logs/..., /api/boot_history, /api/disk, /api/screenshot,
+ *            /api/assets/upload (any SD path)
  *   SESSION  every other /api/... (the panel's settings, schedule, themes, uploads, ...)
  */
 #ifndef HTTP_AUTH_H

@@ -1,6 +1,7 @@
 /**
  * @file http_auth.c
- * @version 1
+ * v2: /api/assets/upload is admin-only.
+ * @version 2
  * @brief The gate in front of every handler, and POST /api/pair (see http_auth.h).
  */
 #include "http_auth.h"
@@ -28,6 +29,7 @@ static int    s_gate_count;
 static const char *const ADMIN_PREFIXES[] = {
     "/ota", "/debug/", "/files/", "/api/coredump", "/api/sdcard/", "/api/debug/",
     "/api/logs/", "/api/boot_history", "/api/disk", "/api/screenshot",
+    "/api/assets/upload",   // any SD path: a phone uploads through /api/upload instead
 };
 
 /**

@@ -102,8 +102,8 @@ def _api_token():
     return match.group(1)
 
 
-## @brief Perform an HTTP request against the device and return the body.
 ## v3: always sends the admin token (the clock gates every endpoint; auth is ignored).
+## @brief Perform an HTTP request against the device and return the body.
 ## @utility
 ## @version 3
 ## @return Response body bytes, or None when the device answered with an HTTP error.
@@ -872,8 +872,9 @@ PANEL_OUT = REPO / "sdcard" / "www" / "panel"
 ## (Emscripten, SDL2 canvas) into sdcard/www/panel/ (index.html, panel.js, panel.wasm).
 ## v2: the settings app over the sample backend; tools/panel headers.
 ## v3: the clock backend (settings_http; -sFETCH) beside the sample one.
+## v4: exports panel_upload_done and ccall (the upload's answer).
 ## @req REQ-UI-002
-## @version 3
+## @version 4
 @task
 def panel_build(c):
     if not EMCC.exists():
@@ -886,6 +887,7 @@ def panel_build(c):
     c.run(
         f"{EMCC} -std=gnu11 -O2 -w -include {compat} {LVGL_HOST_DEFINE} {PANEL_FLAGS} {incs} "
         f"{srcs} {lib} -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=33554432 -sFETCH=1 "
+        f"-sEXPORTED_FUNCTIONS=_main,_panel_upload_done -sEXPORTED_RUNTIME_METHODS=ccall "
         f"-o {PANEL_OUT / 'panel.js'}"
     )
     (PANEL_OUT / "index.html").write_text(

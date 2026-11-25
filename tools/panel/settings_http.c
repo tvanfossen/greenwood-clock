@@ -1,6 +1,8 @@
 /**
  * @file settings_http.c
- * @version 1
+ * v2: upload: the loader page picks, crops and sends a picture; the result comes back
+ *     through panel_upload_done.
+ * @version 2
  * @brief The phone panel's settings backend (WebAssembly): the state GET /api/panel returned
  *        at start is the cache every getter reads; every change updates the cache and is
  *        POSTed to the clock with the session token (emscripten fetch, asynchronous). The
@@ -345,6 +347,46 @@ static void http_about(char *out, size_t n)
                      "minutes from the scan.", s_version);
 }
 
+typedef struct {
+    settings_done_cb_t done;
+    void              *ctx;
+    settings_upload_t  kind;
+} upload_pending_t;
+
+static upload_pending_t s_upload;   // one upload at a time
+
+EM_JS(void, js_upload, (int kind, const char *token), {
+    window.panelUpload(kind, UTF8ToString(token));
+});
+
+/**
+ * @brief The loader page finished an upload: tell the screen, and add a new background to
+ *        the cached list so the pickers offer it at once.
+ * @version 1
+ * @callback
+ */
+EMSCRIPTEN_KEEPALIVE void panel_upload_done(int ok, const char *name, const char *msg)
+{
+    if (ok && s_upload.kind == SETTINGS_UPLOAD_BACKGROUND && s_list_n[0] < LIST_MAX) {
+        settings_choice_t *c = &s_lists[0][s_list_n[0]++];
+        snprintf(c->value, sizeof(c->value), "A:/backgrounds/%s", name);
+        snprintf(c->label, sizeof(c->label), "%.*s", (int)strcspn(name, "."), name);
+    }
+    if (s_upload.done) s_upload.done(ok != 0, msg, s_upload.ctx);
+    s_upload.done = NULL;
+}
+
+/**
+ * @brief Pick and send a picture (the loader page does the picking, cropping and POST).
+ * @version 1
+ * @callback
+ */
+static void http_upload(settings_upload_t kind, settings_done_cb_t done, void *ctx)
+{
+    s_upload = (upload_pending_t){ done, ctx, kind };
+    js_upload((int)kind, s_token);
+}
+
 /**
  * @brief Back from the menu: nowhere to go on the phone.
  * @version 1
@@ -444,7 +486,8 @@ static bool read_state(const char *json)
 
 /**
  * @brief The backend over the clock's state.
- * @version 1
+ * v2: upload.
+ * @version 2
  * @req REQ-UI-005
  * @return It, or NULL when the state is not usable.
  */
@@ -455,7 +498,8 @@ const settings_backend_t *settings_http_backend(const char *state_json, const ch
         .set_background = http_set_background, .set_theme = http_set_theme,
         .set_anim = http_set_anim, .schedule_get = http_schedule_get,
         .schedule_set = http_schedule_set, .sun = http_sun, .now = http_now,
-        .save_theme = http_save_theme, .about = http_about, .leave = http_leave,
+        .save_theme = http_save_theme, .about = http_about, .upload = http_upload,
+        .leave = http_leave,
     };
     snprintf(s_token, sizeof(s_token), "%s", token ? token : "");
     return state_json && read_state(state_json) ? &BE : NULL;

@@ -4,12 +4,14 @@
 ## POST /api/schedule, all but pairing behind a bearer token), opens the panel in headless
 ## Firefox the way a scanned QR code does, taps through it, and checks what reached the
 ## "clock". Exit status: the number of failed checks.
-## @version 1
+## v2: an upload (a picture through the file chooser arrives as a 1024x600 PNG background).
+## @version 2
 """Usage: mock_clock.py <sdcard/www dir> <out dir for screenshots>"""
 
 import functools
 import http.server
 import json
+import struct
 import sys
 import threading
 from pathlib import Path
@@ -19,18 +21,24 @@ from playwright.sync_api import sync_playwright
 CODE = "0f3a9c1d2e4b5a6978c0d1e2f3a4b5c6"
 TOKEN = "5e55105e55105e55105e55105e55105e"
 CLOCK_W, CLOCK_H = 1024, 600
+PICTURE = (
+    Path(__file__).resolve().parents[2] / "sdcard" / "backgrounds" / "spring-flower.png"
+)
 
 
 ## @brief The stand-in clock's state and what it received.
+## v2: uploads recorded.
 ## @utility
-## @version 1
+## @version 2
 class Clock:
     ## @brief The stand-in clock's starting schedule; no posts, the code unused.
     ## @utility
-    ## @version 1
+    ## v2: uploads recorded.
+    ## @version 2
     def __init__(self):
         self.code_used = False
         self.posts = []
+        self.uploads = []
         self.schedule = {
             "version": 1,
             "profiles": [
@@ -139,9 +147,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     ## @brief POST: pairing, or a change (token needed) that the clock records.
     ## @utility
-    ## @version 1
+    ## v2: uploads go to _upload.
+    ## @version 2
     def do_POST(self):
-        body = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode()
+        raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        if self.path.startswith("/api/upload"):
+            return self._upload(raw)
+        body = raw.decode()
         if self.path == "/api/pair":
             ok = json.loads(body).get("code") == CODE and not self.clock.code_used
             self.clock.code_used = self.clock.code_used or ok
@@ -154,6 +166,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if self.path == "/api/schedule":
             self.clock.schedule = json.loads(body)
         return self._send(200, '{"status":"ok"}')
+
+    ## @brief POST /api/upload: record the query and the PNG's size (token needed).
+    ## @utility
+    ## @version 1
+    def _upload(self, raw):
+        if not self._authed():
+            return self._send(401, '{"error":"scan"}')
+        is_png = raw[:8] == b"\x89PNG\r\n\x1a\n"
+        size = struct.unpack(">II", raw[16:24]) if is_png else None
+        self.clock.uploads.append((self.path, size))
+        return self._send(200 if is_png else 400, '{"status":"success"}')
 
 
 ## @brief Serve @p root with the stand-in clock.
@@ -179,10 +202,11 @@ def tap(page, x, y):
     page.wait_for_timeout(500)
 
 
-## @brief Pair, load, change the brightness and save a schedule profile; then a second phone
-## with the used code is refused.
+## @brief Pair, load, save a schedule profile, upload a background picture; then a second
+## phone with the used code is refused.
+## v2: the upload.
 ## @utility
-## @version 1
+## @version 2
 ## @return The failed checks' descriptions.
 def run(base, out):
     clock, fails = serve.clock, []
@@ -202,6 +226,18 @@ def run(base, out):
         page.screenshot(path=str(out / "e2e_saved.png"))
         if not any(path == "/api/schedule" for path, _ in clock.posts):
             fails.append("the schedule save did not reach the clock")
+        tap(page, 190, 106)  # Back to the menu
+        tap(page, 320, 392)  # Upload
+        page.screenshot(path=str(out / "e2e_upload.png"))
+        with page.expect_file_chooser() as chooser:
+            tap(page, 450, 200)  # Background: choose a picture
+        chooser.value.set_files(str(PICTURE))
+        page.wait_for_timeout(2500)
+        page.screenshot(path=str(out / "e2e_uploaded.png"))
+        if not any(
+            "kind=background" in q and dims == (1024, 600) for q, dims in clock.uploads
+        ):
+            fails.append(f"no 1024x600 background arrived: {clock.uploads}")
         other = browser.new_page()
         other.goto(f"{base}/www/panel/index.html#{CODE}")
         other.wait_for_timeout(1500)
@@ -213,7 +249,8 @@ def run(base, out):
 
 ## @brief Entry point.
 ## @utility
-## @version 1
+## v2: prints the uploads.
+## @version 2
 def main():
     root, out = Path(sys.argv[1]), Path(sys.argv[2])
     out.mkdir(parents=True, exist_ok=True)
@@ -222,6 +259,8 @@ def main():
     fails = run(serve(root, clock), out)
     for path, body in clock.posts:
         print(f"clock received {path}: {body[:120]}")
+    for query, dims in clock.uploads:
+        print(f"clock received {query}: PNG {dims}")
     for f in fails:
         print(f"FAIL: {f}")
     print(f"panel e2e: {'ok' if not fails else f'{len(fails)} failed'}")

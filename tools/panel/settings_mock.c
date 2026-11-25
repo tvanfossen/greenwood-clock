@@ -1,6 +1,7 @@
 /**
  * @file settings_mock.c
- * @version 1
+ * v2: a pretend upload (it says what would happen).
+ * @version 2
  * @brief An in-memory settings backend with sample data, for rendering and clicking through
  *        the settings screens off the device (host preview, the panel before it talks to a
  *        clock). The sun is the real calculation for a public sample place (Chicago); "now" is
@@ -202,6 +203,17 @@ static void mock_about(char *out, size_t n)
 }
 
 /**
+ * @brief Pretend to upload.
+ * @version 1
+ * @callback
+ */
+static void mock_upload(settings_upload_t kind, settings_done_cb_t done, void *ctx)
+{
+    done(true, kind == SETTINGS_UPLOAD_BACKGROUND ? "Sample: a background would be sent"
+                                                  : "Sample: a photo would be sent", ctx);
+}
+
+/**
  * @brief Leaving: nothing to go back to.
  * @version 1
  * @callback
@@ -259,7 +271,8 @@ static void sample_schedule(void)
 
 /**
  * @brief The sample backend.
- * @version 1
+ * v2: a pretend upload.
+ * @version 2
  * @utility
  * @return It (static).
  */
@@ -273,7 +286,8 @@ const settings_backend_t *settings_mock_backend(void)
             .set_background = mock_set_background, .set_theme = mock_set_theme,
             .set_anim = mock_set_anim, .schedule_get = mock_schedule_get,
             .schedule_set = mock_schedule_set, .sun = mock_sun, .now = mock_now,
-            .save_theme = mock_save_theme, .about = mock_about, .leave = mock_leave,
+            .save_theme = mock_save_theme, .about = mock_about, .upload = mock_upload,
+            .leave = mock_leave,
         };
     }
     return &be;

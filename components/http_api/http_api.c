@@ -640,6 +640,7 @@ static esp_err_t schedule_get_handler(httpd_req_t *req);
 static esp_err_t schedule_post_handler(httpd_req_t *req);
 static esp_err_t assets_list_handler(httpd_req_t *req);
 static esp_err_t assets_upload_handler(httpd_req_t *req);
+static esp_err_t panel_upload_handler(httpd_req_t *req);
 static esp_err_t settings_get_handler(httpd_req_t *req);
 static esp_err_t settings_post_handler(httpd_req_t *req);
 
@@ -986,7 +987,8 @@ static void http_api_register_debug_handlers(httpd_handle_t srv)
  *
  * @param srv  Running httpd server handle.
  * v2: registered through http_auth_register (the gate).
- * @version 2
+ * v3: POST /api/upload (pictures from the phone).
+ * @version 3
  * @req REQ-API-001
  */
 static void http_api_register_display_handlers(httpd_handle_t srv)
@@ -1046,6 +1048,11 @@ static void http_api_register_display_handlers(httpd_handle_t srv)
         .method  = HTTP_POST,
         .handler = assets_upload_handler,
     };
+    static const httpd_uri_t uri_panel_upload = {
+        .uri     = "/api/upload",
+        .method  = HTTP_POST,
+        .handler = panel_upload_handler,
+    };
     static const httpd_uri_t uri_settings_get = {
         .uri     = "/api/settings",
         .method  = HTTP_GET,
@@ -1066,6 +1073,7 @@ static void http_api_register_display_handlers(httpd_handle_t srv)
     http_auth_register(srv, &uri_weather_alerts);
     http_auth_register(srv, &uri_assets_list);
     http_auth_register(srv, &uri_assets_upload);
+    http_auth_register(srv, &uri_panel_upload);
     http_auth_register(srv, &uri_settings_get);
     http_auth_register(srv, &uri_settings_post);
     // www wildcard MUST be registered LAST (wildcard matching priority)
@@ -2279,6 +2287,114 @@ static esp_err_t assets_upload_handler(httpd_req_t *req)
     err = upload_open_and_receive(req, filepath, &total);
     if (err == ESP_OK) upload_send_success(req, filepath, total);
     return err;
+}
+
+// =============================================================================
+// Panel upload: a PNG into backgrounds/ or photos/, nowhere else
+// =============================================================================
+
+#define PANEL_UPLOAD_MAX  (4 * 1024 * 1024)   // a 1024x600 PNG is ~1 MB
+#define PANEL_NAME_MAX    40
+
+/**
+ * @brief Whether @p name is a safe picture name: 1..40 letters, digits, '-' or '_', then
+ *        ".png" (no path, so it cannot leave its folder).
+ * @version 1
+ * @utility
+ * @return True when it is.
+ */
+static bool panel_name_ok(const char *name)
+{
+    size_t n = strlen(name);
+    bool ok = n > 4 && n - 4 <= PANEL_NAME_MAX && strcmp(name + n - 4, ".png") == 0;
+    for (size_t i = 0; ok && i < n - 4; i++) {
+        char c = name[i];
+        ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+             c == '-' || c == '_';
+    }
+    return ok;
+}
+
+/**
+ * @brief Whether the file at @p path starts with the PNG signature.
+ * @version 1
+ * @utility
+ * @return True when it does.
+ */
+static bool file_is_png(const char *path)
+{
+    static const uint8_t SIG[8] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n' };
+    uint8_t head[8] = { 0 };
+    FILE *f = fopen(path, "rb");
+    size_t n = f ? fread(head, 1, sizeof(head), f) : 0;
+    if (f) fclose(f);
+    return n == sizeof(head) && memcmp(head, SIG, sizeof(SIG)) == 0;
+}
+
+/**
+ * @brief The folder for upload kind @p kind ("background" or "photo").
+ * @version 1
+ * @utility
+ * @return "/sdcard/backgrounds", "/sdcard/photos", or NULL.
+ */
+static const char *panel_upload_dir(const char *kind)
+{
+    if (strcmp(kind, "background") == 0) return "/sdcard/backgrounds";
+    return strcmp(kind, "photo") == 0 ? "/sdcard/photos" : NULL;
+}
+
+/**
+ * @brief Receive the body into @p tmp, check it is a PNG, then move it to @p final.
+ * @version 1
+ * @utility
+ * @return ESP_OK, or ESP_FAIL after an error response.
+ */
+static esp_err_t panel_receive_png(httpd_req_t *req, const char *tmp, const char *final)
+{
+    size_t total = 0;
+    esp_err_t err = upload_open_and_receive(req, tmp, &total);
+    if (err == ESP_OK && !file_is_png(tmp)) {
+        remove(tmp);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Not a PNG picture");
+        err = ESP_FAIL;
+    }
+    if (err == ESP_OK) {
+        remove(final);   // FAT's rename does not replace
+        err = rename(tmp, final) == 0 ? ESP_OK : ESP_FAIL;
+        if (err != ESP_OK) httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Could not keep the file");
+    }
+    if (err == ESP_OK) upload_send_success(req, final, total);
+    return err;
+}
+
+/**
+ * @brief POST /api/upload?kind=background|photo&name=x.png: a PNG (cropped to 1024x600 on the
+ *        phone) into /sdcard/backgrounds or /sdcard/photos. Anything else is refused.
+ * @version 1
+ * @callback
+ * @req REQ-UI-005
+ * @return ESP_OK on success; ESP_FAIL after an error response.
+ */
+static esp_err_t panel_upload_handler(httpd_req_t *req)
+{
+    char query[128] = "", kind[16] = "", name[PANEL_NAME_MAX + 8] = "";
+    httpd_req_get_url_query_str(req, query, sizeof(query));
+    httpd_query_key_value(query, "kind", kind, sizeof(kind));
+    httpd_query_key_value(query, "name", name, sizeof(name));
+    const char *dir = panel_upload_dir(kind);
+    bool ok = dir && panel_name_ok(name) && req->content_len > 0 &&
+              req->content_len <= PANEL_UPLOAD_MAX && upload_check_preconditions(req) == ESP_OK;
+    if (!ok) {
+        ESP_LOGW(TAG, "panel upload refused: kind '%s' name '%s' (%d bytes)", kind, name,
+                 req->content_len);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad picture name, kind or size");
+        return ESP_FAIL;
+    }
+    char tmp[96], final[96];
+    snprintf(tmp, sizeof(tmp), "%s/.upload.tmp", dir);
+    snprintf(final, sizeof(final), "%s/%s", dir, name);
+    ESP_LOGI(TAG, "panel upload: %s (%d bytes)", final, req->content_len);
+    return panel_receive_png(req, tmp, final);
 }
 
 // =============================================================================

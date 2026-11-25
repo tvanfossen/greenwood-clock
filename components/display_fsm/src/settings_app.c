@@ -1,6 +1,7 @@
 /**
  * @file settings_app.c
- * @version 1
+ * v2: the Upload screen (when the backend can upload: the phone).
+ * @version 2
  * @brief The settings UI's screen stack, menu and generic screens (see settings_app.h): the
  *        choice list, text entry, toast, brightness, background, theme (and its editor),
  *        clock animation and about. The schedule screens are settings_sched.c.
@@ -99,30 +100,41 @@ void settings_app_back_cb(lv_event_t *e)
 }
 
 /**
- * @brief The toast ends: close it, and the top screen when asked.
- * @version 1
+ * @brief The toast ends: remove it, and close the top screen when asked.
+ * v2: removes the pill.
+ * @version 2
  * @callback
  */
 static void toast_done_cb(lv_timer_t *t)
 {
-    lv_obj_t *box = (lv_obj_t *)lv_timer_get_user_data(t);
-    bool pop = lv_obj_get_user_data(box) != NULL;
-    lv_msgbox_close(box);
+    lv_obj_t *pill = (lv_obj_t *)lv_timer_get_user_data(t);
+    bool pop = lv_obj_get_user_data(pill) != NULL;
+    lv_obj_delete(pill);
     if (pop) settings_app_pop();
 }
 
 /**
- * @brief A short message that goes away by itself.
- * @version 1
+ * @brief A short message in a pill at the bottom of the screen that goes away by itself; it
+ *        does not take taps (the screen stays usable).
+ * v2: a pill at the bottom that takes no taps (was a modal message box).
+ * @version 2
  * @req REQ-UI-001
  */
 void settings_app_toast(const char *msg, bool pop)
 {
-    lv_obj_t *box = lv_msgbox_create(NULL);
-    lv_msgbox_add_text(box, msg);
-    lv_obj_center(box);
-    lv_obj_set_user_data(box, pop ? (void *)1 : NULL);
-    lv_timer_t *t = lv_timer_create(toast_done_cb, TOAST_MS, box);
+    lv_obj_t *pill = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(pill, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_radius(pill, 24, 0);
+    lv_obj_set_style_pad_hor(pill, 24, 0);
+    lv_obj_set_style_pad_ver(pill, 12, 0);
+    lv_obj_set_style_border_width(pill, 1, 0);
+    lv_obj_remove_flag(pill, LV_OBJ_FLAG_CLICKABLE);
+    ui_bind_fill(pill, UI_SLOT_DIALOG);
+    ui_bind_border(pill, UI_ROLE_ACCENT);
+    settings_text(pill, msg, &lv_font_montserrat_20, UI_ROLE_TEXT);
+    lv_obj_align(pill, LV_ALIGN_BOTTOM_MID, 0, -24);
+    lv_obj_set_user_data(pill, pop ? (void *)1 : NULL);
+    lv_timer_t *t = lv_timer_create(toast_done_cb, TOAST_MS, pill);
     lv_timer_set_repeat_count(t, 1);
 }
 
@@ -514,6 +526,52 @@ static lv_obj_t *about_screen(lv_obj_t *parent, void *ctx)
 }
 
 /**
+ * @brief An upload finished.
+ * @version 1
+ * @callback
+ */
+static void uploaded_cb(bool ok, const char *why, void *ctx)
+{
+    LV_UNUSED(ctx);
+    settings_app_toast(ok ? why : (why && why[0] ? why : "Upload failed"), false);
+}
+
+/**
+ * @brief Upload button: pick a picture on the phone and send it (the user data: the kind).
+ * @version 1
+ * @callback
+ */
+static void upload_cb(lv_event_t *e)
+{
+    settings_upload_t kind = (settings_upload_t)(uintptr_t)lv_event_get_user_data(e);
+    s_be->upload(kind, uploaded_cb, NULL);
+}
+
+/**
+ * @brief The Upload screen: send a background picture or an album photo from the phone.
+ * @version 1
+ * @utility
+ * @return The frame.
+ */
+static lv_obj_t *upload_screen(lv_obj_t *parent, void *ctx)
+{
+    LV_UNUSED(ctx);
+    lv_obj_t *frame = settings_frame_create(parent, "Upload", settings_app_back_cb);
+    lv_obj_t *col = settings_column(frame);
+    settings_text(col, "Send a picture from this phone to the clock.", &lv_font_montserrat_20,
+                  UI_ROLE_TEXT);
+    settings_button(settings_field(col, "Background"), LV_SYMBOL_IMAGE "  Choose a picture",
+                    upload_cb, (void *)(uintptr_t)SETTINGS_UPLOAD_BACKGROUND);
+    settings_text(col, "Cropped to fill the screen; it joins the backgrounds.",
+                  &lv_font_montserrat_16, UI_ROLE_TEXT_FAINT);
+    settings_button(settings_field(col, "Album photo"), LV_SYMBOL_IMAGE "  Choose a photo",
+                    upload_cb, (void *)(uintptr_t)SETTINGS_UPLOAD_PHOTO);
+    settings_text(col, "Fitted whole; it joins the photo slideshow.", &lv_font_montserrat_16,
+                  UI_ROLE_TEXT_FAINT);
+    return frame;
+}
+
+/**
  * @brief A device-only screen the backend builds (its creator is the user data).
  * @version 1
  * @utility
@@ -548,7 +606,8 @@ static void reboot_cb(lv_event_t *e)
 
 /**
  * @brief Append the backend's optional entries to @p items from @p n.
- * @version 1
+ * v2: Upload.
+ * @version 2
  * @utility
  * @return The new count.
  */
@@ -557,6 +616,7 @@ static int optional_items(settings_menu_item_t *items, int n)
     if (s_be->wifi_create) items[n++] = (settings_menu_item_t){ LV_SYMBOL_WIFI, "WiFi", device_cb, (void *)s_be->wifi_create };
     if (s_be->phone_create) items[n++] = (settings_menu_item_t){ LV_SYMBOL_CALL, "Phone", device_cb, (void *)s_be->phone_create };
     if (s_be->preview_create) items[n++] = (settings_menu_item_t){ LV_SYMBOL_PLAY, "Animation", device_cb, (void *)s_be->preview_create };
+    if (s_be->upload) items[n++] = (settings_menu_item_t){ LV_SYMBOL_UPLOAD, "Upload", menu_cb, (void *)upload_screen };
     if (s_be->reboot) items[n++] = (settings_menu_item_t){ LV_SYMBOL_POWER, "Reboot", reboot_cb, NULL };
     return n;
 }
