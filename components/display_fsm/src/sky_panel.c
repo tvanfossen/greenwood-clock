@@ -1,6 +1,7 @@
 /**
  * @file sky_panel.c
- * @version 1
+ * v2: the moon drawn natively (sky_body) at its real phase, with its maria and craters.
+ * @version 2
  * @brief Sky screen cards (see sky_panel.h): the sun card (day arc, daylight left, golden
  *        hour, aurora, next events) and the moon card (drawn phase, illumination, days to
  *        full and new). Every colour is a theme role.
@@ -8,6 +9,7 @@
 #include "sky_panel.h"
 #include "display_widgets.h"   // ALERT_BANNER_HEIGHT
 #include "ui_theme_bind.h"
+#include "sky_body.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -27,6 +29,7 @@
 #define ROW_STEP    35
 #define VALUE_X     150
 #define DISC_D      150                 /* moon disc diameter */
+#define MOON_DARK_OPA 70                /* the dark side's earthshine at night */
 #define GOLDEN_MIN  60                  /* golden hour: ~1 h after sunrise, before sunset */
 
 LV_FONT_DECLARE(nunito_48);
@@ -221,67 +224,22 @@ static void detail_rows(lv_obj_t *parent, const sky_data_t *d)
     row(parent, i, "Meteors", buf);
 }
 
-/**
- * @brief Free the moon canvas's buffer with it.
- * @version 1
- * @callback
- */
-static void free_buf_cb(lv_event_t *e)
-{
-    lv_draw_buf_destroy((lv_draw_buf_t *)lv_event_get_user_data(e));
-}
-
-/**
- * @brief The colour of moon-disc pixel (@p dx, @p dy) from the centre: the lit side or the
- *        shadow across the terminator (soft over a pixel), and its coverage at the rim.
- * @version 1
- * @utility
- * @return The coverage (0 outside the disc); @p out is set when it is above 0.
- */
-static float disc_px(float dx, float dy, float r, float term, float side, lv_color_t lit,
-                     lv_color_t dark, lv_color_t *out)
-{
-    float edge = r - sqrtf(dx * dx + dy * dy) + 0.5f;
-    if (edge <= 0.0f) return 0.0f;
-    // The terminator's half-width, a pixel wider than the disc: at full and new it lies just
-    // outside the rim, so the rim never takes the soft terminator's half-tone.
-    float w = sqrtf(fmaxf(r * r - dy * dy, 0.0f)) + 1.0f;
-    float t = fminf(fmaxf(side * dx - term * w + 0.5f, 0.0f), 1.0f);   // 1 = lit
-    *out = lv_color_mix(lit, dark, (uint8_t)(t * 255.0f));
-    return fminf(edge, 1.0f);
-}
 
 /**
  * @brief The moon as it looks (see sky_panel.h).
- * @version 1
+ * v2: the native moon (sky_body): its real phase, maria and craters; dark side by night only.
+ * @version 2
  * @req REQ-ASTRO-001
  * @return The disc, or NULL when out of memory.
  */
 lv_obj_t *sky_moon_create(lv_obj_t *parent, const sky_data_t *d, int32_t diameter, int32_t x,
                           int32_t y)
 {
-    lv_draw_buf_t *buf = lv_draw_buf_create(diameter, diameter, LV_COLOR_FORMAT_ARGB8888, 0);
-    if (!buf) return NULL;
-    lv_obj_t *cv = lv_canvas_create(parent);
-    lv_canvas_set_draw_buf(cv, buf);
-    lv_obj_add_event_cb(cv, free_buf_cb, LV_EVENT_DELETE, buf);
-    lv_canvas_fill_bg(cv, ui_theme_color(UI_ROLE_SCREEN), LV_OPA_TRANSP);
-    lv_obj_set_pos(cv, x, y);
-    lv_obj_set_style_radius(cv, LV_RADIUS_CIRCLE, 0);   // a rim, so a lit disc shows on a
-    lv_obj_set_style_border_width(cv, diameter >= 60 ? 2 : 1, 0);   // light card
-    ui_bind_border(cv, UI_ROLE_BORDER);
-    // Terminator at x = term * w(y): +1 = none lit (new), -1 = all lit (full).
-    const float r = diameter / 2.0f - 1.0f, term = 1.0f - 2.0f * d->moon.illumination_pct / 100.0f;
-    const float side = d->waxing ? 1.0f : -1.0f, half = diameter / 2.0f;
-    const lv_color_t lit = ui_theme_color(UI_ROLE_LIGHT), dark = ui_theme_tone(0.3f);
-    for (int py = 0; py < diameter; py++) {
-        for (int px = 0; px < diameter; px++) {
-            lv_color_t c;
-            float cover = disc_px(px + 0.5f - half, py + 0.5f - half, r, term, side, lit, dark, &c);
-            if (cover > 0.0f) lv_canvas_set_px(cv, px, py, c, (lv_opa_t)(cover * 255.0f));
-        }
-    }
-    return cv;
+    // By day only its lit part shows, as in the sky; at night a dim earthshine on the rest.
+    lv_obj_t *m = sky_body_moon_create(parent, diameter, d->moon_frac,
+                                       d->part == SKY_DAY ? LV_OPA_TRANSP : MOON_DARK_OPA);
+    if (m) lv_obj_set_pos(m, x, y);
+    return m;
 }
 
 /**

@@ -1,11 +1,13 @@
 /**
  * @file sky_data.c
  * v2: sky_sun_local (the sun alone, for the schedule's many lookups).
- * @version 2
+ * v3: the real moon (astro_moon): lit fraction, side, place, rise and set.
+ * @version 3
  * @brief What the sky screen shows (see sky_data.h): sun times in local minutes, where the
  *        day is, the moon, the aurora outlook and the next dated sky events. Pure C.
  */
 #include "sky_data.h"
+#include "astro_moon.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -113,15 +115,14 @@ float sky_sun_angle(const sky_data_t *d)
 
 /**
  * @brief The moon's place on the sky wheel (see sky_data.h).
- * @version 1
+ * v2: computed with the sky (sky_data_compute), from the real rise and set.
+ * @version 2
  * @req REQ-ASTRO-001
  * @return Degrees in (-180, 180].
  */
 float sky_moon_angle(const sky_data_t *d)
 {
-    int noon = d->sunrise_min >= 0 ? (d->sunrise_min + d->sunset_min) / 2 : 720;
-    float sun = 360.0f * (float)(d->now_min - noon) / 1440.0f;
-    return wrap_deg(sun - 360.0f * d->moon_frac);
+    return d->moon_angle;
 }
 
 /**
@@ -215,9 +216,60 @@ static void sun_part(time_t now, const struct tm *t, float lat, float lon, sky_d
 }
 
 /**
+ * @brief Local minute of the day of @p t, or -1 when @p t is 0 (none).
+ * @version 1
+ * @utility
+ * @return Minutes.
+ */
+static int local_min(time_t t)
+{
+    struct tm lt;
+    if (!t) return -1;
+    localtime_r(&t, &lt);
+    return lt.tm_hour * 60 + lt.tm_min;
+}
+
+/**
+ * @brief How far @p now is from @p from to @p to (0..1), mapped onto the wheel from @p start
+ *        over half a turn; @p fallback when either end is unknown.
+ * @version 1
+ * @utility
+ * @return Degrees.
+ */
+static float half_turn(time_t now, time_t from, time_t to, float start, float fallback)
+{
+    if (!from || !to || to <= from) return fallback;
+    return wrap_deg(start + 180.0f * (float)(now - from) / (float)(to - from));
+}
+
+/**
+ * @brief Fill @p out's moon from where it really is: lit fraction and side, up or down, its
+ *        place on the wheel (rise to set above, set to rise below), the next rise and set.
+ * @version 1
+ * @utility
+ */
+static void moon_part(time_t now, float lat, float lon, sky_data_t *out)
+{
+    astro_moon_t m;
+    astro_moon_at(now, lat, lon, &m);
+    out->moon.illumination_pct = m.illum * 100.0f;
+    out->waxing = m.waxing;
+    out->moon_frac = m.age;
+    time_t last_rise, last_set, next_rise, next_set;
+    astro_moon_last(now, lat, lon, &last_rise, &last_set);
+    astro_moon_next(now, lat, lon, &next_rise, &next_set);
+    out->moon_up = last_rise > last_set || (!last_set && last_rise);
+    out->moon_angle = out->moon_up ? half_turn(now, last_rise, next_set, -90.0f, 0.0f)
+                                   : half_turn(now, last_set, next_rise, 90.0f, 180.0f);
+    out->moonrise_min = local_min(next_rise);
+    out->moonset_min = local_min(next_set);
+}
+
+/**
  * @brief Compute the sky at @p now for @p lat / @p lon with Kp @p kp.
  * v2: moon_frac (the month fraction, from the lit fraction and side).
- * @version 2
+ * v3: the real moon (moon_part): lit fraction, side, place, rise and set.
+ * @version 3
  * @req REQ-ASTRO-001
  * @req REQ-AMB-001
  */
@@ -228,12 +280,8 @@ void sky_data_compute(time_t now, float lat, float lon, float kp, sky_data_t *ou
     localtime_r(&now, &t);
     out->now_min = t.tm_hour * 60 + t.tm_min;
     sun_part(now, &t, lat, lon, out);
-    astro_calc_moon_phase(t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, &out->moon);
-    out->waxing = out->moon.days_to_full < out->moon.days_to_new;
-    // Back from the lit fraction: f = (1 - cos 2 pi x) / 2, waxing x in [0, .5].
-    float f = out->moon.illumination_pct / 100.0f;
-    float x = acosf(fminf(fmaxf(1.0f - 2.0f * f, -1.0f), 1.0f)) / (2.0f * (float)M_PI);
-    out->moon_frac = out->waxing ? x : 1.0f - x;
+    astro_calc_moon_phase(t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, &out->moon);   // names, days
+    moon_part(now, lat, lon, out);
     out->kp = kp > 0.0f ? kp : 0.0f;
     out->aurora_prob = out->kp > 0.0f ? astro_calc_aurora_probability(kp, lat) : 0.0f;
     out->season = next_event(now, SEASONS, COUNT(SEASONS), &out->season_days);

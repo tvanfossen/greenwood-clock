@@ -4,7 +4,8 @@
  * v3: JSON round trip (ui_theme_to_json).
  * v4: one shipped base theme (default.json); the greenwood day/night variants are gone.
  * v5: the alert core (fourth core): base alerts unchanged, they follow the core, JSON.
- * @version 5
+ * v6: the sky core (fifth): the sun and the moon.
+ * @version 6
  * @brief Host tests for the OKLCH theme: the base theme reproduces the clock's original
  *        colours; every shipped theme's text roles meet their contrast targets; text over
  *        any backdrop keeps its hue and meets its target; theme files parse (and the base
@@ -228,7 +229,8 @@ static void test_polarity(void)
  * v2: slots compared too.
  * v3: the base file is default.json.
  * v4: the alert core compared too.
- * @version 4
+ * v5: the sky core compared too.
+ * @version 5
  * @utility
  */
 static void test_base_file_matches(void)
@@ -240,6 +242,7 @@ static void test_base_file_matches(void)
     CHECK(memcmp(&t.surface, &UI_THEME_BASE.surface, sizeof(t.surface)) == 0, "surface");
     CHECK(memcmp(&t.accent, &UI_THEME_BASE.accent, sizeof(t.accent)) == 0, "accent");
     CHECK(memcmp(&t.alert, &UI_THEME_BASE.alert, sizeof(t.alert)) == 0, "alert");
+    CHECK(memcmp(&t.sky, &UI_THEME_BASE.sky, sizeof(t.sky)) == 0, "sky");
     CHECK(memcmp(t.slots, UI_THEME_BASE.slots, sizeof(t.slots)) == 0, "slots");
     CHECK(t.contrast == UI_THEME_BASE.contrast, "contrast");
 }
@@ -386,11 +389,50 @@ static void test_alert_core(void)
 }
 
 /**
+ * @brief The sky core (fifth): the sun is the core itself, warm gold in the base theme; the
+ *        moon is a pale near-white of the same hue, following the core; a file without "sky"
+ *        gets the base core, one with it keeps it through a round trip.
+ * @version 1
+ * @utility
+ */
+static void test_sky_core(void)
+{
+    lv_color_t r[UI_ROLE_COUNT];
+    ui_theme_derive(&UI_THEME_BASE, r);
+    CHECK(same_color(r[UI_ROLE_SUN], ui_oklch_to_color(UI_THEME_BASE.sky)), "sun = the core");
+    ui_oklch_t sun = ui_color_to_oklch(r[UI_ROLE_SUN]);
+    CHECK(sun.h > 60.0f && sun.h < 100.0f && sun.c > 0.08f, "base sun is warm gold: h %.1f c %.3f",
+          (double)sun.h, (double)sun.c);
+    ui_theme_t t = UI_THEME_BASE;
+    t.sky.h = 40.0f;
+    ui_theme_derive(&t, r);
+    ui_oklch_t moon = ui_color_to_oklch(r[UI_ROLE_MOON]);
+    CHECK(moon.l > 0.90f && moon.c < 0.05f, "moon pale: l %.2f c %.3f", (double)moon.l,
+          (double)moon.c);
+    CHECK(hue_gap(moon.h, 40.0f) <= 25.0f, "moon follows the sky hue: %.1f", (double)moon.h);
+    CHECK(strcmp(ui_theme_role_name(UI_ROLE_SUN), "sun") == 0 &&
+          strcmp(ui_theme_role_name(UI_ROLE_MOON), "moon") == 0, "role names");
+
+    const char *no_sky = "{\"name\":\"X\",\"ink\":[1,0,0],\"surface\":[0.2,0.04,280],"
+                         "\"accent\":[0.8,0.1,90],\"contrast\":7}";
+    ui_theme_t f;
+    CHECK(ui_theme_parse(no_sky, &f), "a file without sky parses");
+    CHECK(memcmp(&f.sky, &UI_THEME_BASE.sky, sizeof(f.sky)) == 0, "no sky: base core");
+    f.sky = (ui_oklch_t){ 0.75f, 0.15f, 70.0f };
+    char buf[1024];
+    ui_theme_t back;
+    CHECK(ui_theme_to_json(&f, buf, sizeof(buf)) && ui_theme_parse(buf, &back), "round trip");
+    CHECK(fabsf(back.sky.h - 70.0f) < 0.01f && fabsf(back.sky.l - 0.75f) < 1e-3f,
+          "sky core kept: %s", buf);
+}
+
+/**
  * @brief Run the ui_theme tests; exit status is the failure count.
  * v2: slots.
  * v3: JSON round trip.
  * v4: the alert core.
- * @version 4
+ * v5: the sky core.
+ * @version 5
  * @utility
  * @return 0 when every check passed.
  */
@@ -407,6 +449,7 @@ int main(void)
     test_slots();
     test_json_round_trip();
     test_alert_core();
+    test_sky_core();
     printf("ui_theme: %d/%d checks passed\n", s_checks - s_failures, s_checks);
     return s_failures;
 }

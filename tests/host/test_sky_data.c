@@ -1,6 +1,7 @@
 /**
  * @file test_sky_data.c
- * @version 1
+ * v2: the real moon (astro_moon): its place, rise and set, lit fraction.
+ * @version 2
  * @brief Host tests for the sky screen's data: where the day is, local sun times, days to
  *        dated events (year wrap, leap years) and the moon's waxing side. At a public sample
  *        place (Chicago), never the device's.
@@ -123,8 +124,9 @@ static void test_moon_and_kp(void)
 
 /**
  * @brief The sun on the wheel: on the horizon at sunrise and sunset, at the top midday,
- *        under it at night; the full moon opposite the sun, the new moon with it.
- * @version 1
+ *        under it at night.
+ * v2: the moon is placed by its real rise and set (test_moon_place), not by its phase.
+ * @version 2
  * @utility
  */
 static void test_wheel(void)
@@ -145,27 +147,46 @@ static void test_wheel(void)
     s.now_min = 300;
     float a = sky_sun_angle(&s);
     CHECK(a < -90.0f && a > -180.0f, "before dawn: below the left horizon, got %.1f", (double)a);
-    s.part = SKY_DAY;
-    s.now_min = 720;
-    s.moon_frac = 0.5f;
-    CHECK(fabsf(fabsf(sky_moon_angle(&s)) - 180.0f) < 0.1f, "full moon at noon: opposite");
-    s.now_min = 0;
-    CHECK(fabsf(sky_moon_angle(&s)) < 0.1f, "full moon at midnight: at the top");
-    s.moon_frac = 0.0f;
-    s.now_min = 720;
-    CHECK(fabsf(sky_moon_angle(&s)) < 0.1f, "new moon: with the sun");
-    s.moon_frac = 0.25f;   // first quarter: rises about noon, highest at sunset
-    s.now_min = 1080;
-    CHECK(fabsf(sky_moon_angle(&s)) < 0.1f, "first quarter highest at 18:00");
     s.sunrise_min = -1;
     CHECK(sky_sun_angle(&s) == 180.0f, "polar night: no sun");
+}
+
+/**
+ * @brief The real moon on the wheel (against PyEphem 4.2.1, Chicago): above the horizon when
+ *        it is up, by day too; -90 at moonrise; the next moonrise / moonset in local minutes
+ *        within 5; the lit fraction from its place, not the calendar.
+ * @version 1
+ * @utility
+ */
+static void test_moon_place(void)
+{
+    sky_data_t s;
+    sky_data_compute(at(2026, 12, 1, 12, 0), LAT, LON, 0.0f, &s);   // 3.97 deg up, setting
+    float a = sky_moon_angle(&s);
+    CHECK(s.moon_up && a > 60.0f && a < 90.0f, "Dec 1 noon: up, about to set, got %.1f", (double)a);
+    CHECK(abs(s.moonset_min - (12 * 60 + 26)) <= 5, "Dec 1: sets 12:26, got %d", s.moonset_min);
+    CHECK(fabsf(s.moon.illumination_pct - 44.8f) < 2.0f, "Dec 1: 44.8%% lit, got %.1f",
+          (double)s.moon.illumination_pct);
+    sky_data_compute(at(2026, 11, 24, 12, 0), LAT, LON, 0.0f, &s);  // full, 23 deg down
+    a = sky_moon_angle(&s);
+    CHECK(!s.moon_up && (a > 90.0f || a < -90.0f), "Nov 24 noon: down, got %.1f", (double)a);
+    CHECK(abs(s.moonrise_min - (16 * 60 + 7)) <= 5, "Nov 24: rises 4:07 PM, got %d",
+          s.moonrise_min);
+    sky_data_compute(at(2026, 11, 24, 16, 9), LAT, LON, 0.0f, &s);  // just risen
+    a = sky_moon_angle(&s);
+    CHECK(s.moon_up && fabsf(a + 90.0f) < 3.0f, "just after moonrise: -90, got %.1f", (double)a);
+    sky_data_compute(at(2027, 2, 14, 12, 0), LAT, LON, 0.0f, &s);   // 15 deg up, waxing
+    CHECK(s.moon_up && s.waxing, "Feb 14 noon: a waxing moon up by day");
+    CHECK(abs(s.moonset_min - (2 * 60 + 25)) <= 5, "Feb 14: sets 2:25 AM, got %d",
+          s.moonset_min);
 }
 
 /**
  * @brief Run the sky data tests in Chicago time; exit status is the failure count.
  * v2: the sky wheel test.
  * v3: the sun alone.
- * @version 3
+ * v4: the real moon's place.
+ * @version 4
  * @utility
  * @return 0 when every check passed.
  */
@@ -178,6 +199,7 @@ int main(void)
     test_days_until();
     test_moon_and_kp();
     test_wheel();
+    test_moon_place();
     printf("sky_data: %d/%d checks passed\n", s_checks - s_failures, s_checks);
     return s_failures;
 }

@@ -1,12 +1,14 @@
 /**
  * @file sky_dial.c
- * @version 1
+ * v2: the native sun and moon (sky_body): the moon at its real place and phase, by day too.
+ * @version 2
  * @brief Sky dial (see sky_dial.h): the horizon window with the wheel's arc, the sun and
  *        the moon placed by angle (clipped below the horizon), the moon's phase name under it,
  *        and the next sunrise / sunset in a column beside it. Every colour is a theme role.
  */
 #include "sky_dial.h"
 #include "sky_panel.h"   // sky_card_create, sky_moon_create
+#include "sky_body.h"
 #include "ui_theme_bind.h"
 
 #include <math.h>
@@ -18,9 +20,9 @@
 
 #define WIN_W    236     /* the sky window, above the horizon */
 #define WIN_H    100
-#define WHEEL_R  86      /* the wheel's radius (centre on the horizon, mid window) */
-#define SUN_D    28
-#define MOON_D   24
+#define WHEEL_R  78      /* the wheel's radius (centre on the horizon, mid window) */
+#define SUN_D    52      /* the sun's square: its disc 60 % of it, rays and glow round it */
+#define MOON_D   36      /* the moon's square: its disc 92 % of it */
 #define COL_X    (WIN_W + 18)
 
 /**
@@ -56,7 +58,8 @@ static lv_obj_t *dial_text(lv_obj_t *parent, const lv_font_t *font, ui_role_t ro
 /**
  * @brief The sky window: the wheel's upper arc, the horizon, the sun and the moon (each
  *        hidden by the window's clip once below the horizon).
- * @version 1
+ * v2: the native animated sun (sky_body); the moon wherever it really is.
+ * @version 2
  * @utility
  */
 static void sky_window(lv_obj_t *card, const sky_data_t *d)
@@ -78,15 +81,8 @@ static void sky_window(lv_obj_t *card, const sky_data_t *d)
 
     lv_obj_t *moon = sky_moon_create(win, d, MOON_D, 0, 0);
     if (moon) place(moon, sky_moon_angle(d), MOON_D);
-    if (d->sunrise_min >= 0) {
-        lv_obj_t *sun = lv_obj_create(win);
-        lv_obj_remove_style_all(sun);
-        lv_obj_set_size(sun, SUN_D, SUN_D);
-        lv_obj_set_style_radius(sun, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_opa(sun, LV_OPA_COVER, 0);
-        ui_bind_fill_role(sun, UI_ROLE_ACCENT);
-        place(sun, sky_sun_angle(d), SUN_D);
-    }
+    lv_obj_t *sun = d->sunrise_min >= 0 ? sky_body_sun_create(win, SUN_D) : NULL;
+    if (sun) place(sun, sky_sun_angle(d), SUN_D);
 
     lv_obj_t *horizon = lv_obj_create(win);
     lv_obj_remove_style_all(horizon);
@@ -97,33 +93,50 @@ static void sky_window(lv_obj_t *card, const sky_data_t *d)
 }
 
 /**
- * @brief The column beside the window: the next of sunrise / sunset first, then the other.
+ * @brief Two times in the column beside the window: @p names[0] / @p mins[0] first (the
+ *        next to happen), the other under it; a time below 0 shows as a dash.
  * @version 1
  * @utility
  */
-static void sun_times(lv_obj_t *card, const sky_data_t *d)
+static void two_times(lv_obj_t *card, const char *const names[2], const int mins[2])
 {
-    if (d->sunrise_min < 0) {
-        dial_text(card, &lv_font_montserrat_20, UI_ROLE_TEXT_MUTED, COL_X, 8, "No sunrise");
-        return;
-    }
-    bool set_next = d->part == SKY_DAY;
-    const char *names[2] = { set_next ? "Sunset" : "Sunrise", set_next ? "Sunrise" : "Sunset" };
-    int mins[2] = { set_next ? d->sunset_min : d->sunrise_min,
-                    set_next ? d->sunrise_min : d->sunset_min };
     char buf[16];
     for (int i = 0; i < 2; i++) {
         int32_t y = 2 + i * 60;
         dial_text(card, &lv_font_montserrat_16, UI_ROLE_TEXT_FAINT, COL_X, y, names[i]);
-        sky_fmt_clock(mins[i], buf, sizeof(buf));
+        if (mins[i] >= 0) sky_fmt_clock(mins[i], buf, sizeof(buf));
+        else snprintf(buf, sizeof(buf), "-");
         dial_text(card, &lv_font_montserrat_24, i ? UI_ROLE_TEXT_MUTED : UI_ROLE_TEXT, COL_X,
                   y + 20, buf);
     }
 }
 
 /**
+ * @brief The column beside the window: by day the sun's next set and rise; at night the moon's
+ *        next rise and set (whichever comes first on top).
+ * v2: the moon's times at night.
+ * @version 2
+ * @utility
+ */
+static void sky_times(lv_obj_t *card, const sky_data_t *d)
+{
+    if (d->part != SKY_DAY) {
+        bool set_next = d->moon_up;
+        const char *names[2] = { set_next ? "Moonset" : "Moonrise", set_next ? "Moonrise" : "Moonset" };
+        int mins[2] = { set_next ? d->moonset_min : d->moonrise_min,
+                        set_next ? d->moonrise_min : d->moonset_min };
+        two_times(card, names, mins);
+        return;
+    }
+    const char *names[2] = { "Sunset", "Sunrise" };
+    int mins[2] = { d->sunset_min, d->sunrise_min };
+    two_times(card, names, mins);
+}
+
+/**
  * @brief Build the dial card (see sky_dial.h).
- * @version 1
+ * v2: the moon's times at night (sky_times).
+ * @version 2
  * @req REQ-WX-007
  * @return The card.
  */
@@ -136,6 +149,6 @@ lv_obj_t *sky_dial_create(lv_obj_t *parent, const sky_data_t *d, int32_t x, int3
                                 d->moon.phase_name);
     lv_obj_set_width(phase, WIN_W);
     lv_obj_set_style_text_align(phase, LV_TEXT_ALIGN_CENTER, 0);
-    sun_times(card, d);
+    sky_times(card, d);
     return card;
 }

@@ -1,6 +1,7 @@
 /**
  * @file sky_data.h
- * @version 1
+ * v2: the real moon (astro_moon): up or down, its place on the wheel, next rise and set.
+ * @version 2
  * @brief What the sky screen shows (sky_panel.h), for one moment at one place: local sun
  *        times and where the day is, the moon, the aurora outlook and the next dated sky
  *        events. Pure C (no LVGL): host-tested.
@@ -35,6 +36,10 @@ typedef struct {
     moon_phase_t moon;
     bool         waxing;
     float        moon_frac;      /* where in its month: 0 new, 0.5 full */
+    bool         moon_up;        /* above the horizon now (by day too) */
+    float        moon_angle;     /* its place on the wheel (sky_moon_angle) */
+    int          moonrise_min;   /* the next moonrise, local minutes; -1 none within 2 days */
+    int          moonset_min;    /* the next moonset, likewise */
     float        kp;             /* 0 when unknown */
     float        aurora_prob;    /* 0..1 */
     const char  *season;         /* next solstice / equinox */
@@ -88,10 +93,11 @@ void sky_fmt_clock(int m, char *out, size_t n);
 float sky_sun_angle(const sky_data_t *d);
 
 /**
- * @brief The moon's place on the sky wheel (degrees, as sky_sun_angle): it trails the sun by
- *        its month fraction of a turn (new: with the sun, full: opposite), on a 24 h wheel
- *        turning about the middle of the day. Within about an hour of the real moonrise.
- * @version 1
+ * @brief The moon's place on the sky wheel (degrees, as sky_sun_angle), from its real rise
+ *        and set: -90 at moonrise, +90 at moonset, above the horizon while it is up (by day
+ *        too), the other half of the wheel while it is down.
+ * v2: the real moon (was a phase-based estimate, up to an hour off).
+ * @version 2
  * @req REQ-ASTRO-001
  * @return Degrees in (-180, 180].
  */

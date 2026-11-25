@@ -17,6 +17,8 @@
 #include "ui_theme_bind.h"
 #include "image_decode.h"
 #include "nws.h"
+#include "sky_body.h"
+#include "astro_moon.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -198,13 +200,11 @@ void forecast_icons_rescan(void)
 // WeatherCard Lottie background load task
 // ============================================================================
 
-#if LV_USE_LOTTIE
-
-#define WX_LOTTIE_W          220
+#define WX_LOTTIE_W          220   // the condition icon's square (a Lottie, or the native sun)
 #define WX_LOTTIE_H          220
 #define WX_LOTTIE_FPS        20
-
-#endif // LV_USE_LOTTIE
+#define WX_MOON_D            150   // the clear-night moon's square (its disc 92 % of it)
+#define WX_MOON_DARK_OPA     70    // its earthshine
 
 // ============================================================================
 // WeatherCard
@@ -436,19 +436,46 @@ void weather_card_update(weather_card_t *w, const nws_conditions_t *cond)
 }
 
 /**
+ * @brief A clear sky's icon, drawn natively (sky_body, the same sun and moon as the sky
+ *        dial): by day the turning sun, at night the moon at tonight's phase (its age does not
+ *        depend on where the clock is).
+ * @version 1
+ * @utility
+ * @return Whether it was made (false: not clear, or no memory: the Lottie is used).
+ */
+static bool clear_sky_icon(weather_card_t *w, const char *condition_desc, bool is_daytime)
+{
+    if (strcmp(condition_to_lottie_basename(condition_desc), "clear") != 0) return false;
+    astro_moon_t m;
+    astro_moon_at(time(NULL), 0.0f, 0.0f, &m);
+    lv_obj_t *b = is_daytime ? sky_body_sun_create(w->container, WX_LOTTIE_W)
+                             : sky_body_moon_create(w->container, WX_MOON_D, m.age, WX_MOON_DARK_OPA);
+    if (!b) {
+        ESP_LOGW(TAG, "clear-sky icon: no memory, using the Lottie");
+        return false;
+    }
+    int32_t inset = is_daytime ? 0 : (WX_LOTTIE_W - WX_MOON_D) / 2;   // centred where the Lottie sits
+    lv_obj_align(b, LV_ALIGN_TOP_RIGHT, -inset, inset);
+    lv_obj_move_background(b);
+    ESP_LOGI(TAG, "clear-sky icon: native %s", is_daytime ? "sun" : "moon");
+    return true;
+}
+
+/**
  * @brief Resolve the condition's Lottie file, allocate its SPIRAM render buffer, create
  *        the background widget and queue it on the shared Lottie loader task.
  *        No-op when LV_USE_LOTTIE is off; failures are logged and cleaned up.
- * @version 2
  * v2: 220 px at the card's top right, clear of the text (was 300 px centred over it).
+ * v3: a clear sky is the native sun or moon (clear_sky_icon), the same as the sky dial's.
+ * @version 3
  * @req REQ-WX-005
  * @req REQ-LOTTIE-001
  */
 void weather_card_load_condition_lottie(weather_card_t *w, const char *condition_desc,
                                          bool is_daytime)
 {
+    if (!w || !condition_desc || clear_sky_icon(w, condition_desc, is_daytime)) return;
 #if LV_USE_LOTTIE
-    if (!w || !condition_desc) return;
 
     char posix_path[128], lvgl_path[128];
     if (!resolve_condition_asset(&WX_ASSET_LOTTIE, condition_desc, is_daytime, posix_path,

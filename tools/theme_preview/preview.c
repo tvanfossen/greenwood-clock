@@ -327,25 +327,29 @@ static void sample_moment(int mon, int day, int hour, int min, sky_data_t *d)
 }
 
 /**
- * @brief The weather screen at local @p hour : @p min on 24 Nov: card, forecast strip, sky
- *        dial and a Severe alert over the background.
+ * @brief The weather screen at local @p hour : @p min on 2026-@p mon-@p day: card, forecast
+ *        strip, sky dial and a Severe alert over the background.
  * v2: a real event name; no contrast calls (bindings).
  * v3: the real clock, minimized.
  * v4: the sky dial, at a given time.
- * @version 4
+ * v5: any date (the moon's place and phase vary with it).
+ * v6: an optional sky (@p desc, e.g. "Clear"): the card's condition and its icon.
+ * @version 6
  * @utility
  */
-static void scene_weather(int hour, int min)
+static void scene_weather_on(int mon, int day, int hour, int min, const char *desc)
 {
     lv_obj_t *scr = fresh_screen(true);
     sky_data_t sky;
-    sample_moment(11, 24, hour, min, &sky);
+    sample_moment(mon, day, hour, min, &sky);
     sky_dial_create(scr, &sky, 588, 250, 420, 166);
     nws_conditions_t c;
     nws_forecast_t fc;
     fake_weather(&c, &fc);
+    if (desc) snprintf(c.description, sizeof(c.description), "%s", desc);
     weather_card_t *card = weather_card_create(scr);
     weather_card_update(card, &c);
+    if (desc) weather_card_load_condition_lottie(card, desc, sky.part == SKY_DAY);
     forecast_strip_t *strip = forecast_strip_create(scr);
     forecast_strip_update(strip, &fc);
     alert_banner_t *ab = alert_banner_create(scr);
@@ -356,6 +360,44 @@ static void scene_weather(int hour, int min)
     strcpy(a.headline, "until 7 PM: heavy snow, 6 to 10 inches");
     alert_banner_show(ab, &a);
     settle(900);
+}
+
+/**
+ * @brief The weather screen at local @p hour : @p min on 24 Nov.
+ * @version 1
+ * @utility
+ */
+static void scene_weather(int hour, int min)
+{
+    scene_weather_on(11, 24, hour, min, NULL);
+}
+
+/** Sky dial moments: the real moon by day and night, at its phases. */
+static const struct {
+    int         mon, day, hour, min;
+    const char *name;
+    const char *sky;   /**< The card's condition; NULL: the sample's. */
+} MOON_MOMENTS[] = {
+    { 12, 1, 10, 0, "moon_day_waning", "Sunny" },      // last quarter, up through the morning
+    { 11, 20, 15, 0, "moon_day_waxing", NULL },        // waxing gibbous, risen early afternoon
+    { 12, 5, 6, 10, "moon_predawn", "Clear" },         // waning crescent before sunrise
+    { 12, 12, 17, 30, "moon_evening", "Clear" },       // waxing crescent after sunset
+};
+
+/**
+ * @brief Write the sky dial moments for theme @p stem.
+ * @version 1
+ * @utility
+ */
+static void moon_moments(const char *out_dir, const char *stem)
+{
+    char file[512];
+    for (size_t i = 0; i < sizeof(MOON_MOMENTS) / sizeof(MOON_MOMENTS[0]); i++) {
+        scene_weather_on(MOON_MOMENTS[i].mon, MOON_MOMENTS[i].day, MOON_MOMENTS[i].hour,
+                         MOON_MOMENTS[i].min, MOON_MOMENTS[i].sky);
+        snprintf(file, sizeof(file), "%s/%s_%s.ppm", out_dir, stem, MOON_MOMENTS[i].name);
+        write_frame(file);
+    }
 }
 
 /**
@@ -730,7 +772,8 @@ static void render_edit_demo(const char *out_dir, const char *path)
  * v10: the schedule scenes are gone (the panel shots cover them).
  * v11: the Phone screen (was the upload mock).
  * v12: the editor's Alert tab.
- * @version 12
+ * v13: sky dial moments (the real moon, by day and night).
+ * @version 13
  * @utility
  * @return Whether the theme parsed.
  */
@@ -755,6 +798,7 @@ static bool render_theme(const char *out_dir, const char *path)
     scene_weather(16, 10);
     snprintf(file, sizeof(file), "%s/%s_weather_dusk.ppm", out_dir, stem);
     write_frame(file);
+    moon_moments(out_dir, stem);
     scene_gallery();
     snprintf(file, sizeof(file), "%s/%s_gallery.ppm", out_dir, stem);
     write_frame(file);

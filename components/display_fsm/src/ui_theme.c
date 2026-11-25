@@ -4,7 +4,8 @@
  * v3: the base theme is named "Default" (was "Greenwood").
  * v4: text straight on the picture (the clock) by APCA, its side from the picture.
  * v5: the alert core: error, error_strong and warn step from it (were fixed hues).
- * @version 5
+ * v6: the sky core: the sun is it, the moon a pale white of its hue.
+ * @version 6
  * @brief The UI colour theme: three OKLCH cores derived into named roles. The only file
  *        that writes colour values down (see ui_theme.h).
  *
@@ -48,10 +49,13 @@ const ui_theme_t UI_THEME_BASE = {
     .surface  = { 0.158f, 0.042f, 280.6f },    // navy panel
     .accent   = { 0.834f, 0.117f, 87.4f },     // gold
     .alert    = { 0.530f, 0.210f, 29.0f },     // deep red (extreme)
+    .sky      = { 0.834f, 0.117f, 87.4f },     // the sun's gold
     .contrast = 7.0f,
     .slots    = UI_SLOTS_DEFAULT,
 };
 
+#define MOON_L        0.95f   // the moon's light: near-white ...
+#define MOON_C        0.20f   // ... with a little of the sky core's chroma
 #define STEP_RAISED   0.07f   // surface -> raised, toward mid lightness
 #define STEP_INSET    0.14f   // surface -> inset
 #define STEP_BORDER   0.38f   // surface -> border
@@ -111,6 +115,8 @@ static const char *const ROLE_NAMES[UI_ROLE_COUNT] = {
     [UI_ROLE_ERROR_STRONG]   = "error_strong",
     [UI_ROLE_WARN]           = "warn",
     [UI_ROLE_LIGHT]          = "light",
+    [UI_ROLE_SUN]            = "sun",
+    [UI_ROLE_MOON]           = "moon",
 };
 
 static const char *const SLOT_NAMES[UI_SLOT_COUNT] = {
@@ -221,7 +227,8 @@ static void derive_surfaces(const ui_theme_t *t, lv_color_t out[UI_ROLE_COUNT])
 /**
  * @brief Derive the accent and alert roles.
  * v2: the alert roles step from the alert core (were fixed hues).
- * @version 2
+ * v3: the sun and moon roles from the sky core.
+ * @version 3
  * @utility
  */
 static void derive_accents(const ui_theme_t *t, lv_color_t out[UI_ROLE_COUNT])
@@ -236,6 +243,8 @@ static void derive_accents(const ui_theme_t *t, lv_color_t out[UI_ROLE_COUNT])
     out[UI_ROLE_ERROR_STRONG] = ui_oklch_to_color(*a);
     out[UI_ROLE_WARN]         = lch(a->l + (dark ? WARN_DL_DARK : WARN_DL_LIGHT), a->c * WARN_C,
                                     a->h + WARN_DH);
+    out[UI_ROLE_SUN]          = ui_oklch_to_color(t->sky);
+    out[UI_ROLE_MOON]         = lch(MOON_L, t->sky.c * MOON_C, t->sky.h);   // a warm pale white
 }
 
 /**

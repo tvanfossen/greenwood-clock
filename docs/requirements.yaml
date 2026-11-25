@@ -460,8 +460,18 @@ requirements:
   REQ-ASTRO-001:
     name: Astronomy view
     subsystem: ASTRO
-    description: Shows sunrise and sunset, moon phase and the Kp index / aurora outlook; sun and moon computed locally (astro_calc), Kp fetched from NOAA.
-    acceptance_criteria: Sunrise/sunset within 2 min and moon phase matching a reference almanac for the configured location; Kp matches NOAA's current value.
+    description: >-
+      Shows sunrise and sunset, the moon and the Kp index / aurora outlook; sun and moon
+      computed locally (astro_calc, astro_moon), Kp fetched from NOAA. The sky dial places the
+      sun and the moon where they really are (the moon by its own rise and set, so it shows in
+      the daytime sky when it is up), drawn natively in the theme's sky core: the sun with
+      slowly turning rays, the moon at its real phase with its maria; at night the dial lists
+      the moon's next rise and set. The clear-sky weather icon is the same sun and moon.
+    acceptance_criteria: >-
+      Sunrise/sunset within 2 min, and moonrise/moonset within 5 min and the moon's lit fraction
+      within 2 % of a reference almanac, for the configured location; the moon is on the dial
+      exactly while it is above the horizon, lit on the side towards the sun; Kp matches NOAA's
+      current value.
 
   # ---------------------------------------------------------------- AMB
   REQ-AMB-001:
@@ -512,8 +522,9 @@ requirements:
     name: One OKLCH colour theme
     subsystem: UI
     description: >-
-      Every colour the firmware and the web panel draw comes from one theme: four OKLCH core
-      colours (ink, surface, accent, alert) and a contrast target, derived into named roles (surfaces,
+      Every colour the firmware and the web panel draw comes from one theme: five OKLCH core
+      colours (ink, surface, accent, alert, sky: the sun, and the moon's light derived from it)
+      and a contrast target, derived into named roles (surfaces,
       border, text tiers, accents, error/warn, a near-white, a leaf palette, swatches). Text is
       made legible against what is really behind it, keeping its hue and moving only its
       lightness. Themes are JSON files in /sdcard/themes, chosen per schedule profile; a
@@ -530,7 +541,7 @@ requirements:
     description: >-
       A profile's Theme picker > Customize opens a theme editor: a live design preview (clock text, a
       card and strip over the real background, the four alert severities, stock controls) beside
-      OKLCH pickers for the four cores (L, C and h sliders over their gradients), the text
+      OKLCH pickers for the five cores (L, C and h sliders over their gradients), the text
       contrast target, and the slot grid (tap a themed place for its next fill role). Every
       edit repaints the running UI; Back restores the opening theme; Save asks for a name, keeps
       the theme as /sdcard/themes/<name>.json and gives it to the profile being edited.

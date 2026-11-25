@@ -2,7 +2,8 @@
  * @file ui_theme.h
  * v2: slots — the themed places (cards, strips, alerts, ...) and which fill role each takes.
  * v3: a fourth core, alert: the alert severities step from it.
- * @version 3
+ * v4: a fifth core, sky: the sun, and the moon derived from it.
+ * @version 4
  * @brief The UI colour theme: four OKLCH core colours (ink, surface, accent, alert) and a
  *        contrast target, mapped to the named roles every widget draws with.
  *
@@ -46,6 +47,8 @@ typedef enum {
     UI_ROLE_ERROR_STRONG,      /**< Extreme alerts, destructive buttons. */
     UI_ROLE_WARN,              /**< Warnings and moderate alerts. */
     UI_ROLE_LIGHT,             /**< The theme's near-white (snow, markers). */
+    UI_ROLE_SUN,               /**< The sun (the sky core itself). */
+    UI_ROLE_MOON,              /**< The moon's light: a pale near-white of the sky core's hue. */
     UI_ROLE_COUNT
 } ui_role_t;
 
@@ -65,7 +68,7 @@ typedef enum {
     UI_SLOT_COUNT
 } ui_slot_t;
 
-/** A theme as written in its JSON file: three core colours and a contrast target. */
+/** A theme as written in its JSON file: five core colours and a contrast target. */
 typedef struct {
     char       name[UI_THEME_NAME_LEN];   /**< Shown in the theme picker. */
     ui_oklch_t ink;        /**< Text hue (and lightness, where it is legible as is). */
@@ -73,6 +76,8 @@ typedef struct {
     ui_oklch_t accent;     /**< Highlights, focus, progress, the decorative palettes. */
     ui_oklch_t alert;      /**< The strongest alert colour (Extreme); Severe and the amber
                                 Moderate step from it. Optional in files (base when absent). */
+    ui_oklch_t sky;        /**< The sun; the moon's light is derived from it. Optional in files
+                                (base when absent). */
     float      contrast;   /**< WCAG ratio primary text reaches (e.g. 7.0). */
     uint8_t    slots[UI_SLOT_COUNT];   /**< ui_role_t filling each slot. */
 } ui_theme_t;
