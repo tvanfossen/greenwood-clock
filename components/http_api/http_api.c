@@ -5,7 +5,7 @@
  */
 // components/http_api/http_api.c
 
-#include "http_bg_schedule.h"
+#include "http_schedule.h"
 #include "http_theme.h"
 #include "http_frame_capture.h"
 #include "frame_capture.h"
@@ -1073,13 +1073,14 @@ static void http_api_register_display_handlers(httpd_handle_t srv)
  * v2: also the background schedule endpoints.
  * v3: also the debug frame-capture endpoints.
  * v4: also the theme endpoints.
- * @version 4
+ * v5: the daily/events schedule endpoints (/api/schedule replaces /api/bg_schedule).
+ * @version 5
  * @req REQ-API-001
  */
 static void http_api_register_handlers(httpd_handle_t srv)
 {
     http_frame_capture_register(srv);
-    http_bg_schedule_register(srv);   // before the display handlers' www catch-all
+    http_schedule_register(srv);   // before the display handlers' www catch-all
     http_theme_register(srv);
     http_api_register_file_handlers(srv);
     http_api_register_ota_handlers(srv);

@@ -66,6 +66,7 @@ HOST_TESTS = {
     "sky_data": ("sky_data", "astro_calc"),
     "sched_rule": ("sched_rule", "sky_data", "astro_calc"),
     "sched_engine": ("sched_engine", "sched_rule", "sky_data", "astro_calc"),
+    "sched_json": ("sched_json", "cjson/cjson/cJSON"),
 }
 
 #: Include directories for the host tests.
@@ -251,24 +252,25 @@ def bg_ingest(c, src="image_ingest", fit="fill", host=DEFAULT_HOST):
         print(f"{img.name} -> A:/backgrounds/{dest.name}")
 
 
-## @brief Show the background schedule, or replace it from a JSON file.
-## A file may give "every_day": [profile per slot] instead of seven "days" rows.
+## @brief Print the daily/events schedule, or replace it with a JSON file (sched_json.h format);
+## a schedule whose profiles overlap is refused with the reason.
+## v2: /api/schedule (daily profiles and events; was the weekly grid at /api/bg_schedule).
+## @req REQ-TOOL-001
 ## @req REQ-BG-004
-## @version 1
+## @version 2
 @task(
     help={
         "file": "Schedule JSON to POST (omit to print the current one)",
         "host": "Device host or IP",
     }
 )
-def bg_schedule(c, file=None, host=DEFAULT_HOST):
+def schedule(c, file=None, host=DEFAULT_HOST):
     if file is None:
-        _print_json(host, "/api/bg_schedule")
+        _print_json(host, "/api/schedule")
         return
-    payload = json.loads(Path(file).read_text())
-    if "every_day" in payload:
-        payload["days"] = [payload.pop("every_day")] * 7
-    body = _request(host, "/api/bg_schedule", method="POST", payload=payload)
+    body = _request(
+        host, "/api/schedule", method="POST", payload=json.loads(Path(file).read_text())
+    )
     if body is not None:
         print(body.decode(errors="replace"))
 

@@ -8,7 +8,7 @@
 // All LVGL operations happen under lvgl_port_lock in this task.
 
 #include "display_fsm.h"
-#include "bg_schedule.h"
+#include "sched_store.h"
 #include "display_fsm_base.h"
 #include "display_states.h"
 #include "display_widgets.h"
@@ -611,39 +611,43 @@ static void reload_background(const clock_settings_t *cfg)
     apply_clock_user_color();
 }
 
-static int          s_bg_profile = -1;   // schedule profile last applied (-1: none yet)
+static int          s_bg_profile = -2;   // schedule profile last applied (-1: none, -2: not yet)
 static clock_anim_t s_bg_anim = CLOCK_ANIM_COUNT;   // animation last applied by a profile
 
 /**
- * @brief Effective settings: the global settings with the active schedule profile's
+ * @brief Effective settings: the global settings with the showing schedule profile's
  *        overrides (image, brightness) applied; its theme is applied by apply_theme.
  * v2: no text colour (the theme carries it).
- * @version 2
+ * v3: the profile from the daily/events schedule (sched_store), not the weekly grid.
+ * @version 3
  * @req REQ-BG-004
- * @return Active profile index; the profile is copied to @p prof when non-NULL.
+ * @return The showing profile's index (-1: none, the global settings); it is copied to
+ *         @p prof when non-NULL.
  */
-static int effective_settings(clock_settings_t *cfg, bg_profile_t *prof)
+static int effective_settings(clock_settings_t *cfg, sched_rule_t *prof)
 {
     settings_load(cfg);
     time_t now = time(NULL);
     struct tm ti;
     localtime_r(&now, &ti);
-    bg_profile_t p;
-    int idx = bg_schedule_active(&ti, &p);
+    sched_rule_t p;
+    int idx = sched_store_active(&ti, &p);
     if (p.image[0]) strlcpy(cfg->background_image, p.image, sizeof(cfg->background_image));
-    if (p.brightness != BG_INHERIT) cfg->brightness = (uint8_t)p.brightness;
+    if (p.brightness != SCHED_INHERIT) cfg->brightness = (uint8_t)p.brightness;
     if (prof) *prof = p;
     return idx;
 }
 
 /**
  * @brief Select the profile's animation (or the stored preference) if it changed.
- * @version 1
+ * v2: the profile names its animation (unknown or empty: the preference).
+ * @version 2
  * @utility
  */
-static void apply_profile_anim(const bg_profile_t *p)
+static void apply_profile_anim(const sched_rule_t *p)
 {
-    clock_anim_t anim = (p->anim != BG_INHERIT) ? (clock_anim_t)p->anim : clock_anim_pref_get();
+    clock_anim_t named = p->anim[0] ? clock_anim_from_name(p->anim) : CLOCK_ANIM_COUNT;
+    clock_anim_t anim = named != CLOCK_ANIM_COUNT ? named : clock_anim_pref_get();
     if (anim == s_bg_anim) return;
     s_bg_anim = anim;
     clock_animation_select(anim);
@@ -656,11 +660,12 @@ static char s_theme_stem[BG_THEME_LEN] = "";   // theme file last installed ("" 
  *        preference) unless it is already installed (always when @p force). Loads the file
  *        off the LVGL lock, falling back to the built-in theme. fsm_task only.
  * v2: repaints every theme binding.
- * @version 2
+ * v3: takes a schedule profile (sched_rule_t).
+ * @version 3
  * @req REQ-UI-003
  * @req REQ-BG-004
  */
-static void apply_theme(const bg_profile_t *p, bool force)
+static void apply_theme(const sched_rule_t *p, bool force)
 {
     char stem[BG_THEME_LEN];
     if (p && p->theme[0]) strlcpy(stem, p->theme, sizeof(stem));
@@ -683,17 +688,18 @@ static void apply_theme(const bg_profile_t *p, bool force)
  * @brief Apply the active schedule profile when it changed (or always when @p force):
  *        theme, background, brightness and clock animation. fsm_task only (decodes).
  * v2: the profile's theme (was its text colour).
- * @version 2
+ * v3: profiles from the daily/events schedule.
+ * @version 3
  * @req REQ-BG-004
  */
 static void apply_bg_profile(bool force)
 {
     clock_settings_t cfg;
-    bg_profile_t p;
+    sched_rule_t p;
     int idx = effective_settings(&cfg, &p);
     if (!force && idx == s_bg_profile) return;
     ESP_LOGI(TAG, "bg profile %d -> %d '%s' (image '%s', brightness %u%%, theme '%s')",
-             s_bg_profile, idx, p.name, cfg.background_image, cfg.brightness,
+             s_bg_profile, idx, idx >= 0 ? p.name : "(global)", cfg.background_image, cfg.brightness,
              p.theme[0] ? p.theme : "global");
     s_bg_profile = idx;
     apply_theme(&p, force);
@@ -910,7 +916,8 @@ static void start_periodic_timers(void)
  * v5: background schedule: the minute tick and REFRESH_BG apply the active profile.
  * v6: passes the radar image's valid time to the predecode.
  * v7: themes replace the text colour (theme names, theme roles, theme events).
- * @version 7
+ * v8: schedule profiles from the daily/events schedule.
+ * @version 8
  */
 static void process_event(const display_event_t *evt)
 {
@@ -932,7 +939,7 @@ static void process_event(const display_event_t *evt)
     }
     if (evt->type == DISPLAY_EVT_REFRESH_THEME) {
         clock_settings_t cfg;
-        bg_profile_t prof;
+        sched_rule_t prof;
         effective_settings(&cfg, &prof);
         theme_store_rescan();
         apply_theme(&prof, true);
@@ -991,7 +998,8 @@ static void fsm_run_event_loop(void)
  * v5: hooks the debug frame recorder to the display.
  * v6: installs the effective theme (and lists the installed ones) before building widgets.
  * v7: bound text samples the background picture.
- * @version 7
+ * v8: loads the daily/events schedule first.
+ * @version 8
  */
 static void fsm_task(void *arg)
 {
@@ -999,7 +1007,8 @@ static void fsm_task(void *arg)
     ESP_LOGI(TAG, "FSM task started");
 
     clock_settings_t cfg;
-    bg_profile_t prof;
+    sched_rule_t prof;
+    sched_store_init();            // SD read (or converting the weekly schedule) off-lock
     s_bg_profile = effective_settings(&cfg, &prof);   // global settings + active schedule profile
     theme_store_rescan();          // SD listing off-lock; the theme menus read the cache
     apply_theme(&prof, true);      // before any widget is built, so all draw with it
