@@ -2,12 +2,14 @@
 ## @brief Screenshot the phone panel (sdcard/www/panel) in a real browser: serve it locally,
 ## open it in headless Firefox (Playwright) at a desktop and a phone-landscape size, tap
 ## through the given steps and save one PNG per step; browser console errors are printed.
-## @version 2
+## v3: a step may reload the page first ("reload": true) to start from the menu.
+## @version 3
 """Usage: shots.py <panel dir> <out dir> <steps.json>
 
-steps.json: [{"name": "menu", "taps": [[x, y], ...], "drags": [[x, y, dx, dy], ...]}, ...]
-in clock pixels (1024 x 600); each step's drags then taps run after the previous step's,
-then a screenshot is taken.
+steps.json: [{"name": "menu", "reload": false, "taps": [[x, y], ...],
+              "drags": [[x, y, dx, dy], ...]}, ...]
+in clock pixels (1024 x 600); each step (after an optional reload) drags then taps, after
+the previous step's, then a screenshot is taken.
 """
 
 import functools
@@ -66,10 +68,20 @@ def drag(page, x, y, dx, dy):
     page.wait_for_timeout(700)
 
 
+## @brief Open @p url and wait for the panel to run.
+## @utility
+## @version 1
+def load(page, url):
+    page.goto(url)
+    page.wait_for_function("window.panelReady === true", timeout=20000)
+    page.wait_for_timeout(600)
+
+
 ## @brief Run every step at one view size, saving <out>/<view>_<step>.png.
 ## v2: drags before taps.
+## v3: optional reload per step.
 ## @utility
-## @version 2
+## @version 3
 def run_view(browser, url, out, view, steps):
     w, h, scale = VIEWS[view]
     page = browser.new_page(
@@ -79,10 +91,10 @@ def run_view(browser, url, out, view, steps):
         "console", lambda m: m.type == "error" and print(f"[{view}] console: {m.text}")
     )
     page.on("pageerror", lambda e: print(f"[{view}] page error: {e}"))
-    page.goto(url)
-    page.wait_for_function("window.panelReady === true", timeout=20000)
-    page.wait_for_timeout(600)
+    load(page, url)
     for step in steps:
+        if step.get("reload"):
+            load(page, url)
         for x, y, dx, dy in step.get("drags", []):
             drag(page, x, y, dx, dy)
         for x, y in step.get("taps", []):

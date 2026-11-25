@@ -1,7 +1,9 @@
 /**
  * @file sched_store.c
  * v2: sched_store_sun_table; sched_store_today public.
- * @version 2
+ * v3: safe before sched_store_init (the HTTP server runs during the launch window, before
+ *     the display task loads the schedule): empty answers, refused saves.
+ * @version 3
  * @brief The device's schedule: file, RAM copy, overlap-checked saves, the active profile and
  *        the device's sun (see sched_store.h).
  */
@@ -73,16 +75,21 @@ static sched_sun_t device_sun(sched_date_t d, void *ctx)
 static const sched_sun_src_t SUN = { device_sun, NULL };   // for callers holding s_lock
 
 /**
- * @brief device_sun for callers outside the store: takes s_lock around the cache.
- * @version 1
+ * @brief device_sun for callers outside the store: takes s_lock around the cache (6:00/18:00
+ *        before init).
+ * v2: 6:00/18:00 before init.
+ * @version 2
  * @callback
  * @return The sun times.
  */
 static sched_sun_t locked_sun(sched_date_t d, void *ctx)
 {
-    xSemaphoreTake(s_lock, portMAX_DELAY);
-    sched_sun_t s = device_sun(d, ctx);
-    xSemaphoreGive(s_lock);
+    sched_sun_t s = { 6 * 60, 18 * 60 };
+    if (s_lock) {
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        s = device_sun(d, ctx);
+        xSemaphoreGive(s_lock);
+    }
     return s;
 }
 
@@ -225,16 +232,20 @@ esp_err_t sched_store_init(void)
 
 /**
  * @brief Copy the profiles.
- * @version 1
+ * v2: none before init.
+ * @version 2
  * @req REQ-BG-004
  * @return How many.
  */
 int sched_store_get(sched_rule_t *out, int max)
 {
-    xSemaphoreTake(s_lock, portMAX_DELAY);
-    int n = s_count < max ? s_count : max;
-    memcpy(out, s_rules, sizeof(sched_rule_t) * (size_t)n);
-    xSemaphoreGive(s_lock);
+    int n = 0;
+    if (s_lock) {
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        n = s_count < max ? s_count : max;
+        memcpy(out, s_rules, sizeof(sched_rule_t) * (size_t)n);
+        xSemaphoreGive(s_lock);
+    }
     return n;
 }
 
@@ -256,13 +267,18 @@ sched_date_t sched_store_today(void)
 /**
  * @brief Check, write and adopt a schedule.
  * v2: sched_store_today.
- * @version 2
+ * v3: refused before init.
+ * @version 3
  * @req REQ-BG-004
  * @return ESP_OK, ESP_ERR_INVALID_ARG, or the write's error.
  */
 esp_err_t sched_store_set(const sched_rule_t *r, int n, char *why, size_t why_n)
 {
     esp_err_t err = n >= 0 && n <= SCHED_MAX_PROFILES ? ESP_OK : ESP_ERR_INVALID_ARG;
+    if (!s_lock) {
+        if (why) snprintf(why, why_n, "The schedule is not loaded yet");
+        return ESP_ERR_INVALID_STATE;
+    }
     sched_overlap_t o;
     read_location();
     xSemaphoreTake(s_lock, portMAX_DELAY);   // the sun cache is shared with sched_store_active
@@ -287,7 +303,8 @@ esp_err_t sched_store_set(const sched_rule_t *r, int n, char *why, size_t why_n)
 
 /**
  * @brief The profile showing at a local time.
- * @version 1
+ * v2: none before init.
+ * @version 2
  * @req REQ-BG-004
  * @return Its index, or -1.
  */
@@ -295,10 +312,13 @@ int sched_store_active(const struct tm *now, sched_rule_t *out)
 {
     sched_date_t d = { (uint16_t)(now->tm_year + 1900), (uint8_t)(now->tm_mon + 1),
                        (uint8_t)now->tm_mday };
-    xSemaphoreTake(s_lock, portMAX_DELAY);
-    int idx = sched_active(s_rules, s_count, d, now->tm_hour * 60 + now->tm_min, &SUN);
-    if (out && idx >= 0) *out = s_rules[idx];
-    xSemaphoreGive(s_lock);
+    int idx = -1;
+    if (s_lock) {
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        idx = sched_active(s_rules, s_count, d, now->tm_hour * 60 + now->tm_min, &SUN);
+        if (out && idx >= 0) *out = s_rules[idx];
+        xSemaphoreGive(s_lock);
+    }
     if (out && idx < 0) {
         memset(out, 0, sizeof(*out));
         out->brightness = SCHED_INHERIT;
@@ -308,19 +328,18 @@ int sched_store_active(const struct tm *now, sched_rule_t *out)
 
 /**
  * @brief The sun for a run of days.
- * @version 1
+ * v2: through locked_sun (safe before init).
+ * @version 2
  * @req REQ-BG-004
  */
 void sched_store_sun_table(sched_date_t from, int days, sched_sun_t *out)
 {
     sched_date_t d = from;
-    xSemaphoreTake(s_lock, portMAX_DELAY);   // the sun cache is shared
     for (int i = 0; i < days; i++) {
-        out[i] = device_sun(d, NULL);
+        out[i] = locked_sun(d, NULL);   // the sun cache is shared
         struct tm t = { .tm_year = d.year - 1900, .tm_mon = d.month - 1, .tm_mday = d.day + 1,
                         .tm_hour = 12, .tm_isdst = -1 };
         mktime(&t);   // normalises the day after
         d = (sched_date_t){ (uint16_t)(t.tm_year + 1900), (uint8_t)(t.tm_mon + 1), (uint8_t)t.tm_mday };
     }
-    xSemaphoreGive(s_lock);
 }
