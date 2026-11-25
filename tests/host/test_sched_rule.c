@@ -1,7 +1,9 @@
 /**
  * @file test_sched_rule.c
  * v2: a daily profile's when-line is its window only.
- * @version 2
+ * v3: filling a profile's unset fields; what a gap shows.
+ * v4: a theme name's file stem.
+ * @version 4
  * @brief Host tests for the schedule profile text: window edges (clock and sun-anchored),
  *        the "when" line for every repeat kind, and the "look" line.
  */
@@ -121,8 +123,101 @@ static void test_look(void)
 }
 
 /**
- * @brief Run every check and report the tally.
+ * @brief Filling: only the unset fields take the given values, and it says whether any did.
  * @version 1
+ * @utility
+ */
+static void test_fill(void)
+{
+    sched_rule_t with = blank();
+    snprintf(with.image, sizeof(with.image), "A:/backgrounds/campfire.png");
+    snprintf(with.theme, sizeof(with.theme), "default");
+    snprintf(with.anim, sizeof(with.anim), "Snowfall");
+    with.brightness = 60;
+
+    sched_rule_t r = blank();
+    snprintf(r.theme, sizeof(r.theme), "sassafras");
+    s_checks++;
+    if (!sched_rule_fill(&r, &with)) {
+        s_failures++;
+        printf("FAIL %s:%d: unset fields filled but not reported\n", __FILE__, __LINE__);
+    }
+    CHECK_STR(r.image, "A:/backgrounds/campfire.png");
+    CHECK_STR(r.theme, "sassafras");   // set: kept
+    CHECK_STR(r.anim, "Snowfall");
+    s_checks++;
+    if (r.brightness != 60) {
+        s_failures++;
+        printf("FAIL %s:%d: brightness %d != 60\n", __FILE__, __LINE__, r.brightness);
+    }
+    s_checks++;
+    if (sched_rule_fill(&r, &with)) {
+        s_failures++;
+        printf("FAIL %s:%d: nothing left to fill but a change reported\n", __FILE__, __LINE__);
+    }
+}
+
+/**
+ * @brief A gap (no profile covers now): the built-in Default theme, no picture, no animation.
+ * @version 1
+ * @utility
+ */
+static void test_gap(void)
+{
+    sched_rule_t g;
+    memset(&g, 0x5a, sizeof(g));
+    sched_rule_gap(&g);
+    CHECK_STR(g.image, "");
+    CHECK_STR(g.theme, "default");
+    CHECK_STR(g.anim, "None");
+    s_checks++;
+    if (g.brightness != SCHED_INHERIT) {
+        s_failures++;
+        printf("FAIL %s:%d: gap brightness %d is not the stored one\n", __FILE__, __LINE__,
+               g.brightness);
+    }
+}
+
+/**
+ * @brief Theme names to file stems: lower case, runs of anything else one '-', at most 15
+ *        characters, no edge dashes; nothing usable, or the built-in "default", refused.
+ * @version 1
+ * @utility
+ */
+static void test_theme_stem(void)
+{
+    static const char *const CASES[][2] = {
+        { "Rose Gold", "rose-gold" },
+        { "  Valentine's  Day!", "valentine-s-day" },
+        { "Christmas Eve 2026 night", "christmas-eve-2" },
+        { "Night--Owl", "night-owl" },
+        { "abcdefghijklmn- x", "abcdefghijklmn" },
+    };
+    char stem[16];
+    for (size_t i = 0; i < sizeof(CASES) / sizeof(CASES[0]); i++) {
+        stem[0] = '\0';
+        s_checks++;
+        if (!sched_theme_stem(CASES[i][0], stem, sizeof(stem))) {
+            s_failures++;
+            printf("FAIL %s:%d: \"%s\" refused\n", __FILE__, __LINE__, CASES[i][0]);
+        }
+        CHECK_STR(stem, CASES[i][1]);
+    }
+    static const char *const REFUSED[] = { "", "  !!  ", "Default", "DEFAULT " };
+    for (size_t i = 0; i < sizeof(REFUSED) / sizeof(REFUSED[0]); i++) {
+        s_checks++;
+        if (sched_theme_stem(REFUSED[i], stem, sizeof(stem))) {
+            s_failures++;
+            printf("FAIL %s:%d: \"%s\" accepted as \"%s\"\n", __FILE__, __LINE__, REFUSED[i], stem);
+        }
+    }
+}
+
+/**
+ * @brief Run every check and report the tally.
+ * v2: fill and gap.
+ * v3: theme stems.
+ * @version 3
  * @utility
  * @return 0 when every check passed.
  */
@@ -131,6 +226,9 @@ int main(void)
     test_times();
     test_when();
     test_look();
+    test_fill();
+    test_gap();
+    test_theme_stem();
     printf("sched_rule: %d/%d checks passed\n", s_checks - s_failures, s_checks);
     return s_failures;
 }

@@ -44,6 +44,7 @@ idf_component_register(
         "src/sched_ui.c"
         "src/settings_app.c"
         "src/settings_sched.c"
+        "src/settings_theme.c"
         "src/settings_pickers.c"
         "src/settings_lists.c"
         "src/phone_view.c"

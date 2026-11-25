@@ -1,15 +1,16 @@
 /**
  * @file http_panel.h
- * @version 1
+ * v2: no global values; POST /api/theme/save keeps a named theme.
+ * @version 2
  * @brief The phone panel's API (a paired session or the admin token):
  *
- *   GET  /api/panel         everything the panel shows at start: the settings, the lists to
- *                           choose from, the schedule, the clock's own "now" and a year of
- *                           sunrise/sunset (so the phone checks overlaps the way the clock
- *                           does without knowing where it is)
- *   POST /api/theme/custom  a theme from the editor: kept as custom.json, made the global theme
+ *   GET  /api/panel                 everything the panel shows at start: the lists to choose
+ *                                   from, the schedule, the clock's own "now" and a year of
+ *                                   sunrise/sunset (so the phone checks overlaps the way the
+ *                                   clock does without knowing where it is)
+ *   POST /api/theme/save?stem=<s>   a theme from the editor, kept as the theme file <s>
  *
- * Changes otherwise go to POST /api/settings and POST /api/schedule.
+ * Changes otherwise go to POST /api/schedule (profiles set everything the clock shows).
  */
 #ifndef HTTP_PANEL_H
 #define HTTP_PANEL_H

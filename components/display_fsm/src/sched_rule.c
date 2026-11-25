@@ -1,6 +1,8 @@
 /**
  * @file sched_rule.c
- * @version 1
+ * v2: sched_rule_fill, sched_rule_gap.
+ * v3: sched_theme_stem.
+ * @version 3
  * @brief Schedule profiles as text (see sched_rule.h). Pure C.
  */
 #include "sched_rule.h"
@@ -154,4 +156,68 @@ void sched_fmt_look(const sched_rule_t *r, char *out, size_t n)
         append(out, n, part);
     }
     if (!out[0]) snprintf(out, n, "Global settings");
+}
+
+/**
+ * @brief Copy @p from into @p to (of @p n bytes) when @p to is empty.
+ * @version 1
+ * @utility
+ * @return Whether it was copied.
+ */
+static bool fill_text(char *to, size_t n, const char *from)
+{
+    bool fill = !to[0] && from[0];
+    if (fill) snprintf(to, n, "%s", from);
+    return fill;
+}
+
+/**
+ * @brief Fill @p r's unset fields from @p with.
+ * @version 1
+ * @req REQ-BG-004
+ * @return Whether any was filled.
+ */
+bool sched_rule_fill(sched_rule_t *r, const sched_rule_t *with)
+{
+    bool changed = fill_text(r->image, sizeof(r->image), with->image);
+    changed |= fill_text(r->theme, sizeof(r->theme), with->theme);
+    changed |= fill_text(r->anim, sizeof(r->anim), with->anim);
+    if (r->brightness == SCHED_INHERIT && with->brightness != SCHED_INHERIT) {
+        r->brightness = with->brightness;
+        changed = true;
+    }
+    return changed;
+}
+
+/**
+ * @brief What a gap shows.
+ * @version 1
+ * @req REQ-BG-004
+ */
+void sched_rule_gap(sched_rule_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    snprintf(out->theme, sizeof(out->theme), "default");
+    snprintf(out->anim, sizeof(out->anim), "None");
+    out->brightness = SCHED_INHERIT;
+}
+
+/**
+ * @brief A theme name's file stem.
+ * @version 1
+ * @req REQ-UI-004
+ * @return Whether it is usable.
+ */
+bool sched_theme_stem(const char *name, char *out, size_t n)
+{
+    size_t len = 0, cap = n < SCHED_THEME_LEN ? n - 1 : SCHED_THEME_LEN - 1;
+    for (const char *c = name; *c && len < cap; c++) {
+        char lc = (char)tolower((unsigned char)*c);
+        bool keep = isalnum((unsigned char)lc) && (unsigned char)lc < 0x80;
+        if (keep) out[len++] = lc;
+        else if (len && out[len - 1] != '-') out[len++] = '-';
+    }
+    while (len && out[len - 1] == '-') len--;
+    out[len] = '\0';
+    return len > 0 && strcmp(out, "default") != 0;
 }

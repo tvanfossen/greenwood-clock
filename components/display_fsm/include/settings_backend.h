@@ -2,7 +2,9 @@
  * @file settings_backend.h
  * v2: optional upload (the phone sends a picture).
  * v3: leave is optional (the phone has no Back at its menu).
- * @version 3
+ * v4: no global settings (profiles set everything): get / set_* are gone; save_theme keeps
+ *     a named theme.
+ * @version 4
  * @brief What the settings screens (settings_app) need from the device they run for: read and
  *        change the settings, the lists to choose from, the schedule, the sun, and the few
  *        device-only screens. Two implementations: the clock's own (state_settings.cpp:
@@ -35,14 +37,6 @@ typedef enum {
     SETTINGS_LIST_ANIMS,
 } settings_list_t;
 
-/** The global settings the screens show and change. */
-typedef struct {
-    int  brightness;                   /**< 10..100 %. */
-    char background[SCHED_IMAGE_LEN];  /**< LVGL path. */
-    char theme[SCHED_THEME_LEN];       /**< Theme file stem. */
-    char anim[SCHED_ANIM_LEN];         /**< Clock animation name. */
-} settings_values_t;
-
 /** What a picture is uploaded as. */
 typedef enum {
     SETTINGS_UPLOAD_BACKGROUND = 0,   /**< Cropped to fill 1024x600; joins the backgrounds. */
@@ -54,17 +48,13 @@ typedef void (*settings_done_cb_t)(bool ok, const char *why, void *ctx);
 
 /** A device's settings. Optional members may be NULL: their menu entry is left out. */
 typedef struct {
-    void (*get)(settings_values_t *out);
     int  (*list)(settings_list_t which, settings_choice_t *out, int max);
-    void (*set_brightness)(int pct);
-    void (*set_background)(const char *path);
-    void (*set_theme)(const char *stem);
-    void (*set_anim)(const char *name);
     int  (*schedule_get)(sched_rule_t *out, int max);
     void (*schedule_set)(const sched_rule_t *r, int n, settings_done_cb_t done, void *ctx);
     const sched_sun_src_t *(*sun)(void);
     void (*now)(sched_date_t *day, int *min);   /**< Local date and minute. */
-    void (*save_theme)(const ui_theme_t *t, settings_done_cb_t done, void *ctx);
+    /** Keep @p t (named t->name) as the theme file @p stem, replacing one of that stem. */
+    void (*save_theme)(const ui_theme_t *t, const char *stem, settings_done_cb_t done, void *ctx);
     void (*about)(char *out, size_t n);
     lv_obj_t *(*wifi_create)(lv_obj_t *parent);      /**< Optional: the Wi-Fi screen. */
     lv_obj_t *(*phone_create)(lv_obj_t *parent);     /**< Optional: pair a phone (QR). */

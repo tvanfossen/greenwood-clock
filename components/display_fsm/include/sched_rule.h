@@ -2,7 +2,8 @@
  * @file sched_rule.h
  * v2: no priority: daily profiles (the clock's default state) may not overlap each other,
  *     events may not overlap each other, and an event always replaces the daily profile.
- * @version 2
+ * v3: every field explicit (sched_rule_fill fills old "global" ones once); sched_rule_gap.
+ * @version 3
  * @brief Schedule profiles (prototype notation). Two kinds, one type: DAILY profiles repeat
  *        every day forever and are the clock's default state (morning, afternoon, evening,
  *        night); EVENTS repeat every year on a date or range, or happen once (Valentine's,
@@ -106,12 +107,40 @@ void sched_fmt_look(const sched_rule_t *r, char *out, size_t n);
 void sched_theme_label(const char *stem, char *out, size_t n);
 
 /**
+ * @brief The theme file stem for a theme named @p name: lower-case letters and digits kept,
+ *        each run of anything else one '-', no '-' at either end, at most SCHED_THEME_LEN - 1
+ *        characters ("Rose Gold" -> "rose-gold").
+ * @version 1
+ * @req REQ-UI-004
+ * @return false when nothing usable is left, or it is "default" (the built-in theme's file).
+ */
+bool sched_theme_stem(const char *name, char *out, size_t n);
+
+/**
  * @brief The file name of an LVGL path without folder or extension
  *        ("A:/backgrounds/winter_morning.png" -> "winter_morning").
  * @version 1
  * @req REQ-BG-004
  */
 void sched_image_label(const char *path, char *out, size_t n);
+
+/**
+ * @brief Give @p r's unset fields (empty image, theme or animation, inherited brightness)
+ *        @p with's values: profiles set every field, and this fills the ones older
+ *        schedules left to the global settings.
+ * @version 1
+ * @req REQ-BG-004
+ * @return Whether any field was filled.
+ */
+bool sched_rule_fill(sched_rule_t *r, const sched_rule_t *with);
+
+/**
+ * @brief What a gap shows (no profile covers the moment): the built-in Default theme, no
+ *        picture, no clock animation, the stored brightness. Only the look fields are set.
+ * @version 1
+ * @req REQ-BG-004
+ */
+void sched_rule_gap(sched_rule_t *out);
 
 #ifdef __cplusplus
 }

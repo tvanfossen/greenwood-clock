@@ -1,6 +1,7 @@
 /**
  * @file settings_pickers.c
- * @version 1
+ * v2: the brightness picker has no Global (profiles set it).
+ * @version 2
  * @brief The schedule editor's pickers (see settings_pickers.h): rollers in a settings frame,
  *        Done reports and closes.
  */
@@ -316,67 +317,69 @@ typedef struct {
     settings_percent_cb_t cb;
     void                 *ctx;
     lv_obj_t             *slider;
+    lv_obj_t             *label;
 } percent_picker_t;
 
 static percent_picker_t s_pct;
 
 /**
- * @brief Global or a set brightness tapped: switch and rebuild.
+ * @brief The slider moved: show its value.
  * @version 1
  * @callback
  */
-static void pct_mode_cb(lv_event_t *e)
+static void pct_moved_cb(lv_event_t *e)
 {
-    bool set = lv_event_get_user_data(e) != NULL;
-    s_pct.pct = set ? (s_pct.pct == SCHED_INHERIT ? 50 : s_pct.pct) : SCHED_INHERIT;
-    settings_app_refresh();
+    LV_UNUSED(e);
+    lv_label_set_text_fmt(s_pct.label, "%d %%", (int)lv_slider_get_value(s_pct.slider));
 }
 
 /**
  * @brief Done: report and close.
- * @version 1
+ * v2: always a value (no Global).
+ * @version 2
  * @callback
  */
 static void pct_done_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
-    int pct = s_pct.slider ? (int)lv_slider_get_value(s_pct.slider) : SCHED_INHERIT;
+    int pct = (int)lv_slider_get_value(s_pct.slider);
     settings_app_pop();
     if (s_pct.cb) s_pct.cb(pct, s_pct.ctx);
 }
 
 /**
- * @brief The brightness picker screen.
- * @version 1
+ * @brief The brightness picker screen: a slider and its value.
+ * v2: no Global: profiles set their brightness.
+ * @version 2
  * @utility
  * @return The frame.
  */
 static lv_obj_t *pct_screen(lv_obj_t *parent, void *ctx)
 {
     LV_UNUSED(ctx);
-    static const char *const MODES[] = { "Global", "Set" };
-    bool set = s_pct.pct != SCHED_INHERIT;
+    int pct = s_pct.pct >= 5 && s_pct.pct <= 100 ? s_pct.pct : 60;
     lv_obj_t *frame = settings_frame_create(parent, "Brightness", settings_app_back_cb);
     settings_title_button(frame, LV_SYMBOL_OK " Done", pct_done_cb, NULL);
     lv_obj_t *col = settings_column(frame);
-    settings_segmented(settings_field(col, "Brightness"), MODES, 2, set, pct_mode_cb, 0);
-    s_pct.slider = NULL;
-    if (set) {
-        s_pct.slider = lv_slider_create(settings_field(col, ""));
-        lv_obj_set_width(s_pct.slider, 420);
-        lv_slider_set_range(s_pct.slider, 5, 100);
-        lv_slider_set_value(s_pct.slider, s_pct.pct, LV_ANIM_OFF);
-    }
+    lv_obj_t *row = settings_field(col, "Brightness");
+    s_pct.slider = lv_slider_create(row);
+    lv_obj_set_width(s_pct.slider, 420);
+    lv_slider_set_range(s_pct.slider, 5, 100);
+    lv_slider_set_value(s_pct.slider, pct, LV_ANIM_OFF);
+    lv_obj_add_event_cb(s_pct.slider, pct_moved_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    s_pct.label = settings_text(row, "", &lv_font_montserrat_24, UI_ROLE_TEXT);
+    pct_moved_cb(NULL);
     return frame;
 }
 
 /**
  * @brief Push a brightness picker.
- * @version 1
+ * v2: no Global.
+ * @version 2
  * @req REQ-BG-004
  */
 void settings_pick_percent(int pct, settings_percent_cb_t cb, void *ctx)
 {
-    s_pct = (percent_picker_t){ pct, cb, ctx, NULL };
+    s_pct = (percent_picker_t){ pct, cb, ctx, NULL, NULL };
     settings_app_push(pct_screen, NULL);
 }

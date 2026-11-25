@@ -5,7 +5,8 @@
  *     clock's settings backend, its device-only screens (Wi-Fi, animation preview) and the
  *     Settings FSM state.
  * v4: the Phone screen (QR pairing for the phone panel).
- * @version 4
+ * v5: no global setters; the theme editor keeps named themes.
+ * @version 5
  * @brief Settings state: the clock's settings backend (NVS settings, SD lists, the schedule
  *        store, the display) for settings_app, the Wi-Fi and animation preview screens, and
  *        the FSM state that opens and closes the settings.
@@ -31,9 +32,6 @@ extern "C" {
 #include "sdcard.h"
 #include "ui_theme_bind.h"
 #include "theme_store.h"
-#include "bsp/display.h"      // bsp_display_brightness_set
-#include "clock_anim_pref.h"  // clock_anim_pref_get/set
-#include "theme_pref.h"       // theme_pref_get/set
 #include "settings_app.h"
 #include "settings_frame.h"
 #include "sched_store.h"
@@ -51,7 +49,6 @@ extern "C" {
 
 static const char *TAG = "state_settings";
 
-#define CUSTOM_THEME_STEM "custom"
 
 static lv_obj_t *s_settings_root = nullptr;  // root container for all settings
 
@@ -476,47 +473,6 @@ static lv_obj_t *phone_screen(lv_obj_t *parent)
 // ============================================================================
 
 /**
- * @brief settings_update mutator: the brightness in @p ctx (int).
- * v2: an int (the backend's percentage), not a uint8_t.
- * @version 2
- * @utility
- * @return true (always save).
- */
-static bool brightness_mutator(clock_settings_t *cfg, void *ctx)
-{
-    cfg->brightness = (uint8_t)*(const int *)ctx;
-    return true;
-}
-
-/**
- * @brief settings_update mutator: the background LVGL path in @p ctx.
- * v2: the whole LVGL path (was a file name prefixed with "A:").
- * @version 2
- * @utility
- * @return true (always save).
- */
-static bool background_mutator(clock_settings_t *cfg, void *ctx)
-{
-    strlcpy(cfg->background_image, (const char *)ctx, sizeof(cfg->background_image));
-    return true;
-}
-
-/**
- * @brief The global settings.
- * @version 1
- * @callback
- */
-static void be_get(settings_values_t *out)
-{
-    clock_settings_t cfg;
-    memset(out, 0, sizeof(*out));
-    out->brightness = settings_load(&cfg) == ESP_OK ? cfg.brightness : 50;
-    strlcpy(out->background, cfg.background_image, sizeof(out->background));
-    theme_pref_get(out->theme);
-    strlcpy(out->anim, clock_anim_name(clock_anim_pref_get()), sizeof(out->anim));
-}
-
-/**
  * @brief A list to choose from (SD and theme files read off the LVGL lock).
  * v2: settings_lists_fill (shared with the phone panel's API).
  * @version 2
@@ -529,64 +485,6 @@ static int be_list(settings_list_t which, settings_choice_t *out, int max)
     int n = settings_lists_fill(which, out, max);
     lvgl_port_lock(0);
     return n;
-}
-
-/**
- * @brief Apply and keep the brightness (NVS off the LVGL lock).
- * @version 1
- * @callback
- */
-static void be_set_brightness(int pct)
-{
-    bsp_display_brightness_set(pct);
-    lvgl_port_unlock();
-    esp_err_t err = settings_update(brightness_mutator, &pct);
-    lvgl_port_lock(0);
-    ESP_LOGI(TAG, "brightness %d%%: %s", pct, esp_err_to_name(err));
-}
-
-/**
- * @brief Keep the background and show it.
- * @version 1
- * @callback
- */
-static void be_set_background(const char *path)
-{
-    lvgl_port_unlock();
-    esp_err_t err = settings_update(background_mutator, (void *)path);
-    lvgl_port_lock(0);
-    ESP_LOGI(TAG, "background %s: %s", path, esp_err_to_name(err));
-    if (err == ESP_OK) display_fsm_refresh_background();
-}
-
-/**
- * @brief Keep the global theme and apply it.
- * @version 1
- * @callback
- */
-static void be_set_theme(const char *stem)
-{
-    lvgl_port_unlock();
-    esp_err_t err = theme_pref_set(stem);
-    lvgl_port_lock(0);
-    ESP_LOGI(TAG, "theme %s: %s", stem, esp_err_to_name(err));
-    if (err == ESP_OK) display_fsm_refresh_theme();
-}
-
-/**
- * @brief Keep the clock animation and select it.
- * @version 1
- * @callback
- */
-static void be_set_anim(const char *name)
-{
-    clock_anim_t anim = clock_anim_from_name(name);
-    if (anim == CLOCK_ANIM_COUNT) return;
-    lvgl_port_unlock();
-    esp_err_t err = clock_anim_pref_set(anim);
-    lvgl_port_lock(0);
-    ESP_LOGI(TAG, "clock animation %s: %s", name, esp_err_to_name(err));
-    if (err == ESP_OK) clock_animation_select(anim);
 }
 
 /**
@@ -642,18 +540,22 @@ static void be_now(sched_date_t *day, int *min)
 }
 
 /**
- * @brief Keep the edited theme as custom.json and make it the global theme.
- * @version 1
+ * @brief Keep the edited theme as the theme file @p stem (SD off the LVGL lock); the profile
+ *        that uses it is saved by the schedule. Re-applies the theme when the showing one
+ *        was replaced.
+ * v2: a named theme file (was custom.json made global).
+ * @version 2
  * @callback
  */
-static void be_save_theme(const ui_theme_t *t, settings_done_cb_t done, void *ctx)
+static void be_save_theme(const ui_theme_t *t, const char *stem, settings_done_cb_t done,
+                          void *ctx)
 {
     ui_theme_t copy = *t;
     lvgl_port_unlock();
-    bool ok = theme_store_save(CUSTOM_THEME_STEM, &copy) && theme_pref_set(CUSTOM_THEME_STEM) == ESP_OK;
+    bool ok = theme_store_save(stem, &copy);
     if (ok) theme_store_rescan();
     lvgl_port_lock(0);
-    ESP_LOGI(TAG, "theme editor: %s", ok ? "saved as custom" : "save FAILED");
+    ESP_LOGI(TAG, "theme editor: '%s' as %s.json: %s", copy.name, stem, ok ? "saved" : "save FAILED");
     if (ok) display_fsm_refresh_theme();
     done(ok, ok ? "" : "Could not write the theme to the SD card", ctx);
 }
@@ -706,19 +608,15 @@ static void be_leave(void)
 /**
  * @brief The clock's backend.
  * v2: the Phone screen.
- * @version 2
+ * v3: no global setters (profiles set everything).
+ * @version 3
  * @utility
  * @return It (static).
  */
 static const settings_backend_t *clock_backend(void)
 {
     static settings_backend_t be;
-    be.get = be_get;
     be.list = be_list;
-    be.set_brightness = be_set_brightness;
-    be.set_background = be_set_background;
-    be.set_theme = be_set_theme;
-    be.set_anim = be_set_anim;
     be.schedule_get = be_schedule_get;
     be.schedule_set = be_schedule_set;
     be.sun = be_sun;

@@ -1,6 +1,8 @@
 /**
  * @file settings_sched.c
- * @version 1
+ * v2: the showing profile from the menu; every field explicit (no Global): a new profile
+ *     starts with the showing profile's look; Customize in the theme picker.
+ * @version 2
  * @brief The schedule in the settings (see settings_sched.h): list states from the engine,
  *        the editor's working copy, pickers, overlap check, save and delete.
  */
@@ -18,6 +20,7 @@
 static sched_rule_t      s_rules[SCHED_MAX_PROFILES];
 static sched_row_state_t s_states[SCHED_MAX_PROFILES];
 static int               s_n;
+static int               s_active;        // the showing profile (-1: a gap)
 static sched_rule_t      s_edit;          // the editor's working copy
 static int               s_edit_idx;      // its index in s_rules (-1: new)
 static sched_rule_t      s_work[SCHED_MAX_PROFILES];   // the schedule as it would be saved
@@ -43,7 +46,8 @@ static void fmt_days(int days, char *out, size_t n)
 
 /**
  * @brief Load the schedule and work out each profile's state now.
- * @version 1
+ * v2: keeps which profile shows (s_active).
+ * @version 2
  * @utility
  */
 static void load(void)
@@ -53,9 +57,9 @@ static void load(void)
     int min;
     be->now(&day, &min);
     s_n = be->schedule_get(s_rules, SCHED_MAX_PROFILES);
-    int active = sched_active(s_rules, s_n, day, min, be->sun());
+    s_active = sched_active(s_rules, s_n, day, min, be->sun());
     for (int i = 0; i < s_n; i++) {
-        s_states[i].active = i == active;
+        s_states[i].active = i == s_active;
         s_states[i].note[0] = '\0';
         if (s_rules[i].repeat != SCHED_EVERY_DAY) {
             fmt_days(sched_days_until(&s_rules[i], day), s_states[i].note, SCHED_NOTE_LEN);
@@ -145,8 +149,38 @@ static void open_editor(const sched_rule_t *r, int idx)
 }
 
 /**
- * @brief A new daily profile or event to start the editor with.
+ * @brief The look a new profile starts with: the showing profile's, else the first
+ *        background, the Default theme, the first animation and 60 %.
  * @version 1
+ * @utility
+ */
+static void starting_look(sched_rule_t *r)
+{
+    const settings_backend_t *be = settings_app_backend();
+    if (s_active >= 0) {
+        const sched_rule_t *a = &s_rules[s_active];
+        memcpy(r->image, a->image, sizeof(r->image));
+        memcpy(r->theme, a->theme, sizeof(r->theme));
+        memcpy(r->anim, a->anim, sizeof(r->anim));
+        r->brightness = a->brightness;
+        return;
+    }
+    settings_choice_t first;
+    if (be->list(SETTINGS_LIST_BACKGROUNDS, &first, 1) == 1) {
+        snprintf(r->image, sizeof(r->image), "%s", first.value);
+    }
+    snprintf(r->theme, sizeof(r->theme), "default");
+    if (be->list(SETTINGS_LIST_ANIMS, &first, 1) == 1) {
+        snprintf(r->anim, sizeof(r->anim), "%s", first.value);
+    }
+    r->brightness = 60;
+}
+
+/**
+ * @brief A new daily profile or event to start the editor with; a daily one runs for the
+ *        current hour (where a gap is being filled).
+ * v2: a full look (starting_look); a daily profile at the current hour (was noon).
+ * @version 2
  * @utility
  * @return The profile.
  */
@@ -157,18 +191,46 @@ static sched_rule_t new_profile(bool event)
     int min;
     settings_app_backend()->now(&day, &min);
     memset(&r, 0, sizeof(r));
-    r.brightness = SCHED_INHERIT;
+    starting_look(&r);
     if (event) {
         snprintf(r.name, sizeof(r.name), "New event");
         r.repeat = SCHED_YEARLY;
         r.all_day = true;
         r.from = r.to = (sched_date_t){ 0, day.month, day.day };
     } else {
+        int hour = min / 60;
         snprintf(r.name, sizeof(r.name), "New profile");
-        r.start = (sched_time_t){ SCHED_AT_CLOCK, 12 * 60 };
-        r.end = (sched_time_t){ SCHED_AT_CLOCK, 13 * 60 };
+        r.start = (sched_time_t){ SCHED_AT_CLOCK, (int16_t)(hour * 60) };
+        r.end = (sched_time_t){ SCHED_AT_CLOCK, (int16_t)(((hour + 1) % 24) * 60) };
     }
     return r;
+}
+
+/**
+ * @brief The showing profile's menu label.
+ * @version 1
+ * @req REQ-BG-004
+ */
+void settings_sched_now_label(char *out, size_t n)
+{
+    load();
+    snprintf(out, n, "Now: %s", s_active >= 0 ? s_rules[s_active].name : "no profile");
+}
+
+/**
+ * @brief Edit the showing profile, or fill the gap with a new one.
+ * @version 1
+ * @req REQ-BG-004
+ */
+void settings_sched_edit_now(void)
+{
+    load();
+    if (s_active >= 0) {
+        open_editor(&s_rules[s_active], s_active);
+        return;
+    }
+    sched_rule_t fresh = new_profile(false);
+    open_editor(&fresh, -1);
 }
 
 /**
@@ -242,8 +304,9 @@ static void dates_cb(sched_date_t from, sched_date_t to, void *ctx)
 }
 
 /**
- * @brief A background, theme or animation picked (@p value NULL: global).
- * @version 1
+ * @brief A background, theme or animation picked (a customized theme: its new stem).
+ * v2: no global (a value is always given).
+ * @version 2
  * @callback
  */
 static void look_cb(const char *value, void *ctx)
@@ -255,7 +318,8 @@ static void look_cb(const char *value, void *ctx)
     size_t len = which == SETTINGS_LIST_BACKGROUNDS ? sizeof(s_edit.image)
                  : which == SETTINGS_LIST_THEMES    ? sizeof(s_edit.theme)
                                                     : sizeof(s_edit.anim);
-    snprintf(field, len, "%s", value ? value : "");
+    if (!value) return;
+    snprintf(field, len, "%s", value);
     settings_app_refresh();
 }
 
@@ -303,7 +367,8 @@ static void set_all_day(bool all_day)
 
 /**
  * @brief Open the picker for a look field.
- * @version 1
+ * v2: no Global choice.
+ * @version 2
  * @utility
  */
 static void pick_look(settings_list_t which)
@@ -312,7 +377,7 @@ static void pick_look(settings_list_t which)
     const char *cur = which == SETTINGS_LIST_BACKGROUNDS ? s_edit.image
                       : which == SETTINGS_LIST_THEMES    ? s_edit.theme
                                                          : s_edit.anim;
-    settings_app_choose(TITLES[which], which, cur, true, look_cb, (void *)(intptr_t)which);
+    settings_app_choose(TITLES[which], which, cur, look_cb, (void *)(intptr_t)which);
 }
 
 /**

@@ -6,7 +6,9 @@
 ## "clock". Exit status: the number of failed checks.
 ## v2: an upload (a picture through the file chooser arrives as a 1024x600 PNG background).
 ## v3: serves the gzipped twins (*.gz) like the clock, and checks the panel loaded through them.
-## @version 3
+## v4: no global settings: the showing profile is edited from the menu (a customized theme
+## kept by name, a brightness), and the clock gets both.
+## @version 4
 """Usage: mock_clock.py <sdcard/www dir> <out dir for screenshots>"""
 
 import functools
@@ -81,18 +83,13 @@ class Clock:
 
     ## @brief GET /api/panel's body.
     ## @utility
-    ## @version 1
+    ## v2: no global "values".
+    ## @version 2
     ## @return The state JSON text.
     def state(self):
         return json.dumps(
             {
                 "version": "1.0.0",
-                "values": {
-                    "brightness": 60,
-                    "background": "A:/backgrounds/campfire.png",
-                    "theme": "default",
-                    "anim": "Snowfall",
-                },
                 "lists": {
                     "backgrounds": [["A:/backgrounds/campfire.png", "campfire"]],
                     "themes": [["default", "Default"], ["sassafras", "Sassafras"]],
@@ -223,22 +220,52 @@ def tap(page, x, y):
     page.wait_for_timeout(500)
 
 
-## @brief The failed checks of the brightness posts: at least one reached the clock and each
-## is a JSON object with a whole-number brightness (what the clock's handler accepts).
+## @brief The failed checks of editing the showing profile (Afternoon at the stand-in's
+## 13:00): the customized theme was kept as "ro", and the saved schedule has Afternoon on
+## that theme at a brightness above the starting 60 %.
 ## @utility
 ## @version 1
 ## @return The failures.
-def brightness_fails(posts):
-    bodies = [body for path, body in posts if path == "/api/settings"]
-    fails = [] if bodies else ["no brightness change reached the clock"]
-    for body in bodies:
-        try:
-            ok = isinstance(json.loads(body).get("brightness"), int)
-        except (ValueError, AttributeError):
-            ok = False
-        if not ok:
-            fails.append(f"brightness post is not {{'brightness': N}}: {body!r}")
+def profile_fails(posts):
+    fails = []
+    if not any(path == "/api/theme/save?stem=ro" for path, _ in posts):
+        fails.append(
+            f"the customized theme was not kept as 'ro': {[p for p, _ in posts]}"
+        )
+    saved = [json.loads(body) for path, body in posts if path == "/api/schedule"]
+    after = [
+        p for s in saved[:1] for p in s.get("profiles", []) if p["name"] == "Afternoon"
+    ]
+    if (
+        not after
+        or after[0].get("theme") != "ro"
+        or after[0].get("brightness", 0) <= 60
+    ):
+        fails.append(
+            f"Afternoon not saved with theme 'ro' and a brighter screen: {after}"
+        )
     return fails
+
+
+## @brief Edit the showing profile from the menu: customize a theme, name it "ro", raise the
+## brightness, save.
+## @utility
+## @version 1
+def edit_now(page):
+    tap(page, 320, 176)  # Now: Afternoon
+    tap(page, 395, 330)  # Theme
+    tap(page, 400, 170)  # Customize...
+    tap(page, 927, 561)  # the editor's Save
+    tap(page, 412, 294)  # r
+    tap(page, 703, 294)  # o
+    tap(page, 832, 106)  # Done: kept as "ro"
+    page.wait_for_timeout(600)
+    tap(page, 378, 438)  # Brightness
+    tap(page, 700, 168)  # the slider, near the top
+    tap(page, 832, 106)  # Done
+    page.screenshot(path=str(Path(serve.out) / "e2e_now_profile.png"))
+    tap(page, 832, 106)  # Save the profile
+    page.wait_for_timeout(800)
 
 
 ## @brief Pair, load, save a schedule profile, upload a background picture; then a second
@@ -246,8 +273,9 @@ def brightness_fails(posts):
 ## v2: the upload.
 ## v3: the panel loads through its gzipped twins.
 ## v4: a brightness change posts a valid body.
+## v5: the showing profile edited from the menu (theme kept by name, brightness); the new menu.
 ## @utility
-## @version 4
+## @version 5
 ## @return The failed checks' descriptions.
 def run(base, out):
     clock, fails = serve.clock, []
@@ -263,13 +291,9 @@ def run(base, out):
             fails.append("the code stayed in the address bar")
         if not {"panel.js", "panel.wasm"} <= set(clock.gzipped):
             fails.append(f"the panel did not load gzipped: {clock.gzipped}")
-        tap(page, 320, 176)  # Brightness
-        tap(page, 700, 320)  # the slider, past the middle
-        page.wait_for_timeout(600)
-        page.screenshot(path=str(out / "e2e_brightness.png"))
-        fails += brightness_fails(clock.posts)
-        tap(page, 190, 106)  # Back to the menu
-        tap(page, 320, 248)  # Schedule
+        edit_now(page)
+        fails += profile_fails(clock.posts)
+        tap(page, 704, 176)  # Schedule
         page.screenshot(path=str(out / "e2e_schedule.png"))
         tap(page, 400, 250)  # Morning
         tap(page, 832, 106)  # Save
@@ -278,7 +302,7 @@ def run(base, out):
         if not any(path == "/api/schedule" for path, _ in clock.posts):
             fails.append("the schedule save did not reach the clock")
         tap(page, 190, 106)  # Back to the menu
-        tap(page, 320, 392)  # Upload
+        tap(page, 704, 248)  # Upload
         page.screenshot(path=str(out / "e2e_upload.png"))
         with page.expect_file_chooser() as chooser:
             tap(page, 450, 200)  # Background: choose a picture
@@ -301,12 +325,14 @@ def run(base, out):
 ## @brief Entry point.
 ## @utility
 ## v2: prints the uploads.
-## @version 2
+## v3: the screenshot folder for edit_now.
+## @version 3
 def main():
     root, out = Path(sys.argv[1]), Path(sys.argv[2])
     out.mkdir(parents=True, exist_ok=True)
     clock = Clock()
     serve.clock = clock
+    serve.out = out
     fails = run(serve(root, clock), out)
     for path, body in clock.posts:
         print(f"clock received {path}: {body[:120]}")

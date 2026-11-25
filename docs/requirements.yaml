@@ -437,13 +437,19 @@ requirements:
     name: Background schedule profiles
     subsystem: BG
     description: >-
-      Up to 4 daily time slots (shared start times) pick, per weekday, one of up to 8
-      background profiles. A profile overrides the background image, text colour, brightness
-      and clock animation; anything it leaves unset inherits the global setting. Night mode is
-      a profile with dark settings. Stored in its own NVS key; editable over the API.
+      Daily profiles (every day, from/to a clock time or sunrise/sunset with an offset; they
+      may not overlap) are the clock's default state; events (a yearly date or range, or once)
+      replace the daily profile while they run and may not overlap each other. Every profile
+      sets all of what the clock shows: background, theme, clock animation and brightness
+      (there are no global settings). A moment no profile covers shows the built-in Default
+      theme with no picture and no animation. Settings opens on the showing profile ("Now:")
+      and edits it, or offers a new daily profile for the current hour in a gap. Stored in
+      /sdcard/schedule.json; editable over the API.
     acceptance_criteria: >-
-      At each slot start the clock switches to that slot's background and overrides without a
-      reboot; with no schedule set, the clock looks exactly as before.
+      At each window edge the clock switches to that profile's background, theme, animation and
+      brightness without a reboot; changing the showing profile from Settings changes the screen
+      at once and every later time that profile runs; a save that would overlap another profile
+      of its kind is refused with the reason.
   REQ-PHOTO-001:
     name: Photo slideshow
     subsystem: PHOTO
@@ -506,12 +512,12 @@ requirements:
     name: One OKLCH colour theme
     subsystem: UI
     description: >-
-      Every colour the firmware and the web panel draw comes from one theme: three OKLCH core
-      colours (ink, surface, accent) and a contrast target, derived into named roles (surfaces,
+      Every colour the firmware and the web panel draw comes from one theme: four OKLCH core
+      colours (ink, surface, accent, alert) and a contrast target, derived into named roles (surfaces,
       border, text tiers, accents, error/warn, a near-white, a leaf palette, swatches). Text is
       made legible against what is really behind it, keeping its hue and moving only its
-      lightness. Themes are JSON files in /sdcard/themes, chosen globally and per schedule
-      profile; a compiled-in base theme reproduces the original look. Colours that come from
+      lightness. Themes are JSON files in /sdcard/themes, chosen per schedule profile; a
+      compiled-in base theme reproduces the original look. Colours that come from
       images, GIFs and Lottie files are their own and are not themed.
     acceptance_criteria: >-
       Switching between the Default and Sassafras themes recolours the clock at once and
@@ -522,17 +528,17 @@ requirements:
     name: On-screen theme editor
     subsystem: UI
     description: >-
-      Settings > Theme > Customize opens a theme editor: a live design preview (clock text, a
+      A profile's Theme picker > Customize opens a theme editor: a live design preview (clock text, a
       card and strip over the real background, the four alert severities, stock controls) beside
-      OKLCH pickers for the three cores (L, C and h sliders over their gradients), the text
+      OKLCH pickers for the four cores (L, C and h sliders over their gradients), the text
       contrast target, and the slot grid (tap a themed place for its next fill role). Every
-      edit repaints the running UI; Back restores the opening theme; Save writes
-      /sdcard/themes/custom.json and makes it the global theme.
+      edit repaints the running UI; Back restores the opening theme; Save asks for a name, keeps
+      the theme as /sdcard/themes/<name>.json and gives it to the profile being edited.
     acceptance_criteria: >-
       Dragging a core's sliders recolours the preview and the rest of the screen while
       dragging; tapping a slot cell changes that place's fill everywhere it appears; Back
-      leaves the theme as it was; after Save and a reboot the clock still shows the edited
-      theme.
+      leaves the theme as it was; after Save, naming it and saving the profile, the clock shows
+      the edited theme whenever that profile runs, reboots included.
   REQ-UI-005:
     name: Phone panel by QR code; every API call authenticated
     subsystem: UI

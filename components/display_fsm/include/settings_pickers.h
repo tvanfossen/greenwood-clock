@@ -1,6 +1,7 @@
 /**
  * @file settings_pickers.h
- * @version 1
+ * v2: no Global brightness.
+ * @version 2
  * @brief The schedule editor's pickers, each a pushed settings screen with Done: a time (a
  *        clock time, or sunrise/sunset with an offset), a date range (month and day, plus the
  *        year for a one-off), and a brightness (or the global one). Pure LVGL. Caller holds
@@ -39,9 +40,10 @@ void settings_pick_dates(sched_date_t from, sched_date_t to, bool with_year,
                          settings_dates_cb_t cb, void *ctx);
 
 /**
- * @brief Push a brightness picker starting at @p pct (SCHED_INHERIT: global); Done calls
- *        @p cb.
- * @version 1
+ * @brief Push a brightness picker starting at @p pct (out of range: 60 %); Done calls @p cb
+ *        with the value.
+ * v2: no Global.
+ * @version 2
  * @req REQ-BG-004
  */
 void settings_pick_percent(int pct, settings_percent_cb_t cb, void *ctx);

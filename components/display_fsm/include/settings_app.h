@@ -80,13 +80,15 @@ void settings_app_back_cb(lv_event_t *e);
 void settings_app_toast(const char *msg, bool pop);
 
 /**
- * @brief Push a picker listing @p which with @p current marked (and "Global" first when
- *        @p with_global); a choice calls @p cb and closes the picker.
- * @version 1
+ * @brief Push a picker listing @p which with @p current marked; a choice calls @p cb and
+ *        closes the picker. Themes list "Customize..." first: a new theme from the editor,
+ *        whose stem @p cb gets once it is saved.
+ * v2: no "Global" choice (profiles set every field); Customize for themes.
+ * @version 2
  * @req REQ-UI-001
  */
 void settings_app_choose(const char *title, settings_list_t which, const char *current,
-                         bool with_global, settings_pick_cb_t cb, void *ctx);
+                         settings_pick_cb_t cb, void *ctx);
 
 /**
  * @brief Push a text entry (on-screen keyboard) starting from @p initial; Done calls @p cb

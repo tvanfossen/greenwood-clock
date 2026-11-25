@@ -1,6 +1,7 @@
 /**
  * @file http_panel.c
- * @version 1
+ * v2: no global values (profiles set everything); POST /api/theme/save keeps a named theme.
+ * @version 2
  * @brief The phone panel's API (see http_panel.h).
  */
 #include "http_panel.h"
@@ -12,10 +13,8 @@
 #include <time.h>
 #include "cJSON.h"
 #include "esp_log.h"
-#include "settings.h"
-#include "theme_pref.h"
+#include "bg_schedule_model.h"
 #include "theme_store.h"
-#include "clock_anim_pref.h"
 #include "settings_lists.h"
 #include "sched_store.h"
 #include "display_fsm.h"
@@ -25,7 +24,6 @@ static const char *TAG = "http_panel";
 #define LIST_MAX     32
 #define SUN_DAYS     366
 #define THEME_BODY_MAX 2048
-#define CUSTOM_THEME_STEM "custom"
 
 /**
  * @brief "YYYY-MM-DD" of @p d into @p out.
@@ -35,24 +33,6 @@ static const char *TAG = "http_panel";
 static void fmt_date(sched_date_t d, char *out, size_t n)
 {
     snprintf(out, n, "%04u-%02u-%02u", (unsigned)d.year, d.month, d.day);
-}
-
-/**
- * @brief "values": the global settings.
- * @version 1
- * @utility
- */
-static void add_values(cJSON *root)
-{
-    clock_settings_t cfg;
-    char theme[BG_THEME_LEN];
-    settings_load(&cfg);
-    theme_pref_get(theme);
-    cJSON *v = cJSON_AddObjectToObject(root, "values");
-    cJSON_AddNumberToObject(v, "brightness", cfg.brightness);
-    cJSON_AddStringToObject(v, "background", cfg.background_image);
-    cJSON_AddStringToObject(v, "theme", theme);
-    cJSON_AddStringToObject(v, "anim", clock_anim_name(clock_anim_pref_get()));
 }
 
 /**
@@ -123,7 +103,8 @@ static void add_now_and_sun(cJSON *root)
 
 /**
  * @brief GET /api/panel.
- * @version 1
+ * v2: no "values" (the global settings are gone from the panel).
+ * @version 2
  * @callback
  * @return ESP_OK.
  */
@@ -131,7 +112,6 @@ static esp_err_t panel_get_handler(httpd_req_t *req)
 {
     cJSON *root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "version", "1.0.0");
-    add_values(root);
     add_lists(root);
     add_schedule(root);
     add_now_and_sun(root);
@@ -144,36 +124,58 @@ static esp_err_t panel_get_handler(httpd_req_t *req)
 }
 
 /**
- * @brief POST /api/theme/custom: keep the theme as custom.json, make it global, apply it.
+ * @brief The request's whole body (NUL-terminated; free it), or NULL when larger than @p max
+ *        or cut short.
  * @version 1
- * @callback
- * @return ESP_OK (the error, if any, is in the response).
+ * @utility
+ * @return The body.
  */
-static esp_err_t theme_custom_post_handler(httpd_req_t *req)
+static char *read_body(httpd_req_t *req, size_t max)
 {
-    char *body = req->content_len < THEME_BODY_MAX ? calloc(1, req->content_len + 1) : NULL;
+    char *body = req->content_len < max ? calloc(1, req->content_len + 1) : NULL;
     size_t got = 0;
     while (body && got < req->content_len) {
         int r = httpd_req_recv(req, body + got, req->content_len - got);
         if (r <= 0) break;
         got += (size_t)r;
     }
+    if (body && got != req->content_len) {
+        free(body);
+        body = NULL;
+    }
+    return body;
+}
+
+/**
+ * @brief POST /api/theme/save?stem=<stem>: keep the theme (the body, ui_theme JSON) as the
+ *        theme file <stem>; a profile points at it through the schedule. Re-applies the theme.
+ * @version 1
+ * @callback
+ * @req REQ-UI-004
+ * @return ESP_OK (the error, if any, is in the response).
+ */
+static esp_err_t theme_save_post_handler(httpd_req_t *req)
+{
+    char query[64] = "", stem[BG_THEME_LEN] = "";
+    httpd_req_get_url_query_str(req, query, sizeof(query));
+    httpd_query_key_value(query, "stem", stem, sizeof(stem));
+    char *body = bg_theme_name_valid(stem) ? read_body(req, THEME_BODY_MAX) : NULL;
     ui_theme_t t;
-    bool ok = body && got == req->content_len && ui_theme_parse(body, &t) &&
-              theme_store_save(CUSTOM_THEME_STEM, &t) && theme_pref_set(CUSTOM_THEME_STEM) == ESP_OK;
+    bool ok = body && ui_theme_parse(body, &t) && theme_store_save(stem, &t);
     free(body);
-    if (ok) display_fsm_refresh_theme();
-    ESP_LOGI(TAG, "custom theme from the panel: %s", ok ? "saved" : "refused");
+    if (ok) display_fsm_refresh_theme();   // the FSM task rescans the themes and re-applies
+    ESP_LOGI(TAG, "theme '%s' from the panel: %s", stem, ok ? "saved" : "refused");
     httpd_resp_set_type(req, "application/json");
     if (!ok) httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_send(req, ok ? "{\"status\":\"ok\"}" : "{\"error\":\"not a valid theme\"}",
+    httpd_resp_send(req, ok ? "{\"status\":\"ok\"}" : "{\"error\":\"not a valid theme or name\"}",
                     HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
 /**
  * @brief Register the panel endpoints.
- * @version 1
+ * v2: POST /api/theme/save (was /api/theme/custom).
+ * @version 2
  * @req REQ-UI-005
  */
 void http_panel_register(httpd_handle_t srv)
@@ -181,7 +183,7 @@ void http_panel_register(httpd_handle_t srv)
     static const httpd_uri_t get = {
         .uri = "/api/panel", .method = HTTP_GET, .handler = panel_get_handler};
     static const httpd_uri_t theme = {
-        .uri = "/api/theme/custom", .method = HTTP_POST, .handler = theme_custom_post_handler};
+        .uri = "/api/theme/save", .method = HTTP_POST, .handler = theme_save_post_handler};
     http_auth_register(srv, &get);
     http_auth_register(srv, &theme);
 }

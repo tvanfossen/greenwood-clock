@@ -2,7 +2,8 @@
  * @file settings_mock.c
  * v2: a pretend upload (it says what would happen).
  * v3: the sun alone.
- * @version 3
+ * v4: no global settings; every sample field set.
+ * @version 4
  * @brief An in-memory settings backend with sample data, for rendering and clicking through
  *        the settings screens off the device (host preview, the panel before it talks to a
  *        clock). The sun is the real calculation for a public sample place (Chicago); "now" is
@@ -18,7 +19,6 @@
 #define SAMPLE_LAT 41.88f    // Chicago: a public sample place, not the device's location
 #define SAMPLE_LON -87.63f
 
-static settings_values_t s_values = { 60, "A:/backgrounds/winter_afternoon.png", "default", "Snowfall" };
 static sched_rule_t      s_rules[SCHED_MAX_PROFILES];
 static int               s_n;
 
@@ -47,16 +47,6 @@ static sched_sun_t mock_sun_fn(sched_date_t d, void *ctx)
 static const sched_sun_src_t SUN = { mock_sun_fn, NULL };
 
 /**
- * @brief The values.
- * @version 1
- * @callback
- */
-static void mock_get(settings_values_t *out)
-{
-    *out = s_values;
-}
-
-/**
  * @brief The sample lists.
  * @version 1
  * @callback
@@ -82,46 +72,6 @@ static int mock_list(settings_list_t which, settings_choice_t *out, int max)
         }
     }
     return n;
-}
-
-/**
- * @brief Brightness.
- * @version 1
- * @callback
- */
-static void mock_set_brightness(int pct)
-{
-    s_values.brightness = pct;
-}
-
-/**
- * @brief Background.
- * @version 1
- * @callback
- */
-static void mock_set_background(const char *path)
-{
-    snprintf(s_values.background, sizeof(s_values.background), "%s", path);
-}
-
-/**
- * @brief Theme.
- * @version 1
- * @callback
- */
-static void mock_set_theme(const char *stem)
-{
-    snprintf(s_values.theme, sizeof(s_values.theme), "%s", stem);
-}
-
-/**
- * @brief Clock animation.
- * @version 1
- * @callback
- */
-static void mock_set_anim(const char *name)
-{
-    snprintf(s_values.anim, sizeof(s_values.anim), "%s", name);
 }
 
 /**
@@ -185,12 +135,15 @@ static const sched_sun_src_t *mock_sun(void)
 
 /**
  * @brief Keep nothing: a sample.
- * @version 1
+ * v2: takes the stem.
+ * @version 2
  * @callback
  */
-static void mock_save_theme(const ui_theme_t *t, settings_done_cb_t done, void *ctx)
+static void mock_save_theme(const ui_theme_t *t, const char *stem, settings_done_cb_t done,
+                            void *ctx)
 {
     (void)t;
+    (void)stem;
     done(true, "", ctx);
 }
 
@@ -225,8 +178,9 @@ static void mock_leave(void)
 }
 
 /**
- * @brief A sample profile.
- * @version 1
+ * @brief A sample profile: every field set (60 %, the Default theme).
+ * v2: every field set.
+ * @version 2
  * @utility
  * @return It.
  */
@@ -240,8 +194,9 @@ static sched_rule_t sample(const char *name, sched_repeat_t rep, sched_time_t a,
     r.start = a;
     r.end = b;
     r.all_day = rep != SCHED_EVERY_DAY;
-    r.brightness = SCHED_INHERIT;
+    r.brightness = 60;
     snprintf(r.image, sizeof(r.image), "%s", image);
+    snprintf(r.theme, sizeof(r.theme), "default");
     snprintf(r.anim, sizeof(r.anim), "%s", anim);
     return r;
 }
@@ -250,23 +205,24 @@ static sched_rule_t sample(const char *name, sched_repeat_t rep, sched_time_t a,
 #define SUNSET   ((sched_time_t){ SCHED_AT_SUNSET, 0 })
 
 /**
- * @brief The sample schedule: four daily profiles and three events.
- * @version 1
+ * @brief The sample schedule: four daily profiles and three events, every field set.
+ * v2: every field set.
+ * @version 2
  * @utility
  */
 static void sample_schedule(void)
 {
-    s_rules[0] = sample("Morning", SCHED_EVERY_DAY, AT(7, 0), AT(12, 0), "A:/backgrounds/winter_morning.png", "");
-    s_rules[1] = sample("Afternoon", SCHED_EVERY_DAY, AT(12, 0), SUNSET, "A:/backgrounds/winter_afternoon.png", "");
-    s_rules[2] = sample("Evening", SCHED_EVERY_DAY, SUNSET, AT(22, 0), "", "");
-    s_rules[3] = sample("Night", SCHED_EVERY_DAY, AT(22, 0), AT(7, 0), "A:/backgrounds/night_winter.png", "");
+    s_rules[0] = sample("Morning", SCHED_EVERY_DAY, AT(7, 0), AT(12, 0), "A:/backgrounds/winter_morning.png", "Hummingbird");
+    s_rules[1] = sample("Afternoon", SCHED_EVERY_DAY, AT(12, 0), SUNSET, "A:/backgrounds/winter_afternoon.png", "Snowfall");
+    s_rules[2] = sample("Evening", SCHED_EVERY_DAY, SUNSET, AT(22, 0), "A:/backgrounds/campfire.png", "None");
+    s_rules[3] = sample("Night", SCHED_EVERY_DAY, AT(22, 0), AT(7, 0), "A:/backgrounds/night_winter.png", "None");
     s_rules[3].brightness = 12;
-    s_rules[4] = sample("Christmas", SCHED_YEARLY, AT(0, 0), AT(0, 0), "", "Snowfall");
+    s_rules[4] = sample("Christmas", SCHED_YEARLY, AT(0, 0), AT(0, 0), "A:/backgrounds/winter_morning.png", "Snowfall");
     s_rules[4].from = (sched_date_t){ 0, 12, 24 };
     s_rules[4].to = (sched_date_t){ 0, 12, 25 };
-    s_rules[5] = sample("Valentine's Day", SCHED_YEARLY, AT(0, 0), AT(0, 0), "", "Leaves");
+    s_rules[5] = sample("Valentine's Day", SCHED_YEARLY, AT(0, 0), AT(0, 0), "A:/backgrounds/spring-flower.png", "Leaves");
     s_rules[5].from = s_rules[5].to = (sched_date_t){ 0, 2, 14 };
-    s_rules[6] = sample("Birthday", SCHED_YEARLY, AT(0, 0), AT(0, 0), "A:/backgrounds/spring-flower.png", "");
+    s_rules[6] = sample("Birthday", SCHED_YEARLY, AT(0, 0), AT(0, 0), "A:/backgrounds/spring-flower.png", "Hummingbird");
     s_rules[6].from = s_rules[6].to = (sched_date_t){ 0, 6, 3 };
     s_n = 7;
 }
@@ -274,19 +230,18 @@ static void sample_schedule(void)
 /**
  * @brief The sample backend.
  * v2: a pretend upload.
- * @version 2
+ * v3: no global setters.
+ * @version 3
  * @utility
  * @return It (static).
  */
 const settings_backend_t *settings_mock_backend(void)
 {
     static settings_backend_t be;
-    if (!be.get) {
+    if (!be.list) {
         sample_schedule();
         be = (settings_backend_t){
-            .get = mock_get, .list = mock_list, .set_brightness = mock_set_brightness,
-            .set_background = mock_set_background, .set_theme = mock_set_theme,
-            .set_anim = mock_set_anim, .schedule_get = mock_schedule_get,
+            .list = mock_list, .schedule_get = mock_schedule_get,
             .schedule_set = mock_schedule_set, .sun = mock_sun, .now = mock_now,
             .save_theme = mock_save_theme, .about = mock_about, .upload = mock_upload,
             .leave = mock_leave,

@@ -2,7 +2,8 @@
  * @file settings_http.c
  * v2: upload: the loader page picks, crops and sends a picture; the result comes back
  *     through panel_upload_done.
- * @version 2
+ * v3: no global settings; a named theme is kept (POST /api/theme/save).
+ * @version 3
  * @brief The phone panel's settings backend (WebAssembly): the state GET /api/panel returned
  *        at start is the cache every getter reads; every change updates the cache and is
  *        POSTed to the clock with the session token (emscripten fetch, asynchronous). The
@@ -22,7 +23,6 @@
 #define LIST_MAX  32
 #define SUN_DAYS  366
 
-static settings_values_t s_values;
 static settings_choice_t s_lists[3][LIST_MAX];
 static int               s_list_n[3];
 static sched_rule_t      s_rules[SCHED_MAX_PROFILES];
@@ -158,35 +158,9 @@ static void post(const char *path, const char *body, settings_done_cb_t done, vo
     emscripten_fetch(&attr, path);
 }
 
-/**
- * @brief POST one setting: {"@p key": @p value} (a string) or a number when @p is_num.
- * @version 1
- * @utility
- */
-static void post_setting(const char *key, const char *value, int num, bool is_num)
-{
-    cJSON *o = cJSON_CreateObject();
-    if (is_num) cJSON_AddNumberToObject(o, key, num);
-    else cJSON_AddStringToObject(o, key, value);
-    char *body = cJSON_PrintUnformatted(o);
-    cJSON_Delete(o);
-    if (body) post("/api/settings", body, NULL, NULL);
-    free(body);
-}
-
 // ---------------------------------------------------------------------------
 // The backend
 // ---------------------------------------------------------------------------
-
-/**
- * @brief The cached values.
- * @version 1
- * @callback
- */
-static void http_get(settings_values_t *out)
-{
-    *out = s_values;
-}
 
 /**
  * @brief A cached list.
@@ -199,50 +173,6 @@ static int http_list(settings_list_t which, settings_choice_t *out, int max)
     int n = s_list_n[which] < max ? s_list_n[which] : max;
     memcpy(out, s_lists[which], sizeof(settings_choice_t) * (size_t)n);
     return n;
-}
-
-/**
- * @brief Brightness.
- * @version 1
- * @callback
- */
-static void http_set_brightness(int pct)
-{
-    s_values.brightness = pct;
-    post_setting("brightness", NULL, pct, true);
-}
-
-/**
- * @brief Background.
- * @version 1
- * @callback
- */
-static void http_set_background(const char *path)
-{
-    snprintf(s_values.background, sizeof(s_values.background), "%s", path);
-    post_setting("background_image", path, 0, false);
-}
-
-/**
- * @brief Theme.
- * @version 1
- * @callback
- */
-static void http_set_theme(const char *stem)
-{
-    snprintf(s_values.theme, sizeof(s_values.theme), "%s", stem);
-    post_setting("theme", stem, 0, false);
-}
-
-/**
- * @brief Clock animation.
- * @version 1
- * @callback
- */
-static void http_set_anim(const char *name)
-{
-    snprintf(s_values.anim, sizeof(s_values.anim), "%s", name);
-    post_setting("clock_anim", name, 0, false);
 }
 
 /**
@@ -337,16 +267,53 @@ static void http_now(sched_date_t *day, int *min)
     *min = m % (24 * 60);
 }
 
+/** A theme being saved: what to add to the theme list once the clock has it. */
+typedef struct {
+    settings_done_cb_t done;
+    void              *ctx;
+    settings_choice_t  entry;
+} theme_pending_t;
+
+static theme_pending_t s_theme_save;
+
 /**
- * @brief Send an edited theme.
+ * @brief The clock kept the theme (or not): list it (once), then tell the caller.
  * @version 1
  * @callback
  */
-static void http_save_theme(const ui_theme_t *t, settings_done_cb_t done, void *ctx)
+static void theme_saved_cb(bool ok, const char *why, void *ctx)
 {
-    char body[2048];
-    if (ui_theme_to_json(t, body, sizeof(body))) post("/api/theme/custom", body, done, ctx);
-    else done(false, "Theme too large", ctx);
+    LV_UNUSED(ctx);
+    settings_choice_t *list = s_lists[SETTINGS_LIST_THEMES];
+    int *n = &s_list_n[SETTINGS_LIST_THEMES];
+    int at = 0;
+    while (at < *n && strcmp(list[at].value, s_theme_save.entry.value) != 0) at++;
+    if (ok && at < LIST_MAX) {
+        list[at] = s_theme_save.entry;   // replaces one of the same stem, else appends
+        if (at == *n) (*n)++;
+    }
+    s_theme_save.done(ok, why, s_theme_save.ctx);
+}
+
+/**
+ * @brief Send an edited theme to be kept as the theme file @p stem.
+ * v2: a named theme file (POST /api/theme/save?stem=), listed once kept.
+ * @version 2
+ * @callback
+ */
+static void http_save_theme(const ui_theme_t *t, const char *stem, settings_done_cb_t done,
+                            void *ctx)
+{
+    char body[2048], path[64];
+    if (!ui_theme_to_json(t, body, sizeof(body))) {
+        done(false, "Theme too large", ctx);
+        return;
+    }
+    s_theme_save = (theme_pending_t){ done, ctx, { "", "" } };
+    snprintf(s_theme_save.entry.value, sizeof(s_theme_save.entry.value), "%s", stem);
+    snprintf(s_theme_save.entry.label, sizeof(s_theme_save.entry.label), "%s", t->name);
+    snprintf(path, sizeof(path), "/api/theme/save?stem=%s", stem);
+    post(path, body, theme_saved_cb, NULL);
 }
 
 /**
@@ -461,19 +428,14 @@ static bool read_now_and_sun(const cJSON *root)
 
 /**
  * @brief Read the whole state.
- * @version 1
+ * v2: no global values.
+ * @version 2
  * @utility
  * @return Whether it is usable.
  */
 static bool read_state(const char *json)
 {
     cJSON *root = cJSON_Parse(json);
-    const cJSON *v = cJSON_GetObjectItemCaseSensitive(root, "values");
-    const cJSON *b = cJSON_GetObjectItemCaseSensitive(v, "brightness");
-    s_values.brightness = cJSON_IsNumber(b) ? b->valueint : 50;
-    copy_str(v, "background", s_values.background, sizeof(s_values.background));
-    copy_str(v, "theme", s_values.theme, sizeof(s_values.theme));
-    copy_str(v, "anim", s_values.anim, sizeof(s_values.anim));
     copy_str(root, "version", s_version, sizeof(s_version));
     const cJSON *lists = cJSON_GetObjectItemCaseSensitive(root, "lists");
     read_list(lists, "backgrounds", SETTINGS_LIST_BACKGROUNDS);
@@ -482,7 +444,7 @@ static bool read_state(const char *json)
     char *sched = cJSON_PrintUnformatted(cJSON_GetObjectItemCaseSensitive(root, "schedule"));
     s_n = sched ? sched_from_json(sched, s_rules, SCHED_MAX_PROFILES) : -1;
     free(sched);
-    bool ok = root && v && read_now_and_sun(root) && s_n >= 0;
+    bool ok = root && read_now_and_sun(root) && s_n >= 0;
     if (s_n < 0) s_n = 0;
     cJSON_Delete(root);
     return ok;
@@ -492,16 +454,15 @@ static bool read_state(const char *json)
  * @brief The backend over the clock's state.
  * v2: upload.
  * v3: no leave (the phone's menu has no Back).
- * @version 3
+ * v4: no global setters; save_theme keeps a named theme.
+ * @version 4
  * @req REQ-UI-005
  * @return It, or NULL when the state is not usable.
  */
 const settings_backend_t *settings_http_backend(const char *state_json, const char *token)
 {
     static const settings_backend_t BE = {
-        .get = http_get, .list = http_list, .set_brightness = http_set_brightness,
-        .set_background = http_set_background, .set_theme = http_set_theme,
-        .set_anim = http_set_anim, .schedule_get = http_schedule_get,
+        .list = http_list, .schedule_get = http_schedule_get,
         .schedule_set = http_schedule_set, .sun = http_sun, .now = http_now,
         .save_theme = http_save_theme, .about = http_about, .upload = http_upload,
     };

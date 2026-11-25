@@ -49,10 +49,11 @@ esp_err_t sched_store_set(const sched_rule_t *r, int n, char *why, size_t why_n)
 
 /**
  * @brief The profile showing at local time @p now.
- * @version 1
+ * v2: a gap's look is sched_rule_gap.
+ * @version 2
  * @req REQ-BG-004
- * @return Its index, or -1 (the global settings); the profile is copied to @p out when
- *         non-NULL (zeroed, brightness inheriting, when none).
+ * @return Its index, or -1 (a gap); the profile is copied to @p out when non-NULL (the gap's
+ *         look, sched_rule_gap, when none).
  */
 int sched_store_active(const struct tm *now, sched_rule_t *out);
 

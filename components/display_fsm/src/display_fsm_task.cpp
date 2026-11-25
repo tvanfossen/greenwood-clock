@@ -578,7 +578,8 @@ static void apply_clock_user_color(void)
  *     screen at every background change, seen on device with the schedule).
  * v5: themes replace the text colour (theme names, theme roles, theme events).
  * v6: bound text is re-judged against the new picture.
- * @version 6
+ * v7: no picture configured (a gap) removes the one showing; only a failed load keeps it.
+ * @version 7
  */
 static void reload_background(const clock_settings_t *cfg)
 {
@@ -596,7 +597,8 @@ static void reload_background(const clock_settings_t *cfg)
 
     load_background(scr, cfg);   // new image behind the old one (move_background)
 
-    if (!s_bg_img) {   // failed or nothing configured: keep what was showing
+    bool none = !cfg->background_image[0];   // no picture wanted: the screen colour shows
+    if (!s_bg_img && !none) {   // failed: keep what was showing
         s_bg_img = old_img;
         s_bg_dsc = old_dsc;
         ESP_LOGW(TAG, "reload_bg: new background not loaded, keeping the current one");
@@ -617,13 +619,14 @@ static int          s_bg_profile = -2;   // schedule profile last applied (-1: n
 static clock_anim_t s_bg_anim = CLOCK_ANIM_COUNT;   // animation last applied by a profile
 
 /**
- * @brief Effective settings: the global settings with the showing schedule profile's
- *        overrides (image, brightness) applied; its theme is applied by apply_theme.
+ * @brief Effective settings: the stored settings with the showing schedule profile's image
+ *        and brightness; its theme is applied by apply_theme.
  * v2: no text colour (the theme carries it).
  * v3: the profile from the daily/events schedule (sched_store), not the weekly grid.
- * @version 3
+ * v4: the profile's picture always (profiles set every field; a gap has none).
+ * @version 4
  * @req REQ-BG-004
- * @return The showing profile's index (-1: none, the global settings); it is copied to
+ * @return The showing profile's index (-1: a gap, sched_rule_gap's look); it is copied to
  *         @p prof when non-NULL.
  */
 static int effective_settings(clock_settings_t *cfg, sched_rule_t *prof)
@@ -634,7 +637,7 @@ static int effective_settings(clock_settings_t *cfg, sched_rule_t *prof)
     localtime_r(&now, &ti);
     sched_rule_t p;
     int idx = sched_store_active(&ti, &p);
-    if (p.image[0]) strlcpy(cfg->background_image, p.image, sizeof(cfg->background_image));
+    strlcpy(cfg->background_image, p.image, sizeof(cfg->background_image));
     if (p.brightness != SCHED_INHERIT) cfg->brightness = (uint8_t)p.brightness;
     if (prof) *prof = p;
     return idx;

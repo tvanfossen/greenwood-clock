@@ -5,7 +5,9 @@
  *     the display task loads the schedule): empty answers, refused saves.
  * v4: the sun cached per day for a year (an overlap check used to recompute it thousands of
  *     times and trip the task watchdog).
- * @version 4
+ * v5: every profile field explicit: fields left to the global settings are filled from them
+ *     once at load; a gap shows sched_rule_gap.
+ * @version 5
  * @brief The device's schedule: file, RAM copy, overlap-checked saves, the active profile and
  *        the device's sun (see sched_store.h).
  */
@@ -14,6 +16,7 @@
 #include "settings.h"
 #include "bg_schedule.h"
 #include "clock_anim_pref.h"
+#include "theme_pref.h"
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -242,8 +245,46 @@ static int convert_old(sched_rule_t *out)
 // ---------------------------------------------------------------------------
 
 /**
- * @brief Load the schedule, or convert the old one.
+ * @brief The global settings as a profile's look (what profiles that left a field to them
+ *        were showing).
  * @version 1
+ * @utility
+ * @return The look.
+ */
+static sched_rule_t global_look(void)
+{
+    clock_settings_t cfg;
+    settings_load(&cfg);
+    sched_rule_t g;
+    memset(&g, 0, sizeof(g));
+    strlcpy(g.image, cfg.background_image, sizeof(g.image));
+    theme_pref_get(g.theme);
+    strlcpy(g.anim, clock_anim_name(clock_anim_pref_get()), sizeof(g.anim));
+    g.brightness = (int8_t)cfg.brightness;
+    return g;
+}
+
+/**
+ * @brief Fill every profile's fields left to the global settings with them, once, and keep
+ *        the result (profiles now set every field; the menu edits profiles, not globals).
+ * @version 1
+ * @utility
+ */
+static void fill_from_global(sched_rule_t *r, int n)
+{
+    sched_rule_t g = global_look();
+    int filled = 0;
+    for (int i = 0; i < n; i++) filled += sched_rule_fill(&r[i], &g) ? 1 : 0;
+    if (filled) {
+        ESP_LOGI(TAG, "%d profile(s) took the global look for unset fields", filled);
+        write_file(r, n);
+    }
+}
+
+/**
+ * @brief Load the schedule, or convert the old one.
+ * v2: unset fields filled from the global settings once.
+ * @version 2
  * @req REQ-BG-004
  * @return ESP_OK, or ESP_ERR_NO_MEM.
  */
@@ -260,6 +301,7 @@ esp_err_t sched_store_init(void)
                  SCHED_STORE_PATH, n);
         write_file(s_rules, n);
     }
+    fill_from_global(s_rules, n);
     s_count = n;
     ESP_LOGI(TAG, "schedule: %d profiles", s_count);
     return s_lock ? ESP_OK : ESP_ERR_NO_MEM;
@@ -343,7 +385,8 @@ esp_err_t sched_store_set(const sched_rule_t *r, int n, char *why, size_t why_n)
 /**
  * @brief The profile showing at a local time.
  * v2: none before init.
- * @version 2
+ * v3: a gap's look is sched_rule_gap (Default theme, no picture, no animation).
+ * @version 3
  * @req REQ-BG-004
  * @return Its index, or -1.
  */
@@ -358,10 +401,7 @@ int sched_store_active(const struct tm *now, sched_rule_t *out)
         if (out && idx >= 0) *out = s_rules[idx];
         xSemaphoreGive(s_lock);
     }
-    if (out && idx < 0) {
-        memset(out, 0, sizeof(*out));
-        out->brightness = SCHED_INHERIT;
-    }
+    if (out && idx < 0) sched_rule_gap(out);
     return idx;
 }
 
