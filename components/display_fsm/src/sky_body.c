@@ -1,7 +1,8 @@
 /**
  * @file sky_body.c
  * v2: reports what painting costs (LV_LOG_USER).
- * @version 2
+ * v3: the sky's events layer.
+ * @version 3
  * @brief The sun and the moon as LVGL canvases (see sky_body.h).
  */
 #include "sky_body.h"
@@ -186,4 +187,85 @@ lv_obj_t *sky_body_moon_create(lv_obj_t *parent, int32_t d, float age, lv_opa_t 
     }
     lv_free(px);
     return cv;
+}
+
+#define EVENTS_FRAME_MS 66   // 15 frames a second: meteors are quick
+
+/** The sky's events: what they are, the frame, the buffer, the timer. */
+typedef struct {
+    sky_events_t   ev;
+    uint32_t      *frame;
+    lv_draw_buf_t *buf;
+    lv_timer_t    *timer;
+    lv_obj_t      *canvas;
+    uint32_t       ms;
+    uint32_t       frames, paint_ms;
+} events_anim_t;
+
+/**
+ * @brief One events frame.
+ * @version 1
+ * @callback
+ */
+static void events_tick_cb(lv_timer_t *t)
+{
+    events_anim_t *a = (events_anim_t *)lv_timer_get_user_data(t);
+    uint32_t t0 = lv_tick_get();
+    a->ms += EVENTS_FRAME_MS;
+    sky_events_frame(&a->ev, a->ms, a->frame);
+    for (int32_t y = 0; y < a->ev.h; y++) {
+        memcpy(a->buf->data + (size_t)y * a->buf->header.stride, a->frame + (size_t)y * (size_t)a->ev.w,
+               (size_t)a->ev.w * sizeof(uint32_t));
+    }
+    lv_obj_invalidate(a->canvas);
+    a->paint_ms += lv_tick_elaps(t0);
+    if (++a->frames == 150) {
+        LV_LOG_USER("sky_body: events %dx%d: 150 frames painted in %u ms", a->ev.w, a->ev.h,
+                    (unsigned)a->paint_ms);
+        a->frames = a->paint_ms = 0;
+    }
+}
+
+/**
+ * @brief The events layer is going: stop its timer, free its memory.
+ * @version 1
+ * @callback
+ */
+static void events_delete_cb(lv_event_t *e)
+{
+    events_anim_t *a = (events_anim_t *)lv_event_get_user_data(e);
+    lv_timer_delete(a->timer);
+    lv_draw_buf_destroy(a->buf);
+    lv_free(a->frame);
+    lv_free(a);
+}
+
+/**
+ * @brief The sky's events layer.
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @return It, or NULL.
+ */
+lv_obj_t *sky_body_events_create(lv_obj_t *parent, int32_t w, int32_t h, unsigned night,
+                                 float aurora, int zhr)
+{
+    events_anim_t *a = (aurora > 0.0f || zhr > 0) ? lv_malloc_zeroed(sizeof(*a)) : NULL;
+    if (a) a->frame = lv_malloc((size_t)w * (size_t)h * sizeof(uint32_t));
+    if (a && a->frame) {
+        a->buf = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_ARGB8888, 0);
+    }
+    if (!a || !a->frame || !a->buf) {
+        if (a) lv_free(a->frame);
+        lv_free(a);
+        return NULL;
+    }
+    a->canvas = lv_canvas_create(parent);
+    lv_canvas_set_draw_buf(a->canvas, a->buf);
+    lv_obj_remove_flag(a->canvas, LV_OBJ_FLAG_CLICKABLE);
+    sky_events_init(&a->ev, w, h, night, aurora, zhr, rgb(ui_theme_color(UI_ROLE_AURORA)),
+                    rgb(ui_theme_color(UI_ROLE_AURORA_ALT)), rgb(ui_theme_color(UI_ROLE_METEOR)));
+    a->timer = lv_timer_create(events_tick_cb, EVENTS_FRAME_MS, a);
+    lv_obj_add_event_cb(a->canvas, events_delete_cb, LV_EVENT_DELETE, a);
+    events_tick_cb(a->timer);
+    return a->canvas;
 }

@@ -1,6 +1,7 @@
 /**
  * @file test_sky_paint.c
- * @version 1
+ * v2: the sky events (aurora, meteors).
+ * @version 2
  * @brief Host tests for the sun and moon painter: the moon's lit share of the disc matches its
  *        phase (within 0.05) and is on the right while waxing; full is all lit, new nothing;
  *        the dark side shows only the asked earthshine, past a thin soft terminator; the sun is an opaque disc in a glow
@@ -139,9 +140,72 @@ static void test_sun(void)
     CHECK(moved > D, "the rays turn between frames (%d px changed)", moved);
 }
 
+#define EW 236
+#define EH 100
+static const sky_rgb_t GREEN = { 90, 230, 140 }, VIOLET = { 150, 100, 220 }, WHITE = { 230, 240, 255 };
+
+/**
+ * @brief How many pixels of a @p n -pixel frame are painted at all, and in its top row.
+ * @version 1
+ * @utility
+ * @return The painted count; the top row's in @p top.
+ */
+static int painted(const uint32_t *px, int *top)
+{
+    int n = 0;
+    *top = 0;
+    for (int i = 0; i < EW * EH; i++) {
+        bool on = (px[i] >> 24) > 0;
+        n += on;
+        if (i < EW) *top += on;
+    }
+    return n;
+}
+
+/**
+ * @brief The sky events: an aurora fills the window's lower sky (not its top row), differs
+ *        from night to night and is the same for the same night; none is painted at zero
+ *        strength; meteors streak through over 20 s at a shower's rate, none without one.
+ * @version 1
+ * @utility
+ */
+static void test_events(void)
+{
+    static uint32_t a[EW * EH], b[EW * EH];
+    static sky_events_t e1, e2;
+    int top = 0;
+    sky_events_init(&e1, EW, EH, 20261126u, 0.6f, 0, GREEN, VIOLET, WHITE);
+    sky_events_frame(&e1, 1000, a);
+    int n = painted(a, &top);
+    CHECK(n > EW * EH / 8, "an aurora fills part of the sky (%d px)", n);
+    CHECK(top < EW / 10, "its top row stays dark (%d px)", top);
+    sky_events_init(&e2, EW, EH, 20261127u, 0.6f, 0, GREEN, VIOLET, WHITE);
+    sky_events_frame(&e2, 1000, b);
+    int differ = 0;
+    for (int i = 0; i < EW * EH; i++) differ += a[i] != b[i];
+    CHECK(differ > EW * EH / 10, "another night, another aurora (%d px differ)", differ);
+    sky_events_init(&e2, EW, EH, 20261126u, 0.6f, 0, GREEN, VIOLET, WHITE);
+    sky_events_frame(&e2, 1000, b);
+    differ = 0;
+    for (int i = 0; i < EW * EH; i++) differ += a[i] != b[i];
+    CHECK(differ == 0, "the same night, the same aurora");
+    sky_events_init(&e1, EW, EH, 1u, 0.0f, 0, GREEN, VIOLET, WHITE);
+    sky_events_frame(&e1, 1000, a);
+    CHECK(painted(a, &top) == 0, "no aurora, no meteors: nothing painted");
+
+    int streaks = 0;
+    sky_events_init(&e1, EW, EH, 7u, 0.0f, 150, GREEN, VIOLET, WHITE);
+    for (uint32_t ms = 0; ms < 20000; ms += 100) {
+        sky_events_frame(&e1, ms, a);
+        streaks += painted(a, &top) > 0;
+    }
+    CHECK(streaks >= 3, "meteors at ZHR 150 over 20 s: %d frames with a streak", streaks);
+}
+
 /**
  * @brief Run the painter tests; exit status is the failure count.
- * @version 1
+ * v2: the sky events.
+ * @version 2
  * @utility
  * @return 0 when every check passed.
  */
@@ -149,6 +213,7 @@ int main(void)
 {
     test_moon();
     test_sun();
+    test_events();
     printf("sky_paint: %d/%d checks passed\n", s_checks - s_failures, s_checks);
     return s_failures;
 }

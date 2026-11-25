@@ -24,6 +24,7 @@
 #define SUN_D    52      /* the sun's square: its disc 60 % of it, rays and glow round it */
 #define MOON_D   36      /* the moon's square: its disc 92 % of it */
 #define COL_X    (WIN_W + 18)
+#define AURORA_FLOOR 0.60f   /* the faintest aurora drawn, of full strength */
 
 /**
  * @brief Place @p obj (@p size px) at @p deg on the wheel in @p win.
@@ -59,7 +60,8 @@ static lv_obj_t *dial_text(lv_obj_t *parent, const lv_font_t *font, ui_role_t ro
  * @brief The sky window: the wheel's upper arc, the horizon, the sun and the moon (each
  *        hidden by the window's clip once below the horizon).
  * v2: the native animated sun (sky_body); the moon wherever it really is.
- * @version 2
+ * v3: the sky's events (aurora, meteors) behind the moon and sun when they are on.
+ * @version 3
  * @utility
  */
 static void sky_window(lv_obj_t *card, const sky_data_t *d)
@@ -79,6 +81,11 @@ static void sky_window(lv_obj_t *card, const sky_data_t *d)
     lv_obj_set_style_opa(ring, LV_OPA_TRANSP, LV_PART_KNOB);
     lv_obj_remove_flag(ring, LV_OBJ_FLAG_CLICKABLE);
 
+    float aurora = sky_aurora_strength(d);   // any aurora worth noting shows clearly
+    lv_obj_t *events = sky_body_events_create(win, WIN_W, WIN_H, d->night,
+                                              aurora > 0.0f ? AURORA_FLOOR + (1.0f - AURORA_FLOOR) * aurora : 0.0f,
+                                              sky_meteor_zhr(d));   // behind the moon and sun
+    if (events) lv_obj_set_pos(events, 0, 0);
     lv_obj_t *moon = sky_moon_create(win, d, MOON_D, 0, 0);
     if (moon) place(moon, sky_moon_angle(d), MOON_D);
     lv_obj_t *sun = d->sunrise_min >= 0 ? sky_body_sun_create(win, SUN_D) : NULL;
@@ -136,7 +143,8 @@ static void sky_times(lv_obj_t *card, const sky_data_t *d)
 /**
  * @brief Build the dial card (see sky_dial.h).
  * v2: the moon's times at night (sky_times).
- * @version 2
+ * v3: the note: the aurora tonight or a shower soon, else the phase.
+ * @version 3
  * @req REQ-WX-007
  * @return The card.
  */
@@ -145,8 +153,10 @@ lv_obj_t *sky_dial_create(lv_obj_t *parent, const sky_data_t *d, int32_t x, int3
 {
     lv_obj_t *card = sky_card_create(parent, x, y, w, h);
     sky_window(card, d);
+    char note[64];
+    sky_note(d, note, sizeof(note));   // an event tonight or soon, else the moon's phase
     lv_obj_t *phase = dial_text(card, &lv_font_montserrat_16, UI_ROLE_TEXT_FAINT, 0, WIN_H + 8,
-                                d->moon.phase_name);
+                                note);
     lv_obj_set_width(phase, WIN_W);
     lv_obj_set_style_text_align(phase, LV_TEXT_ALIGN_CENTER, 0);
     sky_times(card, d);

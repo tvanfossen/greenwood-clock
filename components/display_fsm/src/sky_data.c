@@ -2,7 +2,8 @@
  * @file sky_data.c
  * v2: sky_sun_local (the sun alone, for the schedule's many lookups).
  * v3: the real moon (astro_moon): lit fraction, side, place, rise and set.
- * @version 3
+ * v4: the sky's events (sky_meteor_zhr, sky_aurora_strength, sky_note).
+ * @version 4
  * @brief What the sky screen shows (see sky_data.h): sun times in local minutes, where the
  *        day is, the moon, the aurora outlook and the next dated sky events. Pure C.
  */
@@ -22,24 +23,25 @@ typedef struct {
     int         month;
     int         day;
     const char *name;
+    int         zhr;    /**< A meteor shower's zenithal hourly rate at its peak (0: not one). */
 } dated_event_t;
 
 static const dated_event_t SEASONS[] = {
-    {  3, 20, "Spring equinox" },
-    {  6, 20, "Summer solstice" },
-    {  9, 22, "Autumn equinox" },
-    { 12, 21, "Winter solstice" },
+    {  3, 20, "Spring equinox", 0 },
+    {  6, 20, "Summer solstice", 0 },
+    {  9, 22, "Autumn equinox", 0 },
+    { 12, 21, "Winter solstice", 0 },
 };
 
 static const dated_event_t SHOWERS[] = {
-    {  1,  3, "Quadrantids" },
-    {  4, 22, "Lyrids" },
-    {  5,  6, "Eta Aquariids" },
-    {  7, 30, "Delta Aquariids" },
-    {  8, 12, "Perseids" },
-    { 10, 21, "Orionids" },
-    { 11, 17, "Leonids" },
-    { 12, 14, "Geminids" },
+    {  1,  3, "Quadrantids", 110 },
+    {  4, 22, "Lyrids", 18 },
+    {  5,  6, "Eta Aquariids", 50 },
+    {  7, 30, "Delta Aquariids", 25 },
+    {  8, 12, "Perseids", 100 },
+    { 10, 21, "Orionids", 20 },
+    { 11, 17, "Leonids", 15 },
+    { 12, 14, "Geminids", 150 },
 };
 
 #define COUNT(a) ((int)(sizeof(a) / sizeof((a)[0])))
@@ -300,7 +302,8 @@ static void moon_part(time_t now, float lat, float lon, sky_data_t *out)
  * @brief Compute the sky at @p now for @p lat / @p lon with Kp @p kp.
  * v2: moon_frac (the month fraction, from the lit fraction and side).
  * v3: the real moon (moon_part): lit fraction, side, place, rise and set.
- * @version 3
+ * v4: the next shower's ZHR; the night's date (its random sky's seed).
+ * @version 4
  * @req REQ-ASTRO-001
  */
 void sky_data_compute(time_t now, float lat, float lon, float kp, sky_data_t *out)
@@ -316,4 +319,60 @@ void sky_data_compute(time_t now, float lat, float lon, float kp, sky_data_t *ou
     out->aurora_prob = out->kp > 0.0f ? astro_calc_aurora_probability(kp, lat) : 0.0f;
     out->season = next_event(now, SEASONS, COUNT(SEASONS), &out->season_days);
     out->shower = next_event(now, SHOWERS, COUNT(SHOWERS), &out->shower_days);
+    for (size_t i = 0; i < COUNT(SHOWERS); i++) {
+        if (SHOWERS[i].name == out->shower) out->shower_zhr = SHOWERS[i].zhr;
+    }
+    time_t evening = out->part == SKY_NIGHT_BEFORE ? now - 86400 : now;
+    struct tm e;
+    localtime_r(&evening, &e);
+    out->night = (unsigned)((e.tm_year + 1900) * 10000 + (e.tm_mon + 1) * 100 + e.tm_mday);
+}
+
+/**
+ * @brief Whether @p d's night is its shower's peak night: the evening before the peak date
+ *        or the small hours of it.
+ * @version 1
+ * @utility
+ * @return Whether.
+ */
+static bool peak_tonight(const sky_data_t *d)
+{
+    return d->shower && ((d->shower_days == 1 && d->part != SKY_NIGHT_BEFORE) ||
+                         d->shower_days == 0);
+}
+
+/**
+ * @brief The meteors to show now.
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @return The shower's ZHR on its peak night in the dark, else 0.
+ */
+int sky_meteor_zhr(const sky_data_t *d)
+{
+    return d->part != SKY_DAY && peak_tonight(d) ? d->shower_zhr : 0;
+}
+
+/**
+ * @brief The aurora to show now.
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @return Its strength (the chance) when dark and at least SKY_AURORA_MIN, else 0.
+ */
+float sky_aurora_strength(const sky_data_t *d)
+{
+    return d->part != SKY_DAY && d->aurora_prob >= SKY_AURORA_MIN ? d->aurora_prob : 0.0f;
+}
+
+/**
+ * @brief The sky card's note.
+ * @version 1
+ * @req REQ-ASTRO-001
+ */
+void sky_note(const sky_data_t *d, char *out, size_t n)
+{
+    if (d->aurora_prob >= SKY_AURORA_MIN) snprintf(out, n, "Aurora possible tonight");
+    else if (peak_tonight(d)) snprintf(out, n, "%s peak tonight", d->shower);
+    else if (d->shower && d->shower_days == 1) snprintf(out, n, "%s peak tomorrow", d->shower);
+    else if (d->shower && d->shower_days <= SKY_NOTE_DAYS) snprintf(out, n, "%s peak in %d days", d->shower, d->shower_days);
+    else snprintf(out, n, "%s", d->moon.phase_name);
 }

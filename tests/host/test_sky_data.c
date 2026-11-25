@@ -1,7 +1,8 @@
 /**
  * @file test_sky_data.c
  * v2: the real moon (astro_moon): its place, rise and set, lit fraction.
- * @version 2
+ * v3: the sky's events (meteors, aurora) and the card's note.
+ * @version 3
  * @brief Host tests for the sky screen's data: where the day is, local sun times, days to
  *        dated events (year wrap, leap years) and the moon's waxing side. At a public sample
  *        place (Chicago), never the device's.
@@ -11,6 +12,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static int s_failures = 0;
 static int s_checks   = 0;
@@ -182,11 +184,48 @@ static void test_moon_place(void)
 }
 
 /**
+ * @brief The sky's events: meteors on a shower's peak night (dark only, at its ZHR), the
+ *        aurora when it is dark and likely enough, and the card's note: the aurora tonight,
+ *        then a shower within a week, else the moon's phase.
+ * @version 1
+ * @utility
+ */
+static void test_events(void)
+{
+    sky_data_t s;
+    char note[64];
+    sky_data_compute(at(2026, 12, 13, 23, 0), LAT, LON, 0.0f, &s);   // Geminids peak night
+    CHECK(sky_meteor_zhr(&s) >= 100, "Geminids peak night: meteors, ZHR %d", sky_meteor_zhr(&s));
+    sky_note(&s, note, sizeof(note));
+    CHECK(strcmp(note, "Geminids peak tonight") == 0, "note: %s", note);
+    sky_data_compute(at(2026, 12, 13, 12, 0), LAT, LON, 0.0f, &s);   // the same day, by day
+    CHECK(sky_meteor_zhr(&s) == 0, "no meteors by day");
+    sky_data_compute(at(2026, 12, 10, 21, 0), LAT, LON, 0.0f, &s);
+    CHECK(sky_meteor_zhr(&s) == 0, "four days before: no meteors yet");
+    sky_note(&s, note, sizeof(note));
+    CHECK(strcmp(note, "Geminids peak in 4 days") == 0, "note: %s", note);
+    sky_data_compute(at(2026, 11, 26, 21, 0), LAT, LON, 0.0f, &s);   // nothing near
+    sky_note(&s, note, sizeof(note));
+    CHECK(strcmp(note, s.moon.phase_name) == 0, "no event near: the phase (%s)", note);
+    CHECK(sky_aurora_strength(&s) == 0.0f, "no Kp: no aurora");
+    sky_data_compute(at(2026, 11, 26, 21, 0), LAT, LON, 8.5f, &s);   // a big storm, at night
+    CHECK(sky_aurora_strength(&s) > 0.2f, "Kp 8.5 at night: aurora %.2f",
+          (double)sky_aurora_strength(&s));
+    sky_note(&s, note, sizeof(note));
+    CHECK(strcmp(note, "Aurora possible tonight") == 0, "note: %s", note);
+    sky_data_compute(at(2026, 11, 26, 13, 0), LAT, LON, 8.5f, &s);   // the storm by day
+    CHECK(sky_aurora_strength(&s) == 0.0f, "no aurora drawn by day");
+    sky_note(&s, note, sizeof(note));
+    CHECK(strcmp(note, "Aurora possible tonight") == 0, "by day still noted: %s", note);
+}
+
+/**
  * @brief Run the sky data tests in Chicago time; exit status is the failure count.
  * v2: the sky wheel test.
  * v3: the sun alone.
  * v4: the real moon's place.
- * @version 4
+ * v5: the sky's events.
+ * @version 5
  * @utility
  * @return 0 when every check passed.
  */
@@ -200,6 +239,7 @@ int main(void)
     test_moon_and_kp();
     test_wheel();
     test_moon_place();
+    test_events();
     printf("sky_data: %d/%d checks passed\n", s_checks - s_failures, s_checks);
     return s_failures;
 }

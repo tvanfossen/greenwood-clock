@@ -1,7 +1,8 @@
 /**
  * @file sky_data.h
  * v2: the real moon (astro_moon): up or down, its place on the wheel, next rise and set.
- * @version 2
+ * v3: the sky's events: meteors, aurora, the card's note.
+ * @version 3
  * @brief What the sky screen shows (sky_panel.h), for one moment at one place: local sun
  *        times and where the day is, the moon, the aurora outlook and the next dated sky
  *        events. Pure C (no LVGL): host-tested.
@@ -46,6 +47,9 @@ typedef struct {
     int          season_days;
     const char  *shower;         /* next meteor shower peak */
     int          shower_days;
+    int          shower_zhr;     /* its zenithal hourly rate at peak */
+    unsigned     night;          /* the night's date as yyyymmdd (its evening's; the small hours
+                                    belong to the night before): seeds its random sky */
 } sky_data_t;
 
 /**
@@ -101,6 +105,38 @@ float sky_sun_angle(const sky_data_t *d);
  * @return Degrees in (-180, 180].
  */
 float sky_moon_angle(const sky_data_t *d);
+
+/** The aurora is drawn (at night) and noted from this chance. */
+#define SKY_AURORA_MIN 0.20f
+/** A meteor shower is noted this many days ahead. */
+#define SKY_NOTE_DAYS  7
+
+/**
+ * @brief The meteors to show now: the next shower's ZHR on its peak night (the evening
+ *        before its date or the small hours of it), in the dark; else 0.
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @return The ZHR, or 0.
+ */
+int sky_meteor_zhr(const sky_data_t *d);
+
+/**
+ * @brief The aurora to show now: the chance for this latitude (from the Kp) when it is dark
+ *        and at least SKY_AURORA_MIN; else 0.
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @return 0..1.
+ */
+float sky_aurora_strength(const sky_data_t *d);
+
+/**
+ * @brief The sky card's note: "Aurora possible tonight" (by day too), a shower's peak
+ *        ("Geminids peak tonight", "... tomorrow", "... in 4 days", up to SKY_NOTE_DAYS
+ *        ahead), else the moon's phase name.
+ * @version 1
+ * @req REQ-ASTRO-001
+ */
+void sky_note(const sky_data_t *d, char *out, size_t n);
 
 #ifdef __cplusplus
 }

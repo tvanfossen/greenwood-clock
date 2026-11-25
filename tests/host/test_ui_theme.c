@@ -390,9 +390,11 @@ static void test_alert_core(void)
 
 /**
  * @brief The sky core (fifth): the sun is the core itself, warm gold in the base theme; the
- *        moon is a pale near-white of the same hue, following the core; a file without "sky"
+ *        moon is a pale near-white of the same hue, following the core; the aurora's green and
+ *        violet and the meteors' pale blue are fixed hue steps from it; a file without "sky"
  *        gets the base core, one with it keeps it through a round trip.
- * @version 1
+ * v2: the aurora and meteor roles.
+ * @version 2
  * @utility
  */
 static void test_sky_core(void)
@@ -412,6 +414,24 @@ static void test_sky_core(void)
     CHECK(hue_gap(moon.h, 40.0f) <= 25.0f, "moon follows the sky hue: %.1f", (double)moon.h);
     CHECK(strcmp(ui_theme_role_name(UI_ROLE_SUN), "sun") == 0 &&
           strcmp(ui_theme_role_name(UI_ROLE_MOON), "moon") == 0, "role names");
+
+    // The sky events step from the same core: green and violet aurora, pale cool meteors.
+    ui_theme_derive(&UI_THEME_BASE, r);
+    ui_oklch_t green = ui_color_to_oklch(r[UI_ROLE_AURORA]);
+    ui_oklch_t violet = ui_color_to_oklch(r[UI_ROLE_AURORA_ALT]);
+    ui_oklch_t meteor = ui_color_to_oklch(r[UI_ROLE_METEOR]);
+    CHECK(hue_gap(green.h, 145.0f) <= 15.0f && green.c > 0.10f, "base aurora green: h %.1f c %.3f",
+          (double)green.h, (double)green.c);
+    CHECK(hue_gap(violet.h, 300.0f) <= 20.0f && violet.c > 0.08f, "base aurora violet: h %.1f",
+          (double)violet.h);
+    CHECK(hue_gap(meteor.h, 235.0f) <= 30.0f && meteor.l > 0.88f && meteor.c < 0.08f,
+          "base meteor pale blue: l %.2f c %.3f h %.1f", (double)meteor.l, (double)meteor.c,
+          (double)meteor.h);
+    t = UI_THEME_BASE;
+    t.sky.h += 30.0f;
+    ui_theme_derive(&t, r);
+    CHECK(hue_gap(ui_color_to_oklch(r[UI_ROLE_AURORA]).h, 175.0f) <= 15.0f,
+          "the aurora follows the sky core's hue");
 
     const char *no_sky = "{\"name\":\"X\",\"ink\":[1,0,0],\"surface\":[0.2,0.04,280],"
                          "\"accent\":[0.8,0.1,90],\"contrast\":7}";

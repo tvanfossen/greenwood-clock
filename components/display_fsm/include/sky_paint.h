@@ -1,7 +1,8 @@
 /**
  * @file sky_paint.h
  * v2: the sun's per-pixel glow and ray profiles precomputed: a frame is table lookups only.
- * @version 2
+ * v3: the sky's events: an aurora and meteors, randomised per night.
+ * @version 3
  * @brief The sun and the moon as pixels (ARGB8888, straight alpha, d x d), for the sky dial
  *        and the clear-sky weather icon. The moon is the near side as it really looks (its
  *        maria and bright craters) lit from the sun's direction for its age, waxing lit on
@@ -71,6 +72,55 @@ void sky_sun_init(sky_sun_t *sun, void *mem, int d, sky_rgb_t core, sky_rgb_t li
  * @req REQ-ASTRO-001
  */
 void sky_sun_frame(const sky_sun_t *sun, float t, uint32_t *out);
+
+#define SKY_AURORA_BANDS 3
+#define SKY_METEORS      4
+
+/** One aurora curtain: where its foot runs, how it folds, how it drifts. */
+typedef struct {
+    float base, sway, fold, drift;      /**< Foot height (share of h), its swing, fold freq, speed. */
+    float phase, stripe, stripe_speed;  /**< Fold phase; the rays' spacing and their shimmer. */
+    float height, bright;               /**< Its height (share of h) and brightness. */
+} sky_band_t;
+
+/** A meteor in flight. */
+typedef struct {
+    float    x, y;                      /**< Where it started. */
+    uint32_t born_ms;                   /**< 0: none. */
+} sky_meteor_t;
+
+/** The sky's events over a w x h window: an aurora (randomised from the night's seed) and a
+ *  meteor shower at its ZHR. */
+typedef struct {
+    int          w, h;
+    uint32_t     rng;
+    float        aurora;                /**< Strength 0..1 (0: none). */
+    int          zhr;                   /**< 0: no meteors. */
+    float        violet;                /**< How much of the tops turns violet (per night). */
+    int          bands;
+    sky_band_t   band[SKY_AURORA_BANDS];
+    float        dir_x, dir_y;          /**< The meteors' direction (from the night's radiant). */
+    sky_meteor_t meteor[SKY_METEORS];
+    uint32_t     next_ms;               /**< When the next meteor starts. */
+    sky_rgb_t    green, violet_c, white;
+} sky_events_t;
+
+/**
+ * @brief Prepare the events for a @p w x @p h window: an aurora of @p aurora strength (0:
+ *        none) and meteors at @p zhr (0: none), everything random drawn from @p seed (the
+ *        night: the same night looks the same), in @p green / @p violet / @p white.
+ * @version 1
+ * @req REQ-ASTRO-001
+ */
+void sky_events_init(sky_events_t *e, int w, int h, uint32_t seed, float aurora, int zhr,
+                     sky_rgb_t green, sky_rgb_t violet, sky_rgb_t white);
+
+/**
+ * @brief The events at @p ms (since they began) into @p out (w x h; transparent where none).
+ * @version 1
+ * @req REQ-ASTRO-001
+ */
+void sky_events_frame(sky_events_t *e, uint32_t ms, uint32_t *out);
 
 #ifdef __cplusplus
 }

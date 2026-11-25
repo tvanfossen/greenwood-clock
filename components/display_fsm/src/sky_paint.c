@@ -1,12 +1,14 @@
 /**
  * @file sky_paint.c
  * v2: the sun's frame from precomputed tables (no transcendental per pixel per frame).
- * @version 2
+ * v3: the sky's events: aurora curtains and meteors.
+ * @version 3
  * @brief The sun and the moon as pixels (see sky_paint.h). Pure C.
  */
 #include "sky_paint.h"
 
 #include <math.h>
+#include <stdbool.h>
 #include <string.h>
 
 #define PI_F       3.14159265f
@@ -350,4 +352,199 @@ void sky_sun_frame(const sky_sun_t *s, float t, uint32_t *out)
         sky_rgb_t c = mix(s->core, ray_c, ray / (a + 1e-3f));
         out[i] = over(s->disc[i], c, a);   // the disc's soft rim over the glow behind it
     }
+}
+
+// ---------------------------------------------------------------------------
+// The sky's events
+// ---------------------------------------------------------------------------
+
+#define PROFILE_N   512    // the curtains' vertical profile, over rel -0.25 .. 1.25
+#define METEOR_LEN  26.0f  // a streak's length, pixels
+#define METEOR_LIFE 450    // ms a meteor lasts
+#define METEOR_V    0.42f  // its speed, pixels per ms
+
+/** The curtain's light up from its foot (rel 0) to its top (rel 1): sharp below, a long fade up. */
+static float s_profile[PROFILE_N];
+
+/**
+ * @brief Fill s_profile once.
+ * @version 1
+ * @utility
+ */
+static void profile_init(void)
+{
+    if (s_profile[PROFILE_N / 2] > 0.0f) return;
+    for (int i = 0; i < PROFILE_N; i++) {
+        float rel = -0.25f + 1.5f * (float)i / (PROFILE_N - 1);
+        s_profile[i] = rel < 0.0f ? expf(-(rel / 0.05f) * (rel / 0.05f))
+                                  : expf(-rel * 2.4f) * (1.0f - smooth(0.75f, 1.0f, rel));
+    }
+}
+
+/**
+ * @brief The next of @p e's random numbers, 0..1 (xorshift).
+ * @version 1
+ * @utility
+ * @return It.
+ */
+static float rnd(sky_events_t *e)
+{
+    e->rng ^= e->rng << 13;
+    e->rng ^= e->rng >> 17;
+    e->rng ^= e->rng << 5;
+    return (float)(e->rng & 0xffffff) / (float)0x1000000;
+}
+
+/**
+ * @brief @p lo .. @p hi at random.
+ * @version 1
+ * @utility
+ * @return It.
+ */
+static float rnd_in(sky_events_t *e, float lo, float hi)
+{
+    return lo + (hi - lo) * rnd(e);
+}
+
+/**
+ * @brief One random curtain.
+ * @version 1
+ * @utility
+ * @return It.
+ */
+static sky_band_t random_band(sky_events_t *e, int i)
+{
+    return (sky_band_t){ .base = rnd_in(e, 0.62f, 0.80f) + 0.06f * i, .sway = rnd_in(e, 0.04f, 0.12f),
+                         .fold = rnd_in(e, 0.015f, 0.045f), .drift = rnd_in(e, 0.00010f, 0.00035f),
+                         .phase = rnd_in(e, 0.0f, 6.28f), .stripe = rnd_in(e, 0.25f, 0.6f),
+                         .stripe_speed = rnd_in(e, 0.0006f, 0.0016f),
+                         .height = rnd_in(e, 0.35f, 0.62f), .bright = rnd_in(e, 0.55f, 1.0f) };
+}
+
+/**
+ * @brief Prepare the events.
+ * @version 1
+ * @req REQ-ASTRO-001
+ */
+void sky_events_init(sky_events_t *e, int w, int h, uint32_t seed, float aurora, int zhr,
+                     sky_rgb_t green, sky_rgb_t violet, sky_rgb_t white)
+{
+    memset(e, 0, sizeof(*e));
+    e->w = w;
+    e->h = h;
+    e->rng = seed * 2654435761u + 0x9e3779b9u;
+    for (int i = 0; i < 4; i++) (void)rnd(e);   // stir
+    e->aurora = aurora;
+    e->zhr = zhr;
+    e->green = green;
+    e->violet_c = violet;
+    e->white = white;
+    e->violet = rnd_in(e, 0.3f, 0.9f);
+    e->bands = 1 + (int)(rnd(e) * SKY_AURORA_BANDS);
+    for (int i = 0; i < e->bands; i++) e->band[i] = random_band(e, i);
+    float radiant = rnd_in(e, 3.4f, 4.3f);   // down and to one side
+    e->dir_x = cosf(radiant);
+    e->dir_y = -sinf(radiant);
+    e->next_ms = (uint32_t)(rnd_in(e, 0.2f, 1.0f) * 600000.0f / (float)(zhr > 0 ? zhr : 1));
+    profile_init();
+}
+
+/**
+ * @brief Add light @p a of @p c over pixel @p p (straight alpha, screen-like).
+ * @version 1
+ * @utility
+ */
+static void add_light(uint32_t *p, sky_rgb_t c, float a)
+{
+    if (a <= 0.004f) return;
+    float pa = (*p >> 24) / 255.0f;
+    sky_rgb_t pc = { (uint8_t)(*p >> 16), (uint8_t)(*p >> 8), (uint8_t)*p };
+    float oa = pa + a * (1.0f - pa);
+    *p = argb(mix(pc, c, a / oa), oa);
+}
+
+/**
+ * @brief One column of one curtain at @p x and time @p ms into @p out.
+ * @version 1
+ * @utility
+ */
+static void band_column(const sky_events_t *e, const sky_band_t *b, int x, uint32_t ms, uint32_t *out)
+{
+    float t = (float)ms;
+    float foot = e->h * (b->base + b->sway * sinf(x * b->fold + b->phase + t * b->drift) +
+                         0.03f * sinf(x * b->fold * 2.7f - t * b->drift * 1.9f));
+    float rays = 0.55f + 0.45f * fabsf(sinf(x * b->stripe + t * b->stripe_speed + b->phase));
+    float glow = e->aurora * b->bright * rays * (0.6f + 0.4f * sinf(x * b->fold * 0.6f + t * b->drift * 3.0f));
+    float span = e->h * b->height;
+    for (int y = 0; y < e->h; y++) {
+        float rel = (foot - y) / span;
+        if (rel < -0.25f || rel > 1.25f) continue;
+        float light = glow * s_profile[(int)((rel + 0.25f) / 1.5f * (PROFILE_N - 1))];
+        sky_rgb_t c = mix(e->green, e->violet_c, clamp01(rel * 2.2f - 0.15f) * e->violet);
+        add_light(&out[y * e->w + x], c, light * 0.85f);
+    }
+}
+
+/**
+ * @brief Start a meteor when one is due at @p ms (in a free slot), and plan the next.
+ * @version 1
+ * @utility
+ */
+static void spawn_meteor(sky_events_t *e, uint32_t ms)
+{
+    if (e->zhr <= 0 || ms < e->next_ms) return;
+    for (int i = 0; i < SKY_METEORS; i++) {
+        if (e->meteor[i].born_ms) continue;
+        e->meteor[i] = (sky_meteor_t){ rnd_in(e, 0.1f, 0.9f) * e->w, rnd_in(e, 0.05f, 0.45f) * e->h,
+                                       ms ? ms : 1 };
+        break;
+    }
+    e->next_ms = ms + (uint32_t)(rnd_in(e, 0.3f, 1.7f) * 600000.0f / (float)e->zhr);
+}
+
+/**
+ * @brief Draw meteor @p m at age @p age: its head along the night's direction, a fading tail.
+ * @version 1
+ * @utility
+ */
+static void draw_meteor(const sky_events_t *e, const sky_meteor_t *m, uint32_t age, uint32_t *out)
+{
+    float life = 1.0f - (float)age / METEOR_LIFE;
+    float hx = m->x + e->dir_x * METEOR_V * age, hy = m->y + e->dir_y * METEOR_V * age;
+    for (int k = 0; k < (int)METEOR_LEN; k++) {
+        int px = (int)(hx - e->dir_x * k), py = (int)(hy - e->dir_y * k);
+        bool inside = px >= 0 && py >= 0 && px < e->w && py < e->h;
+        float tail = 1.0f - (float)k / METEOR_LEN;
+        if (inside) add_light(&out[py * e->w + px], e->white, tail * tail * life);
+    }
+}
+
+/**
+ * @brief Start, move and draw the meteors at @p ms.
+ * @version 1
+ * @utility
+ */
+static void meteors(sky_events_t *e, uint32_t ms, uint32_t *out)
+{
+    spawn_meteor(e, ms);
+    for (int i = 0; i < SKY_METEORS; i++) {
+        sky_meteor_t *m = &e->meteor[i];
+        uint32_t age = m->born_ms ? ms - m->born_ms : 0;
+        if (m->born_ms && age <= METEOR_LIFE) draw_meteor(e, m, age, out);
+        else m->born_ms = 0;
+    }
+}
+
+/**
+ * @brief The events at @p ms.
+ * @version 1
+ * @req REQ-ASTRO-001
+ */
+void sky_events_frame(sky_events_t *e, uint32_t ms, uint32_t *out)
+{
+    memset(out, 0, (size_t)e->w * (size_t)e->h * sizeof(uint32_t));
+    for (int b = 0; e->aurora > 0.0f && b < e->bands; b++) {
+        for (int x = 0; x < e->w; x++) band_column(e, &e->band[b], x, ms, out);
+    }
+    meteors(e, ms, out);
 }

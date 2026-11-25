@@ -307,10 +307,13 @@ static void fake_weather(nws_conditions_t *c, nws_forecast_t *fc)
     fc->valid = true;
 }
 
+static float s_sample_kp = 2.3f;   // the Kp the sample moments use
+
 /**
  * @brief Local time @p hour : @p min on 2026-@p mon-@p day at the public sample place
  *        (Chicago, not the device's): the clock set to it and the sky computed for it.
- * @version 1
+ * v2: the Kp from s_sample_kp (a storm for the aurora moments).
+ * @version 2
  * @utility
  */
 static void sample_moment(int mon, int day, int hour, int min, sky_data_t *d)
@@ -323,7 +326,7 @@ static void sample_moment(int mon, int day, int hour, int min, sky_data_t *d)
     localtime_r(&t, &tm);
     clock_in(CLOCK_MODE_MINIMIZED);
     clock_widget_update(s_clock, &tm);
-    sky_data_compute(t, 41.88f, -87.63f, 2.3f, d);
+    sky_data_compute(t, 41.88f, -87.63f, s_sample_kp, d);
 }
 
 /**
@@ -377,24 +380,32 @@ static const struct {
     int         mon, day, hour, min;
     const char *name;
     const char *sky;   /**< The card's condition; NULL: the sample's. */
+    float       kp;
 } MOON_MOMENTS[] = {
-    { 12, 1, 10, 0, "moon_day_waning", "Sunny" },      // last quarter, up through the morning
-    { 11, 20, 15, 0, "moon_day_waxing", NULL },        // waxing gibbous, risen early afternoon
-    { 12, 5, 6, 10, "moon_predawn", "Clear" },         // waning crescent before sunrise
-    { 12, 12, 17, 30, "moon_evening", "Clear" },       // waxing crescent after sunset
+    { 12, 1, 10, 0, "moon_day_waning", "Sunny", 2.3f },      // last quarter, up through the morning
+    { 11, 20, 15, 0, "moon_day_waxing", NULL, 2.3f },        // waxing gibbous, risen early afternoon
+    { 12, 5, 6, 10, "moon_predawn", "Clear", 2.3f },         // waning crescent before sunrise
+    { 12, 12, 17, 30, "moon_evening", "Clear", 2.3f },       // waxing crescent after sunset
+    { 11, 26, 21, 0, "aurora_night", "Clear", 8.5f },        // a big storm: the aurora
+    { 11, 27, 23, 30, "aurora_night2", "Clear", 8.5f },      // the next night: another aurora
+    { 12, 13, 23, 0, "geminids", "Clear", 2.3f },            // the Geminids' peak night
+    { 12, 10, 21, 0, "geminids_soon", NULL, 2.3f },          // the reminder, four days ahead
 };
 
 /**
  * @brief Write the sky dial moments for theme @p stem.
- * @version 1
+ * v2: each moment's Kp (the aurora moments).
+ * @version 2
  * @utility
  */
 static void moon_moments(const char *out_dir, const char *stem)
 {
     char file[512];
     for (size_t i = 0; i < sizeof(MOON_MOMENTS) / sizeof(MOON_MOMENTS[0]); i++) {
+        s_sample_kp = MOON_MOMENTS[i].kp;
         scene_weather_on(MOON_MOMENTS[i].mon, MOON_MOMENTS[i].day, MOON_MOMENTS[i].hour,
                          MOON_MOMENTS[i].min, MOON_MOMENTS[i].sky);
+        s_sample_kp = 2.3f;
         snprintf(file, sizeof(file), "%s/%s_%s.ppm", out_dir, stem, MOON_MOMENTS[i].name);
         write_frame(file);
     }

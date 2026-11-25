@@ -3,7 +3,8 @@
  * v2: slots — the themed places (cards, strips, alerts, ...) and which fill role each takes.
  * v3: a fourth core, alert: the alert severities step from it.
  * v4: a fifth core, sky: the sun, and the moon derived from it.
- * @version 4
+ * v5: the aurora and meteor roles, stepped from the sky core.
+ * @version 5
  * @brief The UI colour theme: four OKLCH core colours (ink, surface, accent, alert) and a
  *        contrast target, mapped to the named roles every widget draws with.
  *
@@ -49,6 +50,9 @@ typedef enum {
     UI_ROLE_LIGHT,             /**< The theme's near-white (snow, markers). */
     UI_ROLE_SUN,               /**< The sun (the sky core itself). */
     UI_ROLE_MOON,              /**< The moon's light: a pale near-white of the sky core's hue. */
+    UI_ROLE_AURORA,            /**< The aurora's green: a fixed hue step from the sky core. */
+    UI_ROLE_AURORA_ALT,        /**< The aurora's violet tops: a further step. */
+    UI_ROLE_METEOR,            /**< Meteor streaks: a pale cool white, likewise. */
     UI_ROLE_COUNT
 } ui_role_t;
 

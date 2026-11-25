@@ -5,7 +5,8 @@
  * v4: text straight on the picture (the clock) by APCA, its side from the picture.
  * v5: the alert core: error, error_strong and warn step from it (were fixed hues).
  * v6: the sky core: the sun is it, the moon a pale white of its hue.
- * @version 6
+ * v7: the aurora and meteor roles, fixed hue steps from the sky core.
+ * @version 7
  * @brief The UI colour theme: three OKLCH cores derived into named roles. The only file
  *        that writes colour values down (see ui_theme.h).
  *
@@ -56,6 +57,17 @@ const ui_theme_t UI_THEME_BASE = {
 
 #define MOON_L        0.95f   // the moon's light: near-white ...
 #define MOON_C        0.20f   // ... with a little of the sky core's chroma
+// The sky events step from the sky core (fitted so the base gold gives a natural green and
+// violet aurora and blue-white meteors).
+#define AURORA_L      0.80f
+#define AURORA_C      1.45f
+#define AURORA_DH     58.0f
+#define AURORA_ALT_L  0.62f
+#define AURORA_ALT_C  1.25f
+#define AURORA_ALT_DH 213.0f
+#define METEOR_L      0.95f
+#define METEOR_C      0.35f
+#define METEOR_DH     148.0f
 #define STEP_RAISED   0.07f   // surface -> raised, toward mid lightness
 #define STEP_INSET    0.14f   // surface -> inset
 #define STEP_BORDER   0.38f   // surface -> border
@@ -117,6 +129,9 @@ static const char *const ROLE_NAMES[UI_ROLE_COUNT] = {
     [UI_ROLE_LIGHT]          = "light",
     [UI_ROLE_SUN]            = "sun",
     [UI_ROLE_MOON]           = "moon",
+    [UI_ROLE_AURORA]         = "aurora",
+    [UI_ROLE_AURORA_ALT]     = "aurora_alt",
+    [UI_ROLE_METEOR]         = "meteor",
 };
 
 static const char *const SLOT_NAMES[UI_SLOT_COUNT] = {
@@ -228,7 +243,8 @@ static void derive_surfaces(const ui_theme_t *t, lv_color_t out[UI_ROLE_COUNT])
  * @brief Derive the accent and alert roles.
  * v2: the alert roles step from the alert core (were fixed hues).
  * v3: the sun and moon roles from the sky core.
- * @version 3
+ * v4: the aurora and meteor roles.
+ * @version 4
  * @utility
  */
 static void derive_accents(const ui_theme_t *t, lv_color_t out[UI_ROLE_COUNT])
@@ -245,6 +261,9 @@ static void derive_accents(const ui_theme_t *t, lv_color_t out[UI_ROLE_COUNT])
                                     a->h + WARN_DH);
     out[UI_ROLE_SUN]          = ui_oklch_to_color(t->sky);
     out[UI_ROLE_MOON]         = lch(MOON_L, t->sky.c * MOON_C, t->sky.h);   // a warm pale white
+    out[UI_ROLE_AURORA]       = lch(AURORA_L, t->sky.c * AURORA_C, t->sky.h + AURORA_DH);
+    out[UI_ROLE_AURORA_ALT]   = lch(AURORA_ALT_L, t->sky.c * AURORA_ALT_C, t->sky.h + AURORA_ALT_DH);
+    out[UI_ROLE_METEOR]       = lch(METEOR_L, t->sky.c * METEOR_C, t->sky.h + METEOR_DH);
 }
 
 /**

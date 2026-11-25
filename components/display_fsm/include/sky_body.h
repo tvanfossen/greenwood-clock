@@ -1,6 +1,7 @@
 /**
  * @file sky_body.h
- * @version 1
+ * v2: the sky's events layer (aurora, meteors).
+ * @version 2
  * @brief The sun and the moon as LVGL objects, drawn natively (sky_paint) in the theme's
  *        roles: the sun in the accent with highlights towards the near-white, its rays turning
  *        and its glow breathing slowly (an 8 s loop at 10 frames a second); the moon in the
@@ -31,6 +32,17 @@ lv_obj_t *sky_body_sun_create(lv_obj_t *parent, int32_t d);
  * @return The object, or NULL when out of memory.
  */
 lv_obj_t *sky_body_moon_create(lv_obj_t *parent, int32_t d, float age, lv_opa_t dark_opa);
+
+/**
+ * @brief The sky's events over a @p w x @p h window: an aurora of @p aurora strength (0:
+ *        none) and meteors at @p zhr (0: none), randomised from @p night (the same night
+ *        looks the same), in the theme's aurora and meteor roles, at 15 frames a second.
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @return The layer, or NULL when there is nothing to show or no memory.
+ */
+lv_obj_t *sky_body_events_create(lv_obj_t *parent, int32_t w, int32_t h, unsigned night,
+                                 float aurora, int zhr);
 
 #ifdef __cplusplus
 }
