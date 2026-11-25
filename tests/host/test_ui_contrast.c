@@ -122,23 +122,39 @@ static void test_apca_reference(void)
  * @brief The light/dark side comes from the background, not the ink: over the mid amber
  *        of a sunrise photo (where WCAG 2 picks black by a hair) white stays white and even
  *        black ink comes out light; over a pale sky white ink goes dark.
- * @version 1
+ * v2: only as far as needed: the moved lightness reaches the target and a step less would
+ *     not (white over a pale sky is charcoal, not black); mid grey, where both sides
+ *     reach it, still follows the background.
+ * @version 2
  * @utility
  */
 static void test_apca_polarity_from_background(void)
 {
     lv_color_t amber = lv_color_hex(0x98744e), pale = lv_color_hex(0xc6c3ad);
-    lv_color_t w = ui_legible_apca(lv_color_white(), amber, UI_APCA_LARGE);
+    CHECK(same(ui_legible_apca(lv_color_white(), amber, UI_APCA_LARGE), lv_color_white()),
+          "white over amber stays white");
     lv_color_t b = ui_legible_apca(lv_color_black(), amber, UI_APCA_LARGE);
-    CHECK(ui_color_to_oklch(w).l > 0.9f, "white over amber stays light: L %.2f",
-          (double)ui_color_to_oklch(w).l);
-    CHECK(ui_color_to_oklch(b).l > 0.9f, "black ink over amber comes out light: L %.2f",
-          (double)ui_color_to_oklch(b).l);
+    ui_oklch_t bo = ui_color_to_oklch(b);
+    CHECK(bo.l > 0.5f, "black ink over amber comes out light: L %.2f", (double)bo.l);
+    CHECK(fabsf(ui_apca_lc(b, amber)) >= UI_APCA_LARGE - 0.5f, "and reaches the target");
+    bo.l -= 0.03f;
+    CHECK(fabsf(ui_apca_lc(ui_oklch_to_color(bo), amber)) < UI_APCA_LARGE,
+          "only as light as needed");
+
     lv_color_t d = ui_legible_apca(lv_color_white(), pale, UI_APCA_LARGE);
-    CHECK(ui_color_to_oklch(d).l < 0.4f, "white over a pale sky goes dark: L %.2f",
-          (double)ui_color_to_oklch(d).l);
-    CHECK(fabsf(ui_apca_lc(d, pale)) >= UI_APCA_LARGE, "and reaches the target: Lc %.1f",
+    ui_oklch_t dO = ui_color_to_oklch(d);
+    CHECK(dO.l < 0.5f && dO.l > 0.2f, "white over a pale sky goes charcoal: L %.2f",
+          (double)dO.l);
+    CHECK(fabsf(ui_apca_lc(d, pale)) >= UI_APCA_LARGE - 0.5f, "and reaches the target: Lc %.1f",
           (double)ui_apca_lc(d, pale));
+    dO.l += 0.03f;
+    CHECK(fabsf(ui_apca_lc(ui_oklch_to_color(dO), pale)) < UI_APCA_LARGE,
+          "only as dark as needed");
+
+    // Mid grey: both sides reach the target; white reads better, so even black ink goes light.
+    lv_color_t grey = lv_color_hex(0x888888);
+    CHECK(ui_apca_lc(ui_legible_apca(lv_color_black(), grey, UI_APCA_LARGE), grey) <= -UI_APCA_LARGE + 0.5f,
+          "black ink over mid grey comes out light");
 }
 
 /**

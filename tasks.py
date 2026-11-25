@@ -820,19 +820,17 @@ def _lvgl_host_lib(c):
 ## @brief Render every theme in sdcard/themes with the firmware's own widgets and the real
 ## LVGL (host build), as PNGs in .claude/tmp/theme_preview/ — review before any OTA.
 ## v2: --decisions renders the open clock-text options.
+## v3: --decisions removed (all decided).
 ## @req REQ-TOOL-004
 ## @req REQ-UI-003
-## @version 2
+## @version 3
 @task(
     help={
         "background": "LVGL path of the background behind the weather scene ('-': none)",
         "themes": "Comma-separated theme stems (default: every file in sdcard/themes)",
-        "decisions": "Render the open clock-text options instead (decide_*.png)",
     }
 )
-def theme_preview(
-    c, background="A:/backgrounds/winter_afternoon.png", themes=None, decisions=False
-):
+def theme_preview(c, background="A:/backgrounds/winter_afternoon.png", themes=None):
     from PIL import Image
 
     lib = _lvgl_host_lib(c)
@@ -851,10 +849,6 @@ def theme_preview(
         else sorted(p.stem for p in (REPO / "sdcard" / "themes").glob("*.json"))
     )
     files = " ".join(str(REPO / "sdcard" / "themes" / f"{s}.json") for s in stems)
-    if decisions:
-        themes_dir = REPO / "sdcard" / "themes"
-        files = f"{themes_dir / 'default.json'} {themes_dir / 'sassafras.json'}"
-        background = "--decisions"
     c.run(f"{exe} {out} {background} {files}")
     for ppm in sorted(out.glob("*.ppm")):
         Image.open(ppm).save(ppm.with_suffix(".png"))

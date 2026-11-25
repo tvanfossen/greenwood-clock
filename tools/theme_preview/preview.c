@@ -5,7 +5,8 @@
  * v4: schedule screens (list, a daily profile, a conflicting one).
  * v5: --decisions: the open clock-text choices rendered as options side by side.
  * v6: the upload screen (waiting with the QR code; a phone connected).
- * @version 6
+ * v7: the --decisions mode is gone (all decided).
+ * @version 7
  * @brief Host theme preview: renders the firmware's own widgets with the real LVGL fork (built
  *        from the device sdkconfig) and the real theme code, one PNG-ready frame per theme and
  *        scene, so a theme can be judged before anything goes to the device.
@@ -24,10 +25,6 @@
  *   settings — the settings menu under the real top-bar clock
  *   alert    — the alert details card (first of three alerts) over the weather screen
  *   editor_edit  — FIRST theme only: the editor after moving the accent hue to 200 (teal)
- *
- * theme_preview <out_dir> --decisions <default.json> <sassafras.json> renders instead
- * decide_<n>_<option>_<background>.ppm: the clock-text options still open (variant colours are
- * computed here, not in the firmware, so nothing changes until one is chosen).
  * `inv theme-preview` builds this and converts the frames to PNG.
  */
 
@@ -905,245 +902,13 @@ static bool render_theme(const char *out_dir, const char *path)
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// Decisions: clock-text options, rendered side by side
-// ---------------------------------------------------------------------------
-
-/**
- * @brief The text label of the clock whose text starts with @p prefix (the full-size clock's
- *        date or time; shadows are skipped: they are drawn at reduced opacity).
- * @version 1
- * @utility
- * @return The label, or NULL.
- */
-static lv_obj_t *clock_label(const char *prefix, bool shadow)
-{
-    lv_obj_t *root = lv_obj_get_child(lv_layer_top(), 0);
-    lv_obj_t *found = NULL;
-    for (uint32_t i = 0; root && i < lv_obj_get_child_count(root) && !found; i++) {
-        lv_obj_t *c = lv_obj_get_child(root, (int32_t)i);
-        bool is_shadow = lv_obj_get_style_text_opa(c, 0) < LV_OPA_COVER;
-        if (lv_obj_check_type(c, &lv_label_class) && is_shadow == shadow &&
-            strncmp(lv_label_get_text(c), prefix, strlen(prefix)) == 0) {
-            found = c;
-        }
-    }
-    return found;
-}
-
-/**
- * @brief Colour the clock's labels: the time (and AM/PM) @p time, the date @p date.
- * @version 1
- * @utility
- */
-static void clock_colors(lv_color_t time, lv_color_t date)
-{
-    lv_obj_t *root = lv_obj_get_child(lv_layer_top(), 0);
-    for (uint32_t i = 0; root && i < lv_obj_get_child_count(root); i++) {
-        lv_obj_t *c = lv_obj_get_child(root, (int32_t)i);
-        if (lv_obj_check_type(c, &lv_label_class) &&
-            lv_obj_get_style_text_opa(c, 0) == LV_OPA_COVER) {
-            lv_obj_set_style_text_color(c, time, 0);
-        }
-    }
-    lv_obj_t *d = clock_label("Tuesday", false);
-    if (d) lv_obj_set_style_text_color(d, date, 0);
-    lv_obj_t *ds = clock_label("Tuesday", true);
-    if (ds) lv_obj_set_style_text_color(ds, ui_theme_shadow_for(date), 0);
-}
-
-/**
- * @brief The mean of the background under @p obj.
- * @version 1
- * @utility
- * @return The colour.
- */
-static lv_color_t behind(lv_obj_t *obj)
-{
-    lv_area_t a;
-    lv_obj_update_layout(obj);
-    lv_obj_get_coords(obj, &a);
-    return ui_image_region_mean(&s_bg, a.x1, a.y1, lv_area_get_width(&a),
-                                lv_area_get_height(&a), ui_theme_color(UI_ROLE_SCREEN));
-}
-
-/**
- * @brief Option "dark only as needed": the ink darkened from its own lightness just until it
- *        reaches the APCA target over @p bg (white ink comes out charcoal, not black).
- * @version 1
- * @utility
- * @return The colour.
- */
-static lv_color_t darken_to_target(lv_color_t ink, lv_color_t bg)
-{
-    ui_oklch_t o = ui_color_to_oklch(ink);
-    float pass = 0.0f, fail = o.l;
-    for (int i = 0; i < 16; i++) {
-        float mid = 0.5f * (pass + fail);
-        ui_oklch_t t = { mid, o.c, o.h };
-        if (fabsf(ui_apca_lc(ui_oklch_to_color(t), bg)) >= UI_APCA_LARGE) pass = mid;
-        else fail = mid;
-    }
-    o.l = pass;
-    return ui_oklch_to_color(o);
-}
-
-/**
- * @brief Write the full-size clock over background @p bg as decide_<n>_<opt>_<bg>.
- * @version 1
- * @utility
- */
-static void decision_frame(const char *out_dir, int n, const char *opt, const char *bg)
-{
-    char file[512];
-    snprintf(file, sizeof(file), "%s/decide_%d_%s_%s.ppm", out_dir, n, opt, bg);
-    write_frame(file);
-}
-
-/**
- * @brief Show the full clock over A:/backgrounds/@p bg.png under the installed theme, coloured
- *        the way the firmware colours it now.
- * @version 1
- * @utility
- * @return The colour the firmware picks for the full clock.
- */
-static lv_color_t decision_scene(const char *bg)
-{
-    char path[128];
-    snprintf(path, sizeof(path), "A:/backgrounds/%s.png", bg);
-    lv_image_cache_drop(&s_bg);   // same descriptor, new pixels: LVGL caches by source
-    s_have_bg = load_background(path);
-    ui_bind_set_picture(s_have_bg ? &s_bg : NULL);
-    scene_clock();
-    lv_area_t a;
-    clock_widget_full_area(&a);
-    return ui_theme_ink_on_picture(&s_bg, &a, ui_theme_color(UI_ROLE_SCREEN));
-}
-
-/**
- * @brief Decision 1 (Default theme, light backgrounds): A black (now) / B charcoal.
- * @version 1
- * @utility
- */
-static void decide_dark_shade(const char *out_dir)
-{
-    static const char *const BGS[] = { "winter_afternoon", "spring-flower" };
-    lv_color_t ink = ui_oklch_to_color(ui_theme_get()->ink);
-    for (int i = 0; i < 2; i++) {
-        lv_color_t now = decision_scene(BGS[i]);
-        decision_frame(out_dir, 1, "A", BGS[i]);
-        lv_area_t a;
-        clock_widget_full_area(&a);
-        lv_color_t mean = ui_image_region_mean(&s_bg, a.x1, a.y1, lv_area_get_width(&a),
-                                               lv_area_get_height(&a), now);
-        lv_color_t b = darken_to_target(ink, mean);
-        clock_colors(b, b);
-        decision_frame(out_dir, 1, "B", BGS[i]);
-    }
-}
-
-/**
- * @brief Decision 2 (Sassafras, dark backgrounds): A warm beige (now) / B near-white with
- *        the ink's hue.
- * @version 1
- * @utility
- */
-static void decide_light_tint(const char *out_dir)
-{
-    static const char *const BGS[] = { "campfire", "night_winter", "splash" };
-    ui_oklch_t ink = ui_theme_get()->ink;
-    ui_oklch_t near_white = { 0.96f, ink.c * 0.5f, ink.h };
-    for (int i = 0; i < 3; i++) {
-        decision_scene(BGS[i]);
-        decision_frame(out_dir, 2, "A", BGS[i]);
-        lv_color_t w = ui_oklch_to_color(near_white);
-        clock_colors(w, w);
-        decision_frame(out_dir, 2, "B", BGS[i]);
-    }
-}
-
-/**
- * @brief Decision 3 (Default, winter_morning): the date line. A one colour from the whole
- *        clock area (now) / B the date judged on what is behind it alone / C as A with a
- *        solid shadow under the date.
- * @version 1
- * @utility
- */
-static void decide_date_line(const char *out_dir)
-{
-    const char *bg = "winter_morning";
-    lv_color_t ink = ui_oklch_to_color(ui_theme_get()->ink);
-    lv_color_t now = decision_scene(bg);
-    decision_frame(out_dir, 3, "A", bg);
-    lv_obj_t *date = clock_label("Tuesday", false);
-    lv_color_t d = date ? ui_legible_apca(ink, behind(date), UI_APCA_LARGE) : now;
-    clock_colors(now, d);
-    decision_frame(out_dir, 3, "B", bg);
-    clock_colors(now, now);
-    lv_obj_t *ds = clock_label("Tuesday", true);
-    if (ds) lv_obj_set_style_text_opa(ds, LV_OPA_COVER, 0);
-    decision_frame(out_dir, 3, "C", bg);
-    if (ds) lv_obj_set_style_text_opa(ds, LV_OPA_60, 0);
-}
-
-/**
- * @brief Decision 4 (alert core): the alert card and banner under the Default theme with its
- *        alert core A deep red (base), B magenta, C deep orange; every severity follows.
- * @version 1
- * @utility
- */
-static void decide_alert_core(const char *out_dir)
-{
-    static const ui_oklch_t CORES[] = { { 0.530f, 0.210f, 29.0f }, { 0.530f, 0.210f, 340.0f },
-                                        { 0.600f, 0.180f, 50.0f } };
-    static const char *const OPT[] = { "A", "B", "C" };
-    s_have_bg = load_background("A:/backgrounds/winter_afternoon.png");
-    ui_bind_set_picture(&s_bg);
-    for (int i = 0; i < 3; i++) {
-        ui_theme_t t = *ui_theme_get();
-        t.alert = CORES[i];
-        ui_theme_set(&t);
-        ui_theme_lvgl_refresh();
-        ui_bind_refresh_all();
-        scene_alert();
-        decision_frame(out_dir, 4, OPT[i], "alerts");
-        alert_card_close();
-        scene_gallery();
-        decision_frame(out_dir, 4, OPT[i], "gallery");
-    }
-}
-
-/**
- * @brief Render every open clock-text decision: 1 and 3 under @p default_theme, 2 under
- *        @p sassafras; 4 (the alert core) under @p default_theme.
- * v2: decision 4.
- * @version 2
- * @utility
- * @return 0, or 1 when a theme did not load.
- */
-static int render_decisions(const char *out_dir, const char *default_theme,
-                            const char *sassafras)
-{
-    ui_theme_t t;
-    int failed = 0;
-    if (install_theme(default_theme, &t)) {
-        decide_dark_shade(out_dir);
-        decide_date_line(out_dir);
-        decide_alert_core(out_dir);
-    } else {
-        failed = 1;
-    }
-    if (install_theme(sassafras, &t)) decide_light_tint(out_dir);
-    else failed = 1;
-    return failed;
-}
-
 /**
  * @brief Entry point: set up LVGL with an RGB565 display, then render each theme.
  * v2: the picture feeds bound text; live-switch renders.
  * v3: 64-byte aligned draw buffer (LVGL asserts and spins otherwise); edit demo.
  * v4: --decisions renders the open clock-text options instead.
- * @version 4
+ * v5: --decisions removed (decided: charcoal, the date follows the time, alerts from one core).
+ * @version 5
  * @utility
  * @return 0 when every theme rendered.
  */
@@ -1160,7 +925,6 @@ int main(int argc, char **argv)
     static uint8_t buf[SCREEN_W * 100 * 2] __attribute__((aligned(LV_DRAW_BUF_ALIGN)));   // LVGL asserts (and spins) on a misaligned buffer
     lv_display_set_buffers(disp, buf, NULL, sizeof(buf), LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(disp, flush_cb);
-    if (strcmp(argv[2], "--decisions") == 0) return render_decisions(argv[1], argv[3], argv[argc - 1]);
     s_have_bg = load_background(argv[2]);
     ui_bind_set_picture(s_have_bg ? &s_bg : NULL);   // what bound text sits on, as on the device
     int failed = 0;

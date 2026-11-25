@@ -189,14 +189,25 @@ static lv_color_t oklab_to_srgb_mapped(float L, float a, float b)
 typedef float (*contrast_fn)(lv_color_t text, lv_color_t bg);
 
 /**
- * @brief APCA contrast magnitude (the polarity sign dropped), as a contrast_fn.
+ * @brief APCA contrast of light text on @p bg, as a contrast_fn (dark text counts as none).
  * @version 1
  * @utility
- * @return |Lc|.
+ * @return -Lc when the text is lighter than @p bg, else 0.
  */
-static float apca_abs(lv_color_t text, lv_color_t bg)
+static float apca_light(lv_color_t text, lv_color_t bg)
 {
-    return fabsf(ui_apca_lc(text, bg));
+    return fmaxf(0.0f, -ui_apca_lc(text, bg));
+}
+
+/**
+ * @brief APCA contrast of dark text on @p bg, as a contrast_fn (light text counts as none).
+ * @version 1
+ * @utility
+ * @return Lc when the text is darker than @p bg, else 0.
+ */
+static float apca_dark(lv_color_t text, lv_color_t bg)
+{
+    return fmaxf(0.0f, ui_apca_lc(text, bg));
 }
 
 /**
@@ -311,11 +322,14 @@ float ui_apca_lc(lv_color_t text, lv_color_t bg)
 /**
  * @brief @p ink made legible over @p bg by APCA: the light or dark side is whichever of
  *        white and black reads better on @p bg (not the ink's own); the ink's lightness is
- *        mirrored onto that side when it is on the other, kept when it already reaches
- *        @p lc_target, else moved only as far as the target needs (to the extreme when even
- *        that falls short). Hue and chroma are the ink's; chroma is reduced, never the hue
- *        bent, when the new lightness cannot hold it.
- * @version 1
+ *        kept when it already reaches @p lc_target on that side, else moved from where it is
+ *        toward that side only as far as the target needs (to the extreme when even that
+ *        falls short): white ink over a pale sky is charcoal, not black. Hue and chroma are
+ *        the ink's; chroma is reduced, never the hue bent, when the new lightness cannot
+ *        hold it.
+ * v2: moved only as far as needed from the ink's own lightness (was mirrored onto the
+ *     background's side first, which made white ink pure black).
+ * @version 2
  * @req REQ-BG-002
  * @return Legible text colour.
  */
@@ -323,12 +337,12 @@ lv_color_t ui_legible_apca(lv_color_t ink, lv_color_t bg, float lc_target)
 {
     float L, a, b;
     srgb_to_oklab(ink, &L, &a, &b);
-    bool light = apca_abs(lv_color_white(), bg) >= apca_abs(lv_color_black(), bg);
+    bool light = apca_light(lv_color_white(), bg) >= apca_dark(lv_color_black(), bg);
+    contrast_fn fn = light ? apca_light : apca_dark;   // the other side counts as none
     float end = light ? 1.0f : 0.0f;
-    float start = (light == (L >= 0.5f)) ? L : 1.0f - L;
-    float out = start;
-    if (contrast_at(apca_abs, start, a, b, bg) < lc_target &&
-        !shift_toward(apca_abs, start, a, b, bg, end, lc_target, &out)) {
+    float out = L;
+    if (contrast_at(fn, L, a, b, bg) < lc_target &&
+        !shift_toward(fn, L, a, b, bg, end, lc_target, &out)) {
         out = end;
     }
     return out == L ? ink : oklab_to_srgb_mapped(out, a, b);
