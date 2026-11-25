@@ -7,6 +7,8 @@
 import argparse
 import sys
 import urllib.request
+
+from device_http import device_urlopen
 from pathlib import Path
 
 
@@ -17,9 +19,10 @@ WWW_FILES = [
 ]
 
 
-## @brief POST one local file's bytes to /files/<remote_path> on the device and print the size and HTTP status.
 ## v2: drop the unused response-body variable (ruff F841); the response is still drained.
-## @version 2
+## v3: sends the admin token (device_http): the clock answers 401 without it.
+## @brief POST one local file's bytes to /files/<remote_path> on the device and print the size and HTTP status.
+## @version 3
 ## @req REQ-TOOL-002
 def push_file(host: str, local_path: str, remote_path: str) -> None:
     url = f"http://{host}/files/{remote_path}"
@@ -32,7 +35,7 @@ def push_file(host: str, local_path: str, remote_path: str) -> None:
         headers={"Content-Type": "application/octet-stream"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with device_urlopen(req, timeout=60) as resp:
         resp.read()  # drain the response before the connection closes
         print(f"  {len(data):>6,} bytes -> /sdcard/{remote_path}  ({resp.status})")
 

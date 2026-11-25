@@ -67,6 +67,7 @@ HOST_TESTS = {
     "sched_rule": ("sched_rule", "sky_data", "astro_calc"),
     "sched_engine": ("sched_engine", "sched_rule", "sky_data", "astro_calc"),
     "sched_json": ("sched_json", "cjson/cjson/cJSON"),
+    "auth_core": ("auth/auth_core",),
 }
 
 #: Include directories for the host tests.
@@ -77,6 +78,7 @@ HOST_TEST_INCLUDES = (
     REPO / "components" / "nws" / "include",
     REPO / "components" / "display_events" / "include",
     REPO / "components" / "cjson" / "cjson",
+    REPO / "components" / "auth" / "include",
     REPO / "tests" / "host" / "stubs",  # minimal lvgl.h for the pure display helpers
 )
 
@@ -102,7 +104,8 @@ def _api_token():
 
 ## @brief Perform an HTTP request against the device and return the body.
 ## @utility
-## @version 2
+## v3: always sends the admin token (the clock gates every endpoint; auth is ignored).
+## @version 3
 ## @return Response body bytes, or None when the device answered with an HTTP error.
 def _request(host, path, auth=False, method="GET", payload=None):
     url = f"http://{host}{path}"
@@ -110,8 +113,7 @@ def _request(host, path, auth=False, method="GET", payload=None):
     req = urllib.request.Request(url, data=data, method=method)
     if data is not None:
         req.add_header("Content-Type", "application/json")
-    if auth:
-        req.add_header("Authorization", f"Bearer {_api_token()}")
+    req.add_header("Authorization", f"Bearer {_api_token()}")  # every endpoint is gated
     body = None
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
@@ -747,7 +749,7 @@ THEME_PREVIEW_SRCS = (
     "components/display_fsm/src/sky_panel.c",
     "components/display_fsm/src/sky_dial.c",
     "components/display_fsm/src/sched_rule.c",
-    "components/display_fsm/src/upload_view.c",
+    "components/display_fsm/src/phone_view.c",
     "components/display_fsm/src/settings_app.c",
     "components/display_fsm/src/settings_sched.c",
     "components/display_fsm/src/settings_pickers.c",

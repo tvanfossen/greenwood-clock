@@ -23,6 +23,8 @@ import struct
 import time
 import urllib.error
 import urllib.request
+
+from device_http import device_urlopen
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -30,8 +32,9 @@ from PIL import Image, ImageDraw
 SHEET_COLS = 4
 
 
+## v2: sends the admin token (device_http): the clock answers 401 without it.
 ## @brief Send one HTTP request to the device.
-## @version 1
+## @version 2
 ## @req REQ-TOOL-001
 ## @return (status, body bytes).
 def request(host, path, method="GET", payload=None):
@@ -39,7 +42,7 @@ def request(host, path, method="GET", payload=None):
     req = urllib.request.Request(f"http://{host}{path}", data=data, method=method)
     if data is not None:
         req.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with device_urlopen(req, timeout=60) as resp:
         return resp.status, resp.read()
 
 

@@ -4,7 +4,8 @@
  * v3: the settings screens are settings_app (shared with the phone panel); this file is the
  *     clock's settings backend, its device-only screens (Wi-Fi, animation preview) and the
  *     Settings FSM state.
- * @version 3
+ * v4: the Phone screen (QR pairing for the phone panel).
+ * @version 4
  * @brief Settings state: the clock's settings backend (NVS settings, SD lists, the schedule
  *        store, the display) for settings_app, the Wi-Fi and animation preview screens, and
  *        the FSM state that opens and closes the settings.
@@ -36,6 +37,8 @@ extern "C" {
 #include "settings_app.h"
 #include "settings_frame.h"
 #include "sched_store.h"
+#include "phone_view.h"
+#include "auth.h"
 }
 
 #include <cstring>
@@ -390,6 +393,85 @@ static lv_obj_t *preview_screen(lv_obj_t *parent)
 }
 
 // ============================================================================
+// Phone (device only): pair a phone by QR code
+// ============================================================================
+
+#define PANEL_PATH "/www/panel/index.html"
+
+static lv_timer_t *s_phone_timer = nullptr;
+
+/**
+ * @brief The clock's IPv4 address as text ("N/A" when it has none).
+ * @version 1
+ * @utility
+ */
+static void device_ip(char *out, size_t n)
+{
+    snprintf(out, n, "N/A");
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_ip_info_t ip_info;
+    if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+        snprintf(out, n, IPSTR, IP2STR(&ip_info.ip));
+    }
+}
+
+/**
+ * @brief Once a second: the code's time left and the connected phones.
+ * @version 1
+ * @callback
+ */
+static void phone_tick_cb(lv_timer_t *t)
+{
+    LV_UNUSED(t);
+    phone_view_update(auth_pair_secs_left(), auth_sessions());
+}
+
+/**
+ * @brief The Phone screen closes: withdraw the code (connected phones stay), stop the tick.
+ * @version 1
+ * @callback
+ */
+static void phone_closed_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    auth_pair_end();
+    if (s_phone_timer) lv_timer_delete(s_phone_timer);
+    s_phone_timer = nullptr;
+}
+
+/**
+ * @brief Disconnect every phone and offer a fresh code.
+ * @version 1
+ * @callback
+ */
+static void phone_disconnect_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    auth_revoke_all();
+    settings_app_refresh();   // a new screen, a new code
+}
+
+/**
+ * @brief The Phone screen: offer a pairing code and show it as a QR code of the panel's
+ *        address with the code after '#' (a fragment: the browser never sends it in a URL).
+ * @version 1
+ * @req REQ-UI-005
+ * @return The frame.
+ */
+static lv_obj_t *phone_screen(lv_obj_t *parent)
+{
+    char code[AUTH_TOKEN_LEN], ip[16], url[128];
+    auth_pair_begin(code);
+    device_ip(ip, sizeof(ip));
+    snprintf(url, sizeof(url), "http://%s" PANEL_PATH "#%s", ip, code);
+    lv_obj_t *frame = phone_view_create(parent, url, settings_app_back_cb, phone_disconnect_cb);
+    lv_obj_add_event_cb(frame, phone_closed_cb, LV_EVENT_DELETE, nullptr);
+    if (!s_phone_timer) s_phone_timer = lv_timer_create(phone_tick_cb, 1000, nullptr);
+    phone_tick_cb(nullptr);
+    return frame;
+}
+
+// ============================================================================
 // The clock's settings backend
 // ============================================================================
 
@@ -626,19 +708,16 @@ static void be_save_theme(const ui_theme_t *t, settings_done_cb_t done, void *ct
 
 /**
  * @brief Version, platform, MAC, IP and heap.
- * @version 1
+ * v2: the IP from device_ip.
+ * @version 2
  * @callback
  */
 static void be_about(char *out, size_t n)
 {
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    char ip_str[16] = "N/A";
-    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-    esp_netif_ip_info_t ip_info;
-    if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
-        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_info.ip));
-    }
+    char ip_str[16];
+    device_ip(ip_str, sizeof(ip_str));
     snprintf(out, n,
              "Greenwood Clock\nVersion: 1.0.0\n\nPlatform: ESP32-P4\nBoard: Function EV Board\n\n"
              "MAC: %02X:%02X:%02X:%02X:%02X:%02X\nIP: %s\n\nFree Heap: %lu KB\nMin Heap: %lu KB",
@@ -674,7 +753,8 @@ static void be_leave(void)
 
 /**
  * @brief The clock's backend.
- * @version 1
+ * v2: the Phone screen.
+ * @version 2
  * @utility
  * @return It (static).
  */
@@ -694,7 +774,7 @@ static const settings_backend_t *clock_backend(void)
     be.save_theme = be_save_theme;
     be.about = be_about;
     be.wifi_create = wifi_screen;
-    be.phone_create = nullptr;
+    be.phone_create = phone_screen;
     be.preview_create = preview_screen;
     be.reboot = be_reboot;
     be.leave = be_leave;

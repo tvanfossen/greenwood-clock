@@ -19,11 +19,14 @@ Note: For the active debug log use tools/log_download.py instead — it calls
 import argparse
 import sys
 import urllib.request
+
+from device_http import device_urlopen
 import os
 
 
+## v2: sends the admin token (device_http): the clock answers 401 without it.
 ## @brief CLI entry: GET /files/<remote> and write it to the local destination (default: remote basename); exit 1 on error.
-## @version 1
+## @version 2
 ## @req REQ-TOOL-001
 def main() -> None:
     ap = argparse.ArgumentParser(description="Download a file from the device SD card.")
@@ -46,7 +49,7 @@ def main() -> None:
 
     print(f"Downloading {url} → {local_dest}", file=sys.stderr)
     try:
-        with urllib.request.urlopen(url, timeout=60) as resp:
+        with device_urlopen(url, timeout=60) as resp:
             data = resp.read()
         with open(local_dest, "wb") as f:
             f.write(data)

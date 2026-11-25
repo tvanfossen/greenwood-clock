@@ -13,6 +13,8 @@ import socket
 import sys
 import argparse
 
+from device_http import device_urlopen
+
 
 ## @brief Find this host's outbound IPv4 address by connecting a UDP socket toward 8.8.8.8.
 ## @version 1
@@ -30,8 +32,9 @@ def get_local_ip() -> str:
         return "127.0.0.1"
 
 
+## v2: sends the admin token (device_http): the clock answers 401 without it.
 ## @brief POST {host, port} to /debug/udp_log so the device streams logs here; on failure prints a note and continues.
-## @version 1
+## @version 2
 ## @req REQ-TOOL-001
 def register_with_device(device_host: str, my_ip: str, port: int) -> None:
     import urllib.request
@@ -43,7 +46,7 @@ def register_with_device(device_host: str, my_ip: str, port: int) -> None:
         url, data=body, headers={"Content-Type": "application/json"}, method="POST"
     )
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with device_urlopen(req, timeout=5) as resp:
             print(
                 f"Registered with device: HTTP {resp.status} {resp.read().decode().strip()}",
                 file=sys.stderr,

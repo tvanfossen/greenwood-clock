@@ -5,6 +5,7 @@
  */
 // components/http_api/http_api.c
 
+#include "http_auth.h"
 #include "http_schedule.h"
 #include "http_theme.h"
 #include "http_frame_capture.h"
@@ -833,7 +834,8 @@ static esp_err_t coredump_erase_handler(httpd_req_t *req)
  * @brief Register file, status, and log URI handlers.
  *
  * @param srv  Running httpd server handle.
- * @version 1
+ * v2: registered through http_auth_register (the gate).
+ * @version 2
  * @req REQ-API-001
  */
 static void http_api_register_file_handlers(httpd_handle_t srv)
@@ -903,26 +905,27 @@ static void http_api_register_file_handlers(httpd_handle_t srv)
         .method  = HTTP_DELETE,
         .handler = delete_file_handler,
     };
-    httpd_register_uri_handler(srv, &uri_status);
-    httpd_register_uri_handler(srv, &uri_boot_hist);
-    httpd_register_uri_handler(srv, &uri_disk);
-    httpd_register_uri_handler(srv, &uri_sd_format);
-    httpd_register_uri_handler(srv, &uri_cd_info);
-    httpd_register_uri_handler(srv, &uri_cd_get);
-    httpd_register_uri_handler(srv, &uri_cd_erase);
-    httpd_register_uri_handler(srv, &uri_screenshot);
-    httpd_register_uri_handler(srv, &uri_logs);
-    httpd_register_uri_handler(srv, &uri_logs_test);
-    httpd_register_uri_handler(srv, &uri_upload);
-    httpd_register_uri_handler(srv, &uri_download);
-    httpd_register_uri_handler(srv, &uri_delete);
+    http_auth_register(srv, &uri_status);
+    http_auth_register(srv, &uri_boot_hist);
+    http_auth_register(srv, &uri_disk);
+    http_auth_register(srv, &uri_sd_format);
+    http_auth_register(srv, &uri_cd_info);
+    http_auth_register(srv, &uri_cd_get);
+    http_auth_register(srv, &uri_cd_erase);
+    http_auth_register(srv, &uri_screenshot);
+    http_auth_register(srv, &uri_logs);
+    http_auth_register(srv, &uri_logs_test);
+    http_auth_register(srv, &uri_upload);
+    http_auth_register(srv, &uri_download);
+    http_auth_register(srv, &uri_delete);
 }
 
 /**
  * @brief Register OTA push and status URI handlers.
  *
  * @param srv  Running httpd server handle.
- * @version 1
+ * v2: registered through http_auth_register (the gate).
+ * @version 2
  * @req REQ-API-001
  */
 static void http_api_register_ota_handlers(httpd_handle_t srv)
@@ -937,15 +940,16 @@ static void http_api_register_ota_handlers(httpd_handle_t srv)
         .method  = HTTP_GET,
         .handler = ota_status_handler,
     };
-    httpd_register_uri_handler(srv, &uri_ota_push);
-    httpd_register_uri_handler(srv, &uri_ota_status);
+    http_auth_register(srv, &uri_ota_push);
+    http_auth_register(srv, &uri_ota_status);
 }
 
 /**
  * @brief Register debug endpoint handlers (UDP log, reboot).
  *
  * @param srv  Running httpd server handle.
- * @version 1
+ * v2: registered through http_auth_register (the gate).
+ * @version 2
  * @req REQ-API-001
  */
 static void http_api_register_debug_handlers(httpd_handle_t srv)
@@ -970,17 +974,18 @@ static void http_api_register_debug_handlers(httpd_handle_t srv)
         .method  = HTTP_POST,
         .handler = debug_launch_handler,
     };
-    httpd_register_uri_handler(srv, &uri_udp_log_start);
-    httpd_register_uri_handler(srv, &uri_udp_log_stop);
-    httpd_register_uri_handler(srv, &uri_reboot);
-    httpd_register_uri_handler(srv, &uri_launch);
+    http_auth_register(srv, &uri_udp_log_start);
+    http_auth_register(srv, &uri_udp_log_stop);
+    http_auth_register(srv, &uri_reboot);
+    http_auth_register(srv, &uri_launch);
 }
 
 /**
  * @brief Register display control and weather data URI handlers.
  *
  * @param srv  Running httpd server handle.
- * @version 1
+ * v2: registered through http_auth_register (the gate).
+ * @version 2
  * @req REQ-API-001
  */
 static void http_api_register_display_handlers(httpd_handle_t srv)
@@ -1050,20 +1055,20 @@ static void http_api_register_display_handlers(httpd_handle_t srv)
         .method  = HTTP_POST,
         .handler = settings_post_handler,
     };
-    httpd_register_uri_handler(srv, &uri_display_state_get);
-    httpd_register_uri_handler(srv, &uri_display_state_post);
-    httpd_register_uri_handler(srv, &uri_display_surprise);
-    httpd_register_uri_handler(srv, &uri_schedule_get);
-    httpd_register_uri_handler(srv, &uri_schedule_post);
-    httpd_register_uri_handler(srv, &uri_weather_current);
-    httpd_register_uri_handler(srv, &uri_weather_forecast);
-    httpd_register_uri_handler(srv, &uri_weather_alerts);
-    httpd_register_uri_handler(srv, &uri_assets_list);
-    httpd_register_uri_handler(srv, &uri_assets_upload);
-    httpd_register_uri_handler(srv, &uri_settings_get);
-    httpd_register_uri_handler(srv, &uri_settings_post);
+    http_auth_register(srv, &uri_display_state_get);
+    http_auth_register(srv, &uri_display_state_post);
+    http_auth_register(srv, &uri_display_surprise);
+    http_auth_register(srv, &uri_schedule_get);
+    http_auth_register(srv, &uri_schedule_post);
+    http_auth_register(srv, &uri_weather_current);
+    http_auth_register(srv, &uri_weather_forecast);
+    http_auth_register(srv, &uri_weather_alerts);
+    http_auth_register(srv, &uri_assets_list);
+    http_auth_register(srv, &uri_assets_upload);
+    http_auth_register(srv, &uri_settings_get);
+    http_auth_register(srv, &uri_settings_post);
     // www wildcard MUST be registered LAST (wildcard matching priority)
-    httpd_register_uri_handler(srv, &uri_www);
+    http_auth_register(srv, &uri_www);
 }
 
 /**
@@ -1074,12 +1079,14 @@ static void http_api_register_display_handlers(httpd_handle_t srv)
  * v3: also the debug frame-capture endpoints.
  * v4: also the theme endpoints.
  * v5: the daily/events schedule endpoints (/api/schedule replaces /api/bg_schedule).
- * @version 5
+ * v6: the gate on every handler; POST /api/pair.
+ * @version 6
  * @req REQ-API-001
  */
 static void http_api_register_handlers(httpd_handle_t srv)
 {
     http_frame_capture_register(srv);
+    http_auth_register_pairing(srv);   // the one public /api endpoint
     http_schedule_register(srv);   // before the display handlers' www catch-all
     http_theme_register(srv);
     http_api_register_file_handlers(srv);

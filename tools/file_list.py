@@ -16,11 +16,14 @@ Example:
 import argparse
 import sys
 import urllib.request
+
+from device_http import device_urlopen
 import json
 
 
+## v2: sends the admin token (device_http): the clock answers 401 without it.
 ## @brief CLI entry: fetch the directory JSON listing and print each entry's size (or <dir>) and path; exit 1 on error.
-## @version 1
+## @version 2
 ## @req REQ-TOOL-001
 def main() -> None:
     ap = argparse.ArgumentParser(description="List a directory on the device SD card.")
@@ -45,7 +48,7 @@ def main() -> None:
     )
 
     try:
-        with urllib.request.urlopen(url, timeout=15) as resp:
+        with device_urlopen(url, timeout=15) as resp:
             data = json.loads(resp.read().decode())
     except urllib.request.HTTPError as exc:
         print(

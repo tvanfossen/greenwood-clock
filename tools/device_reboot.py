@@ -16,9 +16,12 @@ import argparse
 import sys
 import urllib.request
 
+from device_http import device_urlopen
 
+
+## v2: sends the admin token (device_http): the clock answers 401 without it.
 ## @brief CLI entry: POST /debug/reboot to the host and print the HTTP reply; exit 1 on an HTTP or network error.
-## @version 1
+## @version 2
 ## @req REQ-TOOL-001
 def main() -> None:
     ap = argparse.ArgumentParser(description="Trigger a remote reboot of the device.")
@@ -34,7 +37,7 @@ def main() -> None:
 
     req = urllib.request.Request(url, data=b"", method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with device_urlopen(req, timeout=5) as resp:
             body = resp.read().decode(errors="replace")
             print(f"HTTP {resp.status}: {body.strip()}")
     except urllib.request.HTTPError as exc:

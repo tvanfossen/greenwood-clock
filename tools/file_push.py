@@ -17,9 +17,12 @@ import argparse
 import sys
 import urllib.request
 
+from device_http import device_urlopen
 
+
+## v2: sends the admin token (device_http): the clock answers 401 without it.
 ## @brief CLI entry: read the local file and POST its bytes to /files/<remote>, printing the HTTP reply; exit 1 on error.
-## @version 1
+## @version 2
 ## @req REQ-TOOL-001
 def main() -> None:
     ap = argparse.ArgumentParser(description="Upload a file to the device SD card.")
@@ -52,7 +55,7 @@ def main() -> None:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with device_urlopen(req, timeout=60) as resp:
             body = resp.read().decode(errors="replace")
             print(f"HTTP {resp.status}: {body.strip()}")
     except urllib.request.HTTPError as exc:

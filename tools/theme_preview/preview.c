@@ -8,7 +8,8 @@
  * v7: the --decisions mode is gone (all decided).
  * v8: the settings scene is the real settings app (sample backend); the schedule scenes are
  *     gone (inv panel-shots clicks through them with the same code).
- * @version 8
+ * v9: the Phone screen replaces the upload mock.
+ * @version 9
  * @brief Host theme preview: renders the firmware's own widgets with the real LVGL fork (built
  *        from the device sdkconfig) and the real theme code, one PNG-ready frame per theme and
  *        scene, so a theme can be judged before anything goes to the device.
@@ -16,7 +17,7 @@
  * Usage: theme_preview <out_dir> <background LVGL path, e.g. A:/backgrounds/x.png | -> <theme.json>...
  * Writes <out_dir>/<theme-stem>_<scene>.ppm (RGB888) for each theme and scene:
  *   clock    — the home screen: the full-size clock over the background
- *   upload_wait / upload_connected — the QR upload screen
+ *   phone    — Settings > Phone: the QR code that pairs the phone panel
  *   weather  — the weather screen: card, forecast strip and a Severe alert over the background
  *   gallery  — every role: surfaces and text tiers, stock widgets, the alert severities, the
  *              accent palette (leaves, swatches)
@@ -39,7 +40,7 @@
 #include "theme_editor.h"
 #include "settings_app.h"
 #include "settings_mock.h"
-#include "upload_view.h"
+#include "phone_view.h"
 #include "alert_card.h"
 #include "settings_frame.h"
 #include "sky_panel.h"
@@ -492,22 +493,19 @@ static void scene_clock(void)
 static void noop_cb(lv_event_t *e);
 
 /**
- * @brief The upload screen under the top-bar clock: waiting for a phone (@p connected false)
- *        or a phone paired with three files received.
+ * @brief The Phone screen under the top-bar clock: a sample address and code, one phone
+ *        connected.
  * @version 1
  * @utility
  */
-static void scene_upload(bool connected)
+static void scene_phone(void)
 {
-    static const upload_item_t ITEMS[] = {
-        { "IMG_2041.jpg", "Background", "cropped to 1024 x 600" },
-        { "lake_trip.png", "Album photo", "in the slideshow" },
-        { "valentine_hearts.json", "Clock animation", "Lottie, 2.1 s loop" },
-    };
     lv_obj_t *scr = fresh_screen(true);
     clock_in(CLOCK_MODE_TOPBAR);
-    upload_view_create(scr, "http://192.168.1.50/upload#k7Qp2vX9mR4tL8wZ", connected ? 1630 : 582,
-                       connected ? ITEMS : NULL, 3, noop_cb);
+    settings_frame_set_y(SETTINGS_FRAME_Y);
+    phone_view_create(scr, "http://192.168.1.50/www/panel/index.html#0f3a9c1d2e4b5a6978c0d1e2f3a4b5c6",
+                      noop_cb, noop_cb);
+    phone_view_update(582, 1);
 }
 
 static bool install_theme(const char *path, ui_theme_t *t);
@@ -728,7 +726,8 @@ static void render_edit_demo(const char *out_dir, const char *path)
  * v8: the schedule prototype.
  * v9: the upload screen.
  * v10: the schedule scenes are gone (the panel shots cover them).
- * @version 10
+ * v11: the Phone screen (was the upload mock).
+ * @version 11
  * @utility
  * @return Whether the theme parsed.
  */
@@ -741,11 +740,8 @@ static bool render_theme(const char *out_dir, const char *path)
     scene_clock();
     snprintf(file, sizeof(file), "%s/%s_clock.ppm", out_dir, stem);
     write_frame(file);
-    scene_upload(false);
-    snprintf(file, sizeof(file), "%s/%s_upload_wait.ppm", out_dir, stem);
-    write_frame(file);
-    scene_upload(true);
-    snprintf(file, sizeof(file), "%s/%s_upload_connected.ppm", out_dir, stem);
+    scene_phone();
+    snprintf(file, sizeof(file), "%s/%s_phone.ppm", out_dir, stem);
     write_frame(file);
     scene_weather(12, 9);
     snprintf(file, sizeof(file), "%s/%s_weather.ppm", out_dir, stem);

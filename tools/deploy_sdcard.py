@@ -15,6 +15,8 @@ Usage:
 import argparse
 import sys
 import urllib.request
+
+from device_http import device_urlopen
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -63,8 +65,9 @@ def collect_files():
 
 
 ## @brief Upload a single file.
+## v2: sends the admin token (device_http): the clock answers 401 without it.
 ## @req REQ-TOOL-002
-## @version 1
+## @version 2
 ## @return (bytes_sent, http_status).
 def push_file(host, local_path, remote_path):
     """Upload a single file. Returns (bytes_sent, http_status)."""
@@ -76,7 +79,7 @@ def push_file(host, local_path, remote_path):
         headers={"Content-Type": "application/octet-stream"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with device_urlopen(req, timeout=60) as resp:
         resp.read()
         return len(data), resp.status
 

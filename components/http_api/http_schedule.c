@@ -7,6 +7,7 @@
  * POST /api/schedule ← a whole schedule; 400 when malformed, 409 {"error": "Overlaps ..."}
  *                      when two profiles of a kind overlap, else stored and applied.
  */
+#include "http_auth.h"
 #include "http_schedule.h"
 
 #include <stdio.h>
@@ -110,7 +111,8 @@ static esp_err_t schedule_post_handler(httpd_req_t *req)
 
 /**
  * @brief Register the schedule endpoints.
- * @version 1
+ * v2: registered through http_auth_register (the gate).
+ * @version 2
  * @req REQ-BG-004
  */
 void http_schedule_register(httpd_handle_t srv)
@@ -119,6 +121,6 @@ void http_schedule_register(httpd_handle_t srv)
         .uri = "/api/schedule", .method = HTTP_GET, .handler = schedule_get_handler};
     static const httpd_uri_t post = {
         .uri = "/api/schedule", .method = HTTP_POST, .handler = schedule_post_handler};
-    httpd_register_uri_handler(srv, &get);
-    httpd_register_uri_handler(srv, &post);
+    http_auth_register(srv, &get);
+    http_auth_register(srv, &post);
 }

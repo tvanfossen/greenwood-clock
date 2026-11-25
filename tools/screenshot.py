@@ -17,7 +17,8 @@ Usage:
 import argparse
 import struct
 import sys
-import urllib.request
+
+from device_http import device_urlopen
 
 # LVGL color-format enum values we handle.
 CF_RGB565 = 18
@@ -63,8 +64,9 @@ def argb8888_to_rgb(buf, w, h, stride):
     return bytes(out)
 
 
+## v2: sends the admin token (device_http): the clock answers 401 without it.
 ## @brief CLI entry: fetch the screenshot, parse the "w h stride cf" header, decode RGB565/ARGB8888/XRGB8888 and write a PNG (PIL, or a built-in zlib writer).
-## @version 1
+## @version 2
 ## @req REQ-TOOL-001
 def main():
     ap = argparse.ArgumentParser(description="Capture device framebuffer to PNG.")
@@ -74,7 +76,7 @@ def main():
 
     url = f"http://{args.host}/api/screenshot"
     print(f"Fetching {url} ...")
-    with urllib.request.urlopen(url, timeout=20) as r:
+    with device_urlopen(url, timeout=20) as r:
         data = r.read()
 
     nl = data.index(b"\n")

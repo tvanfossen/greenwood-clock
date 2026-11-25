@@ -20,9 +20,12 @@ import argparse
 import sys
 import urllib.request
 
+from device_http import device_urlopen
 
+
+## v2: sends the admin token (device_http): the clock answers 401 without it.
 ## @brief CLI entry: send DELETE /files/<remote> and print the HTTP reply; exit 1 on an HTTP or network error.
-## @version 1
+## @version 2
 ## @req REQ-TOOL-001
 def main() -> None:
     ap = argparse.ArgumentParser(description="Delete a file from the device SD card.")
@@ -42,7 +45,7 @@ def main() -> None:
     print(f"Deleting {url}", file=sys.stderr)
     req = urllib.request.Request(url, method="DELETE")
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with device_urlopen(req, timeout=15) as resp:
             body = resp.read().decode(errors="replace")
             print(f"HTTP {resp.status}: {body.strip()}")
     except urllib.request.HTTPError as exc:

@@ -6,6 +6,7 @@
  *        an ASCII line "count w h\n", count little-endian int64 render times (us), then
  *        count w*h RGB565 frames. A download frees the recording.
  */
+#include "http_auth.h"
 #include "http_frame_capture.h"
 
 #include <stdlib.h>
@@ -99,7 +100,8 @@ static esp_err_t capture_get_handler(httpd_req_t *req)
 
 /**
  * @brief Register the frame-capture endpoints (before any wildcard handler).
- * @version 1
+ * v2: registered through http_auth_register (the gate).
+ * @version 2
  * @req REQ-API-003
  */
 void http_frame_capture_register(httpd_handle_t srv)
@@ -108,6 +110,6 @@ void http_frame_capture_register(httpd_handle_t srv)
         .uri = "/api/debug/capture", .method = HTTP_POST, .handler = capture_post_handler};
     static const httpd_uri_t get = {
         .uri = "/api/debug/capture", .method = HTTP_GET, .handler = capture_get_handler};
-    httpd_register_uri_handler(srv, &post);
-    httpd_register_uri_handler(srv, &get);
+    http_auth_register(srv, &post);
+    http_auth_register(srv, &get);
 }

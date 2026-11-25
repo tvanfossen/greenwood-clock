@@ -24,12 +24,15 @@ Examples:
 import argparse
 import sys
 import urllib.request
+
+from device_http import device_urlopen
 import urllib.error
 from datetime import datetime
 
 
+## v2: sends the admin token (device_http): the clock answers 401 without it.
 ## @brief Download one log slot to @p outfile; exits the process on any HTTP error other than 404.
-## @version 1
+## @version 2
 ## @req REQ-TOOL-001
 ## @return True when saved, False when the slot is absent on the device (404).
 def download_slot(host: str, slot: int, outfile: str) -> bool:
@@ -41,7 +44,7 @@ def download_slot(host: str, slot: int, outfile: str) -> bool:
 
     print(f"  Downloading slot {slot}: {url} → {outfile}", file=sys.stderr)
     try:
-        with urllib.request.urlopen(url, timeout=120) as resp:
+        with device_urlopen(url, timeout=120) as resp:
             data = resp.read()
     except urllib.error.HTTPError as exc:
         if exc.code == 404:

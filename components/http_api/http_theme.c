@@ -10,6 +10,7 @@
  * The roles are the device's own derived colours, so the web panel draws with exactly what
  * the screen does.
  */
+#include "http_auth.h"
 #include "http_theme.h"
 
 #include <stdio.h>
@@ -94,7 +95,8 @@ static esp_err_t theme_get_handler(httpd_req_t *req)
 
 /**
  * @brief Register the theme endpoints.
- * @version 1
+ * v2: registered through http_auth_register (the gate).
+ * @version 2
  * @req REQ-UI-003
  */
 void http_theme_register(httpd_handle_t srv)
@@ -103,6 +105,6 @@ void http_theme_register(httpd_handle_t srv)
         .uri = "/api/themes", .method = HTTP_GET, .handler = themes_get_handler};
     static const httpd_uri_t current = {
         .uri = "/api/theme", .method = HTTP_GET, .handler = theme_get_handler};
-    httpd_register_uri_handler(srv, &list);
-    httpd_register_uri_handler(srv, &current);
+    http_auth_register(srv, &list);
+    http_auth_register(srv, &current);
 }

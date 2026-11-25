@@ -527,20 +527,20 @@ requirements:
       leaves the theme as it was; after Save and a reboot the clock still shows the edited
       theme.
   REQ-UI-005:
-    name: Upload from a phone by QR code
+    name: Phone panel by QR code; every API call authenticated
     subsystem: UI
     description: >-
-      Settings > Upload shows a QR code holding the clock's upload address and a one-time
-      pairing code (expires in 10 minutes). The phone that scans it gets an upload-only
-      session (30 minutes, ended when the screen is closed): it can send a background
-      (cropped to 1024x600 on the phone), an album photo, or a clock animation (Lottie or
-      GIF, positioned afterwards on the clock), and nothing else. The clock lists what
-      arrived.
+      Settings > Phone shows a QR code of the clock's panel address with a one-time pairing
+      code after '#' (works once, for 10 minutes, only while the screen is open). The phone
+      that opens it trades the code for a 30-minute session and gets the clock's own settings
+      UI (the same LVGL screens, as WebAssembly). Every /api call needs that session or the
+      admin token (the inv tasks send it); OTA, debug and raw file access need the admin
+      token; without either the clock answers 401. Disconnect ends every phone's session.
     acceptance_criteria: >-
-      Scanning the code on a phone opens the upload page; a picture sent as a background
-      appears in the clock's background list and as an album photo in the slideshow; a second
-      phone using the same code after the first one paired is refused; after the session
-      ends or the screen is closed the page can no longer upload.
+      Scanning the code on a phone opens the clock's settings in its browser and a change made
+      there (brightness, a schedule profile) shows on the clock; scanning the same code from a
+      second phone is refused; an /api request with no token, an expired session or a session
+      after Disconnect is refused; every inv task still works.
 
   # ---------------------------------------------------------------- TOOL
   REQ-TOOL-001:
