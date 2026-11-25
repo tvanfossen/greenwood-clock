@@ -648,13 +648,15 @@ static esp_err_t settings_post_handler(httpd_req_t *req);
  * @brief Apply non-default httpd configuration values.
  *
  * @param config  Configuration struct to populate.
- * @version 1
+ * v2: handler slots from HTTP_AUTH_HANDLERS_MAX (40 was too few: /api/settings POST and the
+ *     /www wildcard went unregistered once the panel's endpoints were added).
+ * @version 2
  * @req REQ-API-001
  */
 static void http_api_configure_server(httpd_config_t* config)
 {
     config->server_port     = 80;
-    config->max_uri_handlers = 40;
+    config->max_uri_handlers = HTTP_AUTH_HANDLERS_MAX;
     config->stack_size      = 8192;
     config->uri_match_fn    = httpd_uri_match_wildcard;
 }

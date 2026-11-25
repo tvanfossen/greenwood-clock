@@ -1,7 +1,8 @@
 /**
  * @file http_auth.c
  * v2: /api/assets/upload is admin-only.
- * @version 2
+ * v3: the gate table's size comes from http_auth.h (it sizes the server too).
+ * @version 3
  * @brief The gate in front of every handler, and POST /api/pair (see http_auth.h).
  */
 #include "http_auth.h"
@@ -14,7 +15,7 @@
 
 static const char *TAG = "http_auth";
 
-#define GATES_MAX 96
+#define GATES_MAX HTTP_AUTH_GATES_MAX
 #define PAIR_BODY_MAX 256
 
 /** One gated handler: what it needs and what it is. */

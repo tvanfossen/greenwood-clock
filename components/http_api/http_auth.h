@@ -1,7 +1,8 @@
 /**
  * @file http_auth.h
  * v2: /api/assets/upload is admin-only.
- * @version 2
+ * v3: HTTP_AUTH_HANDLERS_MAX: the server's handler slots, sized from the gate table.
+ * @version 3
  * @brief Every URI is registered through http_auth_register, which puts a gate in front of
  *        its handler: the level a request needs comes from the path (auth.h) and a request
  *        without the right bearer token gets 401. Also POST /api/pair, where a phone trades
@@ -17,6 +18,13 @@
 #define HTTP_AUTH_H
 
 #include "esp_http_server.h"
+
+/** How many URIs can be gated. */
+#define HTTP_AUTH_GATES_MAX 96
+
+/** The handler slots the HTTP server needs: every gate, plus the ungated POST /api/pair.
+ *  The server is configured from this, so the two limits cannot drift apart. */
+#define HTTP_AUTH_HANDLERS_MAX (HTTP_AUTH_GATES_MAX + 1)
 
 /**
  * @brief Register @p uri behind the gate for its path's level.
