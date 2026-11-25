@@ -1,7 +1,8 @@
 /**
  * @file theme_editor.h
- * @version 1
- * @brief On-screen theme editor: a live design preview beside OKLCH pickers for the three
+ * v2: the fourth core (alert) has its tab.
+ * @version 2
+ * @brief On-screen theme editor: a live design preview beside OKLCH pickers for the four
  *        cores, the contrast target, and the slot grid (which role fills each themed place).
  *
  * Edits apply to the running theme as they are made (every bound object repaints), so the
@@ -23,6 +24,7 @@ typedef enum {
     THEME_EDITOR_INK = 0,
     THEME_EDITOR_SURFACE,
     THEME_EDITOR_ACCENT,
+    THEME_EDITOR_ALERT,      /**< The alert core: the error / warning severities step from it. */
     THEME_EDITOR_CONTRAST,
     THEME_EDITOR_SLOTS,
     THEME_EDITOR_TAB_COUNT
@@ -63,7 +65,7 @@ void theme_editor_press_save(void);
 void theme_editor_set_tab(theme_editor_tab_t tab);
 
 /**
- * @brief Set the edited theme's core @p tab (INK / SURFACE / ACCENT) to @p c and apply it, as
+ * @brief Set the edited theme's core @p tab (INK / SURFACE / ACCENT / ALERT) to @p c and apply it, as
  *        dragging its sliders would.
  * @version 1
  * @req REQ-UI-004

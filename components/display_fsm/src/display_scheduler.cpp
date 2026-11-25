@@ -327,6 +327,21 @@ void DisplayScheduler::set_enabled(display_state_id_t state, bool enabled)
 }
 
 /**
+ * @brief The album changed: enable the photo state and start its timer when /sdcard/photos
+ *        holds a PNG, disable it when it holds none. SD access: called off the LVGL lock.
+ * @version 1
+ * @req REQ-PHOTO-001
+ */
+void DisplayScheduler::photos_changed(void)
+{
+    bool has = photos_dir_has_png();
+    set_enabled(DISPLAY_STATE_PHOTOS, has);
+    if (has && xTimerIsTimerActive(m_photo_timer) == pdFALSE) xTimerStart(m_photo_timer, 0);
+    if (!has) xTimerStop(m_photo_timer, 0);
+    ESP_LOGI(TAG, "Photos rescanned: %s", has ? "enabled" : "disabled (no PNG files)");
+}
+
+/**
  * @brief Get the state the scheduler considers active.
  * @version 1
  * @req REQ-DISP-002

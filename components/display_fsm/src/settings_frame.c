@@ -42,7 +42,8 @@ int32_t settings_frame_get_y(void)
 /**
  * @brief The sub-screen frame: centred dialog panel, title, Back.
  * v2: placed at the settable top (settings_frame_set_y).
- * @version 2
+ * v3: no Back button when @p back_cb is NULL (nowhere to go back to).
+ * @version 3
  * @req REQ-UI-001
  * @return The frame.
  */
@@ -65,6 +66,7 @@ lv_obj_t *settings_frame_create(lv_obj_t *parent, const char *title, lv_event_cb
     lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 0);
     ui_bind_text(lbl, UI_ROLE_TEXT);
 
+    if (!back_cb) return cont;
     lv_obj_t *btn = lv_button_create(cont);
     lv_obj_set_size(btn, 120, 50);
     lv_obj_align(btn, LV_ALIGN_TOP_LEFT, 0, 0);

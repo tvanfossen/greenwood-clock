@@ -1793,11 +1793,30 @@ static const char *www_mime_type(const char *path)
 }
 
 /**
+ * @brief Open @p path for @p req: its precompressed twin (@p path + ".gz") when the browser
+ *        takes gzip and the twin exists (Content-Encoding set), else the file itself.
+ * @version 1
+ * @utility
+ * @return The open file, or NULL when neither exists.
+ */
+static FILE *www_open(httpd_req_t *req, const char *path)
+{
+    char enc[96] = "", gz[264];
+    snprintf(gz, sizeof(gz), "%s.gz", path);
+    bool takes_gzip = httpd_req_get_hdr_value_str(req, "Accept-Encoding", enc, sizeof(enc)) == ESP_OK &&
+                      strstr(enc, "gzip") != NULL;
+    FILE *f = takes_gzip ? fopen(gz, "rb") : NULL;
+    if (f) httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    return f ? f : fopen(path, "rb");
+}
+
+/**
  * @brief Serve static files from SD card /sdcard/www/.
  * GET /www/... serves from /sdcard/www/...
  *
  * @param req  Incoming request.
- * @version 1
+ * v2: a gzipped twin when the browser takes it (the phone panel's 1.2 MB wasm: ~3x less).
+ * @version 2
  * @callback
  * @return ESP_OK on success; ESP_FAIL if SD unmounted, file missing, or a send fails.
  * @req REQ-API-001
@@ -1814,7 +1833,7 @@ static esp_err_t www_file_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    FILE *f = fopen(filepath, "rb");
+    FILE *f = www_open(req, filepath);
     if (!f) {
         httpd_resp_send_404(req);
         return ESP_FAIL;
@@ -2370,7 +2389,8 @@ static esp_err_t panel_receive_png(httpd_req_t *req, const char *tmp, const char
 /**
  * @brief POST /api/upload?kind=background|photo&name=x.png: a PNG (cropped to 1024x600 on the
  *        phone) into /sdcard/backgrounds or /sdcard/photos. Anything else is refused.
- * @version 1
+ * v2: a photo makes the slideshow rescan the album (it is shown without a reboot).
+ * @version 2
  * @callback
  * @req REQ-UI-005
  * @return ESP_OK on success; ESP_FAIL after an error response.
@@ -2394,7 +2414,12 @@ static esp_err_t panel_upload_handler(httpd_req_t *req)
     snprintf(tmp, sizeof(tmp), "%s/.upload.tmp", dir);
     snprintf(final, sizeof(final), "%s/%s", dir, name);
     ESP_LOGI(TAG, "panel upload: %s (%d bytes)", final, req->content_len);
-    return panel_receive_png(req, tmp, final);
+    esp_err_t err = panel_receive_png(req, tmp, final);
+    if (err == ESP_OK && strcmp(kind, "photo") == 0) {
+        display_event_t evt = {.type = DISPLAY_EVT_PHOTOS_CHANGED};
+        if (!display_fsm_send_event(&evt)) ESP_LOGW(TAG, "panel upload: album rescan not queued");
+    }
+    return err;
 }
 
 // =============================================================================

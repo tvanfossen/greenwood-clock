@@ -727,7 +727,8 @@ static void render_edit_demo(const char *out_dir, const char *path)
  * v9: the upload screen.
  * v10: the schedule scenes are gone (the panel shots cover them).
  * v11: the Phone screen (was the upload mock).
- * @version 11
+ * v12: the editor's Alert tab.
+ * @version 12
  * @utility
  * @return Whether the theme parsed.
  */
@@ -757,6 +758,7 @@ static bool render_theme(const char *out_dir, const char *path)
     write_frame(file);
     scene_editor(out_dir, stem, THEME_EDITOR_INK, "ink");
     scene_editor(out_dir, stem, THEME_EDITOR_ACCENT, "accent");
+    scene_editor(out_dir, stem, THEME_EDITOR_ALERT, "alert");
     scene_editor(out_dir, stem, THEME_EDITOR_CONTRAST, "text");
     scene_editor(out_dir, stem, THEME_EDITOR_SLOTS, "slots");
     fresh_screen(false);   // closes the editor: the theme it opened with comes back

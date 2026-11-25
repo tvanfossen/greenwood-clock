@@ -12,6 +12,7 @@ host defaults to the mDNS name the firmware advertises, so a DHCP lease change
 does not break them; override with ``--host`` or ``GREENWOOD_HOST``.
 """
 
+import gzip
 import json
 import os
 import re
@@ -657,14 +658,15 @@ def push_themes(c, host=DEFAULT_HOST):
 
 
 ## v2: the WebAssembly panel (index.html, panel.js, panel.wasm); the old web panel is gone.
+## v3: and their gzipped twins (*.gz).
 ## @brief Build the phone panel and upload it (sdcard/www/panel/) to the device SD card.
 ## @req REQ-TOOL-002
 ## @req REQ-UI-002
-## @version 2
+## @version 3
 @task(help={"host": "Device host or IP"})
 def push_www(c, host=DEFAULT_HOST):
     panel_build(c)
-    for pattern in ("*.html", "*.js", "*.wasm"):
+    for pattern in ("*.html", "*.js", "*.wasm", "*.gz"):
         _push_staging_tree(c, "www", pattern, host)
 
 
@@ -873,8 +875,9 @@ PANEL_OUT = REPO / "sdcard" / "www" / "panel"
 ## v2: the settings app over the sample backend; tools/panel headers.
 ## v3: the clock backend (settings_http; -sFETCH) beside the sample one.
 ## v4: exports panel_upload_done and ccall (the upload's answer).
+## v5: gzipped twins of panel.js and panel.wasm (the clock sends them to browsers that take gzip).
 ## @req REQ-UI-002
-## @version 4
+## @version 5
 @task
 def panel_build(c):
     if not EMCC.exists():
@@ -893,6 +896,9 @@ def panel_build(c):
     (PANEL_OUT / "index.html").write_text(
         (REPO / "tools" / "panel" / "index.html").read_text()
     )
+    for name in ("panel.js", "panel.wasm"):
+        raw = (PANEL_OUT / name).read_bytes()
+        (PANEL_OUT / f"{name}.gz").write_bytes(gzip.compress(raw, 9, mtime=0))
     for f in sorted(PANEL_OUT.iterdir()):
         print(f"{f.relative_to(REPO)}: {f.stat().st_size:,} B")
 

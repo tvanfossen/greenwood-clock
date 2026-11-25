@@ -1,7 +1,8 @@
 /**
  * @file settings_backend.h
  * v2: optional upload (the phone sends a picture).
- * @version 2
+ * v3: leave is optional (the phone has no Back at its menu).
+ * @version 3
  * @brief What the settings screens (settings_app) need from the device they run for: read and
  *        change the settings, the lists to choose from, the schedule, the sun, and the few
  *        device-only screens. Two implementations: the clock's own (state_settings.cpp:
@@ -70,7 +71,7 @@ typedef struct {
     lv_obj_t *(*preview_create)(lv_obj_t *parent);   /**< Optional: animation preview. */
     void (*upload)(settings_upload_t kind, settings_done_cb_t done, void *ctx);   /**< Optional: pick and send a picture. */
     void (*reboot)(void);                            /**< Optional. */
-    void (*leave)(void);                             /**< Back from the menu. */
+    void (*leave)(void);                             /**< Optional: Back from the menu (none: no Back). */
 } settings_backend_t;
 
 #ifdef __cplusplus

@@ -5,7 +5,8 @@
 ## Firefox the way a scanned QR code does, taps through it, and checks what reached the
 ## "clock". Exit status: the number of failed checks.
 ## v2: an upload (a picture through the file chooser arrives as a 1024x600 PNG background).
-## @version 2
+## v3: serves the gzipped twins (*.gz) like the clock, and checks the panel loaded through them.
+## @version 3
 """Usage: mock_clock.py <sdcard/www dir> <out dir for screenshots>"""
 
 import functools
@@ -34,9 +35,11 @@ class Clock:
     ## @brief The stand-in clock's starting schedule; no posts, the code unused.
     ## @utility
     ## v2: uploads recorded.
-    ## @version 2
+    ## v3: gzipped files served recorded.
+    ## @version 3
     def __init__(self):
         self.code_used = False
+        self.gzipped = []
         self.posts = []
         self.uploads = []
         self.schedule = {
@@ -104,7 +107,8 @@ class Clock:
 
 ## @brief Request handler: static files, then the API contract.
 ## @utility
-## @version 1
+## v2: gzipped twins.
+## @version 2
 class Handler(http.server.SimpleHTTPRequestHandler):
     clock = None
 
@@ -134,7 +138,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     ## @brief GET: the panel state (token needed) or a static file under /www.
     ## @utility
-    ## @version 1
+    ## v2: a file's gzipped twin when the browser takes gzip (as the clock does).
+    ## @version 2
     def do_GET(self):
         if self.path.startswith("/api/panel"):
             ok = self._authed()
@@ -143,7 +148,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             )
         if self.path.startswith("/www/"):
             self.path = self.path[len("/www") :]
+        twin = Path(self.directory) / f"{self.path.lstrip('/')}.gz"
+        if "gzip" in self.headers.get("Accept-Encoding", "") and twin.is_file():
+            return self._send_gzipped(twin)
         return super().do_GET()
+
+    ## @brief Send @p twin (a .gz file) as its original file, gzip-encoded.
+    ## @utility
+    ## @version 1
+    def _send_gzipped(self, twin):
+        data = twin.read_bytes()
+        self.clock.gzipped.append(twin.stem)
+        self.send_response(200)
+        self.send_header("Content-Type", self.guess_type(twin.stem))
+        self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     ## @brief POST: pairing, or a change (token needed) that the clock records.
     ## @utility
@@ -205,8 +226,9 @@ def tap(page, x, y):
 ## @brief Pair, load, save a schedule profile, upload a background picture; then a second
 ## phone with the used code is refused.
 ## v2: the upload.
+## v3: the panel loads through its gzipped twins.
 ## @utility
-## @version 2
+## @version 3
 ## @return The failed checks' descriptions.
 def run(base, out):
     clock, fails = serve.clock, []
@@ -218,6 +240,8 @@ def run(base, out):
         page.wait_for_timeout(600)
         if "#" in page.url:
             fails.append("the code stayed in the address bar")
+        if not {"panel.js", "panel.wasm"} <= set(clock.gzipped):
+            fails.append(f"the panel did not load gzipped: {clock.gzipped}")
         tap(page, 320, 248)  # Schedule
         page.screenshot(path=str(out / "e2e_schedule.png"))
         tap(page, 400, 250)  # Morning

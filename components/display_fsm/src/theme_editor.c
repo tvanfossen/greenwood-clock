@@ -1,8 +1,9 @@
 /**
  * @file theme_editor.c
- * @version 1
+ * v2: an Alert tab for the fourth core.
+ * @version 2
  * @brief On-screen theme editor (see theme_editor.h): the design preview on the left; on the
- *        right, tabs for the three OKLCH cores (L, C, h sliders over their gradients), the text
+ *        right, tabs for the four OKLCH cores (L, C, h sliders over their gradients), the text
  *        contrast target, and the slot grid. Every edit is applied to the running theme
  *        (throttled while dragging), so the whole screen repaints with it.
  */
@@ -17,14 +18,14 @@
 
 #define PANE_W        500
 #define PANEL_X       524
-#define TAB_W         86
+#define TAB_W         70
 #define APPLY_MS      80     // apply at most this often while a slider is dragged
 #define CONTRAST_MIN  30     // slider units: tenths of a WCAG ratio
 #define CONTRAST_MAX  120
 #define EDITED_NAME   "Custom"
 
 static const char *const TAB_NAMES[THEME_EDITOR_TAB_COUNT] = {
-    "Ink", "Surface", "Accent", "Text", "Slots",
+    "Ink", "Surface", "Accent", "Alert", "Text", "Slots",
 };
 
 /** The fill roles a slot cycles through when tapped. */
@@ -66,15 +67,28 @@ static editor_t s_ed;
 // ---------------------------------------------------------------------------
 
 /**
- * @brief The core the current tab edits (ink for any non-core tab).
+ * @brief The working theme's core that tab @p tab edits (ink for any non-core tab).
  * @version 1
+ * @utility
+ * @return Pointer into the working theme.
+ */
+static ui_oklch_t *core_of(theme_editor_tab_t tab)
+{
+    ui_oklch_t *cores[4] = { &s_ed.work.ink, &s_ed.work.surface, &s_ed.work.accent,
+                             &s_ed.work.alert };
+    return cores[tab <= THEME_EDITOR_ALERT ? tab : THEME_EDITOR_INK];
+}
+
+/**
+ * @brief The core the current tab edits (ink for any non-core tab).
+ * v2: through core_of (four cores).
+ * @version 2
  * @utility
  * @return Pointer into the working theme.
  */
 static ui_oklch_t *edited_core(void)
 {
-    ui_oklch_t *cores[3] = { &s_ed.work.ink, &s_ed.work.surface, &s_ed.work.accent };
-    return cores[s_ed.tab <= THEME_EDITOR_ACCENT ? s_ed.tab : THEME_EDITOR_INK];
+    return core_of(s_ed.tab);
 }
 
 /**
@@ -479,7 +493,8 @@ void theme_editor_press_save(void)
 
 /**
  * @brief Show tab @p tab.
- * @version 1
+ * v2: the alert core shows the core body too.
+ * @version 2
  * @req REQ-UI-004
  */
 void theme_editor_set_tab(theme_editor_tab_t tab)
@@ -489,7 +504,7 @@ void theme_editor_set_tab(theme_editor_tab_t tab)
     for (int i = 0; i < THEME_EDITOR_TAB_COUNT; i++) {
         lv_obj_set_state(s_ed.tabs[i], LV_STATE_CHECKED, i == (int)tab);
     }
-    lv_obj_set_flag(s_ed.core_body, LV_OBJ_FLAG_HIDDEN, tab > THEME_EDITOR_ACCENT);
+    lv_obj_set_flag(s_ed.core_body, LV_OBJ_FLAG_HIDDEN, tab > THEME_EDITOR_ALERT);
     lv_obj_set_flag(s_ed.contrast_body, LV_OBJ_FLAG_HIDDEN, tab != THEME_EDITOR_CONTRAST);
     lv_obj_set_flag(s_ed.slots_body, LV_OBJ_FLAG_HIDDEN, tab != THEME_EDITOR_SLOTS);
     show_values();
@@ -497,14 +512,14 @@ void theme_editor_set_tab(theme_editor_tab_t tab)
 
 /**
  * @brief Set the edited theme's core @p tab to @p c and apply it.
- * @version 1
+ * v2: the alert core too.
+ * @version 2
  * @req REQ-UI-004
  */
 void theme_editor_set_core(theme_editor_tab_t tab, ui_oklch_t c)
 {
-    if (!s_ed.root || tab > THEME_EDITOR_ACCENT) return;
-    ui_oklch_t *cores[3] = { &s_ed.work.ink, &s_ed.work.surface, &s_ed.work.accent };
-    *cores[tab] = c;
+    if (!s_ed.root || tab > THEME_EDITOR_ALERT) return;
+    *core_of(tab) = c;
     apply_now();
 }
 

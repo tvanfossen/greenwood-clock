@@ -1,6 +1,7 @@
 /**
  * @file display_events.h
- * @version 1
+ * v2: DISPLAY_EVT_PHOTOS_CHANGED.
+ * @version 2
  * @brief C-compatible display FSM event types, safe to pass through FreeRTOS queues.
  */
 // components/display_events/include/display_events.h
@@ -58,6 +59,7 @@ typedef enum {
     DISPLAY_EVT_REFRESH_BG,          // reload clock background from settings
     DISPLAY_EVT_RADAR_LOOP_LOAD,     // decode the next radar-loop frame off-lock
     DISPLAY_EVT_REFRESH_THEME,       // re-apply the theme (files read off-lock)
+    DISPLAY_EVT_PHOTOS_CHANGED,      // the album changed (an upload): rescan it off-lock
 } display_event_type_t;
 
 // ---------------------------------------------------------------------------

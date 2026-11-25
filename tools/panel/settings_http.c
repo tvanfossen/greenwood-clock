@@ -387,15 +387,6 @@ static void http_upload(settings_upload_t kind, settings_done_cb_t done, void *c
     js_upload((int)kind, s_token);
 }
 
-/**
- * @brief Back from the menu: nowhere to go on the phone.
- * @version 1
- * @callback
- */
-static void http_leave(void)
-{
-}
-
 // ---------------------------------------------------------------------------
 // Reading the state
 // ---------------------------------------------------------------------------
@@ -487,7 +478,8 @@ static bool read_state(const char *json)
 /**
  * @brief The backend over the clock's state.
  * v2: upload.
- * @version 2
+ * v3: no leave (the phone's menu has no Back).
+ * @version 3
  * @req REQ-UI-005
  * @return It, or NULL when the state is not usable.
  */
@@ -499,7 +491,6 @@ const settings_backend_t *settings_http_backend(const char *state_json, const ch
         .set_anim = http_set_anim, .schedule_get = http_schedule_get,
         .schedule_set = http_schedule_set, .sun = http_sun, .now = http_now,
         .save_theme = http_save_theme, .about = http_about, .upload = http_upload,
-        .leave = http_leave,
     };
     snprintf(s_token, sizeof(s_token), "%s", token ? token : "");
     return state_json && read_state(state_json) ? &BE : NULL;

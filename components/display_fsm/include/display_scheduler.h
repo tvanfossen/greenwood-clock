@@ -1,6 +1,7 @@
 /**
  * @file display_scheduler.h
- * @version 1
+ * v2: photos_changed (rescan the album after an upload).
+ * @version 2
  * @brief Event-driven display scheduler: per-state debounce/cooldown and return-to-clock timers.
  */
 // Event-driven display scheduling with debounce and return-to-clock timers.
@@ -28,24 +29,52 @@ public:
 
     void init(void);
 
-    /** @brief Try to show a state (respects debounce). Returns false if debounced. */
+    /**
+     * @brief Try to show a state (respects debounce).
+     * @version 1
+     * @req REQ-DISP-002
+     * @return False if debounced.
+     */
     bool try_show(display_state_id_t state);
 
-    /** @brief Force-show a state (bypasses debounce, for web control). */
+    /**
+     * @brief Force-show a state (bypasses debounce, for web control).
+     * @version 1
+     * @req REQ-DISP-002
+     */
     void force_show(display_state_id_t state);
 
-    /** @brief Called when return timer fires — stops timer, resets active state. */
+    /**
+     * @brief Called when return timer fires — stops timer, resets active state.
+     * @version 1
+     * @req REQ-DISP-002
+     */
     void return_to_clock(void);
 
-    /** @brief Pause return timer (settings entered). */
+    /**
+     * @brief Pause return timer (settings entered).
+     * @version 1
+     * @req REQ-DISP-002
+     */
     void pause(void);
 
-    /** @brief Resume return timer (settings exited). */
+    /**
+     * @brief Resume return timer (settings exited).
+     * @version 1
+     * @req REQ-DISP-002
+     */
     void resume(void);
 
     void set_duration(display_state_id_t state, uint32_t ms);
     void set_cooldown(display_state_id_t state, uint32_t ms);
     void set_enabled(display_state_id_t state, bool enabled);
+
+    /**
+     * @brief The album changed: show photos when it holds any (SD access: call off the LVGL lock).
+     * @version 1
+     * @req REQ-PHOTO-001
+     */
+    void photos_changed(void);
 
     display_state_id_t active(void) const;
 
@@ -63,7 +92,12 @@ private:
     void start_return_timer(uint32_t duration_ms);
 };
 
-/** @brief Get the singleton scheduler instance. */
+/**
+ * @brief Get the singleton scheduler instance.
+ * @version 1
+ * @req REQ-DISP-002
+ * @return The scheduler.
+ */
 DisplayScheduler *display_scheduler_get(void);
 
 #endif // DISPLAY_SCHEDULER_H

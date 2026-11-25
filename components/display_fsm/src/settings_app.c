@@ -623,7 +623,8 @@ static int optional_items(settings_menu_item_t *items, int n)
 
 /**
  * @brief The menu.
- * @version 1
+ * v2: Back only when the backend has somewhere to leave to.
+ * @version 2
  * @utility
  * @return The frame.
  */
@@ -639,7 +640,8 @@ static lv_obj_t *menu_screen(lv_obj_t *parent, void *ctx)
         { LV_SYMBOL_SETTINGS, "About", menu_cb, (void *)about_screen },
     };
     int n = optional_items(items, 6);
-    lv_obj_t *frame = settings_frame_create(parent, "Settings", settings_app_back_cb);
+    lv_obj_t *frame = settings_frame_create(parent, "Settings",
+                                            s_be->leave ? settings_app_back_cb : NULL);
     settings_menu_grid(frame, items, n);
     return frame;
 }

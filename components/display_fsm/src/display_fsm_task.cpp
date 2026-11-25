@@ -210,7 +210,8 @@ static void lottie_loader_init(void)
  *
  * @utility
  * v3: themes replace the text colour (theme names, theme roles, theme events).
- * @version 3
+ * v4: PHOTOS_CHANGED is handled before dispatch.
+ * @version 4
  */
 static void dispatch_event(const display_event_t *evt)
 {
@@ -282,6 +283,7 @@ static void dispatch_event(const display_event_t *evt)
         }
         case DISPLAY_EVT_REFRESH_BG:
         case DISPLAY_EVT_REFRESH_THEME:
+        case DISPLAY_EVT_PHOTOS_CHANGED:
         case DISPLAY_EVT_PHOTO_ADVANCE:
         case DISPLAY_EVT_RADAR_LOOP_LOAD:
             // Handled in process_event before dispatch; nothing to do here.
@@ -917,7 +919,8 @@ static void start_periodic_timers(void)
  * v6: passes the radar image's valid time to the predecode.
  * v7: themes replace the text colour (theme names, theme roles, theme events).
  * v8: schedule profiles from the daily/events schedule.
- * @version 8
+ * v9: an album change rescans the photos off-lock.
+ * @version 9
  */
 static void process_event(const display_event_t *evt)
 {
@@ -944,6 +947,10 @@ static void process_event(const display_event_t *evt)
         theme_store_rescan();
         apply_theme(&prof, true);
         apply_clock_user_color();
+        return;   // not a state event — no FSM dispatch
+    }
+    if (evt->type == DISPLAY_EVT_PHOTOS_CHANGED) {
+        display_scheduler_get()->photos_changed();   // SD scan off-lock
         return;   // not a state event — no FSM dispatch
     }
     if (evt->type == DISPLAY_EVT_CLOCK_UPDATE) {

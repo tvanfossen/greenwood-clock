@@ -44,17 +44,21 @@ static void page_background(void)
 
 /**
  * @brief The backend: the clock's, from the state the loader fetched, or the sample one.
- * @version 1
+ * v2: without leave: the phone's menu has nothing to go back to, so it shows no Back.
+ * @version 2
  * @utility
- * @return It.
+ * @return It (static).
  */
 static const settings_backend_t *pick_backend(void)
 {
+    static settings_backend_t be;
     char *state = js_panel_state(), *token = js_panel_token();
-    const settings_backend_t *be = state[0] ? settings_http_backend(state, token) : NULL;
+    const settings_backend_t *src = state[0] ? settings_http_backend(state, token) : NULL;
     free(state);
     free(token);
-    return be ? be : settings_mock_backend();
+    be = *(src ? src : settings_mock_backend());
+    be.leave = NULL;
+    return &be;
 }
 
 /**
