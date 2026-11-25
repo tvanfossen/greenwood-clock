@@ -780,19 +780,22 @@ LVGL_HOST_INCLUDES = (
 
 
 ## @brief Build (incrementally) the LVGL fork for the host from the device's sdkconfig.h.
+## v2: the compiler, archiver, output folder and extra flags are parameters (the panel's
+## WebAssembly build uses emcc).
 ## @utility
-## @version 1
+## @version 2
 ## @return Path to liblvgl.a.
-def _lvgl_host_lib(c):
+def _lvgl_host_lib(c, out_dir=None, cc="gcc", ar="ar", flags=""):
     from concurrent.futures import ThreadPoolExecutor
 
+    out_dir = out_dir or LVGL_HOST_DIR
     sdk = REPO / "build" / "config" / "sdkconfig.h"
     if not sdk.exists():
         raise SystemExit("build/config/sdkconfig.h missing: run `inv build` once first")
     kconf = LVGL_HOST_DIR / "lv_host_kconfig.h"
     gen = REPO / "tools" / "lvgl_host" / "gen_kconfig.py"
     c.run(f"{sys.executable} {gen} {sdk} {kconf} {REPO / 'sdcard'}")
-    obj_dir = LVGL_HOST_DIR / "obj"
+    obj_dir = out_dir / "obj"
     obj_dir.mkdir(parents=True, exist_ok=True)
     srcs = sorted((REPO / "components" / "lvgl" / "src").rglob("*.c"))
     incs = f"-I{LVGL_HOST_DIR} -I{REPO / 'components' / 'lvgl'}"
@@ -804,7 +807,7 @@ def _lvgl_host_lib(c):
         ):
             return obj
         subprocess.run(
-            f"gcc -c -O2 -w {LVGL_HOST_DEFINE} {incs} {src} -o {obj}",
+            f"{cc} -c -O2 -w {LVGL_HOST_DEFINE} {flags} {incs} {src} -o {obj}",
             shell=True,
             check=True,
         )
@@ -812,10 +815,71 @@ def _lvgl_host_lib(c):
 
     with ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
         objs = list(pool.map(build, srcs))
-    lib = LVGL_HOST_DIR / "liblvgl.a"
+    lib = out_dir / "liblvgl.a"
     if not lib.exists() or max(o.stat().st_mtime for o in objs) > lib.stat().st_mtime:
-        c.run(f"ar rcs {lib} {' '.join(str(o) for o in objs)}")
+        c.run(f"{ar} rcs {lib} {' '.join(str(o) for o in objs)}")
     return lib
+
+
+#: The phone panel (the clock's settings UI as WebAssembly): Emscripten, its LVGL build and
+#: the firmware sources it links.
+EMCC = Path.home() / "emsdk" / "upstream" / "emscripten" / "emcc"
+EMAR = Path.home() / "emsdk" / "upstream" / "emscripten" / "emar"
+PANEL_LVGL_DIR = TMP / "lvgl_wasm"
+PANEL_FLAGS = "-sUSE_SDL=2 -DCONFIG_LV_USE_SDL=1"
+PANEL_SRCS = (
+    "components/display_fsm/src/ui_theme.c",
+    "components/display_fsm/src/ui_theme_json.c",
+    "components/display_fsm/src/ui_theme_lvgl.c",
+    "components/display_fsm/src/ui_theme_bind.c",
+    "components/display_fsm/src/ui_contrast.c",
+    "components/display_fsm/src/settings_frame.c",
+    "components/display_fsm/src/sched_rule.c",
+    "components/display_fsm/src/sched_view.c",
+    "components/display_fsm/src/sky_data.c",
+    "components/display_fsm/src/astro_calc.c",
+    "components/cjson/cjson/cJSON.c",
+    "tools/panel/panel_main.c",
+)
+PANEL_OUT = REPO / "sdcard" / "www" / "panel"
+
+
+## @brief Build the phone panel: the clock's LVGL settings screens compiled to WebAssembly
+## (Emscripten, SDL2 canvas) into sdcard/www/panel/ (index.html, panel.js, panel.wasm).
+## @req REQ-UI-002
+## @version 1
+@task
+def panel_build(c):
+    if not EMCC.exists():
+        raise SystemExit(f"{EMCC} missing: install emsdk in ~/emsdk")
+    lib = _lvgl_host_lib(c, PANEL_LVGL_DIR, cc=EMCC, ar=EMAR, flags=PANEL_FLAGS)
+    PANEL_OUT.mkdir(parents=True, exist_ok=True)
+    incs = " ".join(f"-I{d}" for d in LVGL_HOST_INCLUDES)
+    srcs = " ".join(str(REPO / s) for s in PANEL_SRCS)
+    compat = REPO / "tools" / "lvgl_host" / "stubs" / "host_compat.h"
+    c.run(
+        f"{EMCC} -std=gnu11 -O2 -w -include {compat} {LVGL_HOST_DEFINE} {PANEL_FLAGS} {incs} "
+        f"{srcs} {lib} -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=33554432 "
+        f"-o {PANEL_OUT / 'panel.js'}"
+    )
+    (PANEL_OUT / "index.html").write_text(
+        (REPO / "tools" / "panel" / "index.html").read_text()
+    )
+    for f in sorted(PANEL_OUT.iterdir()):
+        print(f"{f.relative_to(REPO)}: {f.stat().st_size:,} B")
+
+
+## @brief Screenshot the built phone panel in headless Firefox (desktop and phone landscape),
+## tapping through tools/panel/shots.json, into .claude/tmp/panel_shots/.
+## @req REQ-UI-002
+## @version 1
+@task(help={"steps": "Steps JSON (default tools/panel/shots.json)"})
+def panel_shots(c, steps=None):
+    steps = steps or REPO / "tools" / "panel" / "shots.json"
+    c.run(
+        f"{sys.executable} {REPO / 'tools' / 'panel' / 'shots.py'} {PANEL_OUT} "
+        f"{TMP / 'panel_shots'} {steps}"
+    )
 
 
 ## @brief Render every theme in sdcard/themes with the firmware's own widgets and the real

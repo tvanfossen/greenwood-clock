@@ -1,6 +1,7 @@
 /**
  * @file host_compat.h
- * @version 1
+ * v2: not under Emscripten (its libc has strlcpy).
+ * @version 2
  * @brief Force-included in host builds of firmware sources: the libc extensions ESP-IDF's
  *        newlib has and the host glibc may lack (strlcpy, strcasestr).
  */
@@ -11,7 +12,8 @@
 #include <string.h>
 #include <stddef.h>
 
-#if !defined(__GLIBC__) || __GLIBC__ < 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ < 38)
+#if !defined(__EMSCRIPTEN__) && \
+    (!defined(__GLIBC__) || __GLIBC__ < 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ < 38))
 /**
  * @brief BSD strlcpy: copy at most @p n - 1 bytes, always NUL-terminate.
  * @version 1

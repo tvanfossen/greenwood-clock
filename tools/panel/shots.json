@@ -1,0 +1,4 @@
+[
+  {"name": "menu"},
+  {"name": "schedule", "taps": [[320, 300]]}
+]

@@ -24,3 +24,4 @@ tools/__pycache__/
 
 # Source photos for inv bg-ingest (personal; converted copies go to sdcard/backgrounds)
 /image_ingest/
+sdcard/www/panel/
