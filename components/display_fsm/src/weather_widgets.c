@@ -712,7 +712,8 @@ static void strip_set_pop(lv_obj_t *lbl, int pct)
  *        (the day's or night's, whichever is higher).
  * v2: high and low on two lines with degree signs; a missing low shows "--".
  * v3: chance of precipitation.
- * @version 3
+ * v4: "Hi" / "Lo" written before each.
+ * @version 4
  * @utility
  */
 static void strip_fill_day(forecast_strip_t *s, int day, const nws_forecast_t *fc, int i)
@@ -722,17 +723,17 @@ static void strip_fill_day(forecast_strip_t *s, int day, const nws_forecast_t *f
     if (p->is_daytime) {
         strip_day_name(day, buf, sizeof(buf));
         lv_label_set_text(s->days[day].lbl_name, buf);
-        lv_label_set_text_fmt(s->days[day].lbl_hi, "%d\xC2\xB0", p->temperature);
+        lv_label_set_text_fmt(s->days[day].lbl_hi, "Hi %d\xC2\xB0", p->temperature);
         bool has_night = i + 1 < fc->period_count && !fc->periods[i + 1].is_daytime;
         const nws_forecast_period_t *night = has_night ? &fc->periods[i + 1] : NULL;
-        if (night) lv_label_set_text_fmt(s->days[day].lbl_lo, "%d\xC2\xB0", night->temperature);
-        else lv_label_set_text(s->days[day].lbl_lo, "--");
+        if (night) lv_label_set_text_fmt(s->days[day].lbl_lo, "Lo %d\xC2\xB0", night->temperature);
+        else lv_label_set_text(s->days[day].lbl_lo, "Lo --");
         strip_set_pop(s->days[day].lbl_pop, night && night->precip_pct > p->precip_pct
                                                 ? night->precip_pct : p->precip_pct);
     } else {
         lv_label_set_text(s->days[day].lbl_name, "Tonight");
         lv_label_set_text(s->days[day].lbl_hi, "");
-        lv_label_set_text_fmt(s->days[day].lbl_lo, "%d\xC2\xB0", p->temperature);
+        lv_label_set_text_fmt(s->days[day].lbl_lo, "Lo %d\xC2\xB0", p->temperature);
         strip_set_pop(s->days[day].lbl_pop, p->precip_pct);
     }
     strip_set_condition(s, day, p->short_forecast, p->is_daytime);
