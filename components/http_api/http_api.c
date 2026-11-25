@@ -1818,7 +1818,8 @@ static FILE *www_open(httpd_req_t *req, const char *path)
  *
  * @param req  Incoming request.
  * v2: a gzipped twin when the browser takes it (the phone panel's 1.2 MB wasm: ~3x less).
- * @version 2
+ * v3: not cached (an hour-old panel ran against new firmware after push-www).
+ * @version 3
  * @callback
  * @return ESP_OK on success; ESP_FAIL if SD unmounted, file missing, or a send fails.
  * @req REQ-API-001
@@ -1842,8 +1843,9 @@ static esp_err_t www_file_handler(httpd_req_t *req)
     }
 
     httpd_resp_set_type(req, www_mime_type(filepath));
-    // Allow caching of static assets (1 hour)
-    httpd_resp_set_hdr(req, "Cache-Control", "max-age=3600");
+    // No caching: a phone that scanned an hour ago must not run an older panel against
+    // this firmware's API (440 KB gzipped: well under a second on the LAN).
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
 
     char buf[UPLOAD_BUFFER_SIZE];
     size_t len;
