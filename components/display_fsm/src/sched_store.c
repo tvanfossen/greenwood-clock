@@ -1,6 +1,7 @@
 /**
  * @file sched_store.c
- * @version 1
+ * v2: sched_store_sun_table; sched_store_today public.
+ * @version 2
  * @brief The device's schedule: file, RAM copy, overlap-checked saves, the active profile and
  *        the device's sun (see sched_store.h).
  */
@@ -69,17 +70,34 @@ static sched_sun_t device_sun(sched_date_t d, void *ctx)
     return cached;
 }
 
-static const sched_sun_src_t SUN = { device_sun, NULL };
+static const sched_sun_src_t SUN = { device_sun, NULL };   // for callers holding s_lock
 
 /**
- * @brief The device's sun source.
+ * @brief device_sun for callers outside the store: takes s_lock around the cache.
  * @version 1
+ * @callback
+ * @return The sun times.
+ */
+static sched_sun_t locked_sun(sched_date_t d, void *ctx)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    sched_sun_t s = device_sun(d, ctx);
+    xSemaphoreGive(s_lock);
+    return s;
+}
+
+static const sched_sun_src_t LOCKED_SUN = { locked_sun, NULL };
+
+/**
+ * @brief The device's sun source (safe from any task).
+ * v2: takes the store's lock (the settings screens call it from the LVGL task).
+ * @version 2
  * @req REQ-BG-004
  * @return It.
  */
 const sched_sun_src_t *sched_store_sun(void)
 {
-    return &SUN;
+    return &LOCKED_SUN;
 }
 
 // ---------------------------------------------------------------------------
@@ -223,10 +241,10 @@ int sched_store_get(sched_rule_t *out, int max)
 /**
  * @brief Today as a local date.
  * @version 1
- * @utility
+ * @req REQ-BG-004
  * @return The date.
  */
-static sched_date_t today(void)
+sched_date_t sched_store_today(void)
 {
     time_t now = time(NULL);
     struct tm t;
@@ -237,7 +255,8 @@ static sched_date_t today(void)
 
 /**
  * @brief Check, write and adopt a schedule.
- * @version 1
+ * v2: sched_store_today.
+ * @version 2
  * @req REQ-BG-004
  * @return ESP_OK, ESP_ERR_INVALID_ARG, or the write's error.
  */
@@ -248,7 +267,7 @@ esp_err_t sched_store_set(const sched_rule_t *r, int n, char *why, size_t why_n)
     read_location();
     xSemaphoreTake(s_lock, portMAX_DELAY);   // the sun cache is shared with sched_store_active
     for (int i = 0; i < n && err == ESP_OK; i++) {
-        if (sched_find_overlap(r, n, i, today(), CHECK_DAYS, &SUN, &o)) {
+        if (sched_find_overlap(r, n, i, sched_store_today(), CHECK_DAYS, &SUN, &o)) {
             if (why) sched_fmt_overlap(r, &o, why, why_n);
             ESP_LOGW(TAG, "refused: %s overlaps %s", r[i].name, r[o.other].name);
             err = ESP_ERR_INVALID_ARG;
@@ -285,4 +304,23 @@ int sched_store_active(const struct tm *now, sched_rule_t *out)
         out->brightness = SCHED_INHERIT;
     }
     return idx;
+}
+
+/**
+ * @brief The sun for a run of days.
+ * @version 1
+ * @req REQ-BG-004
+ */
+void sched_store_sun_table(sched_date_t from, int days, sched_sun_t *out)
+{
+    sched_date_t d = from;
+    xSemaphoreTake(s_lock, portMAX_DELAY);   // the sun cache is shared
+    for (int i = 0; i < days; i++) {
+        out[i] = device_sun(d, NULL);
+        struct tm t = { .tm_year = d.year - 1900, .tm_mon = d.month - 1, .tm_mday = d.day + 1,
+                        .tm_hour = 12, .tm_isdst = -1 };
+        mktime(&t);   // normalises the day after
+        d = (sched_date_t){ (uint16_t)(t.tm_year + 1900), (uint8_t)(t.tm_mon + 1), (uint8_t)t.tm_mday };
+    }
+    xSemaphoreGive(s_lock);
 }

@@ -39,6 +39,7 @@ extern "C" {
 #include "sched_store.h"
 #include "phone_view.h"
 #include "auth.h"
+#include "settings_lists.h"
 }
 
 #include <cstring>
@@ -51,7 +52,6 @@ extern "C" {
 static const char *TAG = "state_settings";
 
 #define CUSTOM_THEME_STEM "custom"
-#define BG_DIR "/sdcard/backgrounds"
 
 static lv_obj_t *s_settings_root = nullptr;  // root container for all settings
 
@@ -517,65 +517,17 @@ static void be_get(settings_values_t *out)
 }
 
 /**
- * @brief Whether @p name is a background picture file (.png or .gif).
- * @version 1
- * @utility
- * @return The extension's start, or NULL.
- */
-static const char *picture_ext(const char *name)
-{
-    const char *ext = strrchr(name, '.');
-    bool ok = ext && (strcasecmp(ext, ".png") == 0 || strcasecmp(ext, ".gif") == 0);
-    return ok ? ext : nullptr;
-}
-
-/**
- * @brief The pictures in /sdcard/backgrounds as choices ("A:/backgrounds/x.png", "x").
- * @version 1
- * @utility
- * @return How many.
- */
-static int list_backgrounds(settings_choice_t *out, int max)
-{
-    DIR *dir = sdcard_is_mounted() ? opendir(BG_DIR) : nullptr;
-    int n = 0;
-    struct dirent *e;
-    while (dir && (e = readdir(dir)) != nullptr && n < max) {
-        const char *ext = e->d_type == DT_DIR ? nullptr : picture_ext(e->d_name);
-        if (!ext) continue;
-        snprintf(out[n].value, sizeof(out[n].value), "A:/backgrounds/%s", e->d_name);
-        snprintf(out[n].label, sizeof(out[n].label), "%.*s", (int)(ext - e->d_name), e->d_name);
-        n++;
-    }
-    if (dir) closedir(dir);
-    else ESP_LOGW(TAG, "%s: not readable", BG_DIR);
-    return n;
-}
-
-/**
- * @brief A list to choose from: backgrounds (SD), themes (the cache), clock animations.
- * @version 1
+ * @brief A list to choose from (SD and theme files read off the LVGL lock).
+ * v2: settings_lists_fill (shared with the phone panel's API).
+ * @version 2
  * @callback
  * @return How many.
  */
 static int be_list(settings_list_t which, settings_choice_t *out, int max)
 {
-    int n = 0;
-    if (which == SETTINGS_LIST_BACKGROUNDS) {
-        lvgl_port_unlock();   // SD listing off the LVGL lock
-        n = list_backgrounds(out, max);
-        lvgl_port_lock(0);
-    } else if (which == SETTINGS_LIST_THEMES) {
-        for (; n < theme_store_count() && n < max; n++) {
-            strlcpy(out[n].value, theme_store_entry(n)->stem, sizeof(out[n].value));
-            strlcpy(out[n].label, theme_store_entry(n)->name, sizeof(out[n].label));
-        }
-    } else {
-        for (; n < CLOCK_ANIM_COUNT && n < max; n++) {
-            strlcpy(out[n].value, clock_anim_name(CLOCK_ANIM_MENU_ORDER[n]), sizeof(out[n].value));
-            strlcpy(out[n].label, out[n].value, sizeof(out[n].label));
-        }
-    }
+    lvgl_port_unlock();
+    int n = settings_lists_fill(which, out, max);
+    lvgl_port_lock(0);
     return n;
 }
 

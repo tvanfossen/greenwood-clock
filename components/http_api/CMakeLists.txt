@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "http_api.c" "http_auth.c" "http_schedule.c" "http_frame_capture.c" "http_theme.c"
+    SRCS "http_api.c" "http_auth.c" "http_panel.c" "http_schedule.c" "http_frame_capture.c" "http_theme.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_http_server

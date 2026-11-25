@@ -103,8 +103,8 @@ def _api_token():
 
 
 ## @brief Perform an HTTP request against the device and return the body.
-## @utility
 ## v3: always sends the admin token (the clock gates every endpoint; auth is ignored).
+## @utility
 ## @version 3
 ## @return Response body bytes, or None when the device answered with an HTTP error.
 def _request(host, path, auth=False, method="GET", payload=None):
@@ -300,8 +300,8 @@ ANIM_NAMES = {
 }
 
 
-## @brief Select the clock-screen animation: hummingbird, snowfall, leaves or none.
 ## v2: help lists every animation; short names (leaves) map to the firmware display names.
+## @brief Select the clock-screen animation: hummingbird, snowfall, leaves or none.
 ## @req REQ-TOOL-001
 ## @version 2
 @task(
@@ -656,18 +656,20 @@ def push_themes(c, host=DEFAULT_HOST):
     _push_staging_tree(c, "themes", "*.json", host)
 
 
-## @brief Upload sdcard/www/* (the web control panel) to the device SD card.
+## v2: the WebAssembly panel (index.html, panel.js, panel.wasm); the old web panel is gone.
+## @brief Build the phone panel and upload it (sdcard/www/panel/) to the device SD card.
 ## @req REQ-TOOL-002
 ## @req REQ-UI-002
-## @version 1
+## @version 2
 @task(help={"host": "Device host or IP"})
 def push_www(c, host=DEFAULT_HOST):
-    for pattern in ("*.html", "*.js", "*.css"):
+    panel_build(c)
+    for pattern in ("*.html", "*.js", "*.wasm"):
         _push_staging_tree(c, "www", pattern, host)
 
 
-## @brief Upload sdcard/icons/** (forecast icons) to the device SD card.
 ## v2: shares _push_staging_tree with push-lottie.
+## @brief Upload sdcard/icons/** (forecast icons) to the device SD card.
 ## @req REQ-TOOL-002
 ## @req REQ-WX-006
 ## @version 2
@@ -700,8 +702,8 @@ def _host_module_src(module):
     return REPO / "components" / "display_fsm" / "src" / f"{module}.c"
 
 
-## @brief Build and run the host-side C unit tests (pure-logic modules, no ESP-IDF).
 ## v3: modules may come from other components; include dirs from HOST_TEST_INCLUDES.
+## @brief Build and run the host-side C unit tests (pure-logic modules, no ESP-IDF).
 ## @req REQ-TOOL-004
 ## @version 3
 @task
@@ -789,8 +791,8 @@ LVGL_HOST_INCLUDES = (
 )
 
 
-## @brief Build (incrementally) the LVGL fork for the host from the device's sdkconfig.h.
 ## v2: the compiler, archiver, output folder and extra flags are parameters (the panel's
+## @brief Build (incrementally) the LVGL fork for the host from the device's sdkconfig.h.
 ## WebAssembly build uses emcc).
 ## @utility
 ## @version 2
@@ -860,6 +862,7 @@ PANEL_SRCS = (
     "components/cjson/cjson/cJSON.c",
     "components/fonts/c_array/nunito_48.c",
     "tools/panel/settings_mock.c",
+    "tools/panel/settings_http.c",
     "tools/panel/panel_main.c",
 )
 PANEL_OUT = REPO / "sdcard" / "www" / "panel"
@@ -868,8 +871,9 @@ PANEL_OUT = REPO / "sdcard" / "www" / "panel"
 ## @brief Build the phone panel: the clock's LVGL settings screens compiled to WebAssembly
 ## (Emscripten, SDL2 canvas) into sdcard/www/panel/ (index.html, panel.js, panel.wasm).
 ## v2: the settings app over the sample backend; tools/panel headers.
+## v3: the clock backend (settings_http; -sFETCH) beside the sample one.
 ## @req REQ-UI-002
-## @version 2
+## @version 3
 @task
 def panel_build(c):
     if not EMCC.exists():
@@ -881,7 +885,7 @@ def panel_build(c):
     compat = REPO / "tools" / "lvgl_host" / "stubs" / "host_compat.h"
     c.run(
         f"{EMCC} -std=gnu11 -O2 -w -include {compat} {LVGL_HOST_DEFINE} {PANEL_FLAGS} {incs} "
-        f"{srcs} {lib} -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=33554432 "
+        f"{srcs} {lib} -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=33554432 -sFETCH=1 "
         f"-o {PANEL_OUT / 'panel.js'}"
     )
     (PANEL_OUT / "index.html").write_text(
@@ -889,6 +893,18 @@ def panel_build(c):
     )
     for f in sorted(PANEL_OUT.iterdir()):
         print(f"{f.relative_to(REPO)}: {f.stat().st_size:,} B")
+
+
+## @brief End-to-end test of the built phone panel against a stand-in clock (pairing by the
+## QR code's link, the state load, an authenticated schedule save, a reused code refused).
+## @req REQ-UI-005
+## @version 1
+@task
+def panel_e2e(c):
+    c.run(
+        f"{sys.executable} {REPO / 'tools' / 'panel' / 'mock_clock.py'} "
+        f"{REPO / 'sdcard' / 'www'} {TMP / 'panel_shots'}"
+    )
 
 
 ## @brief Screenshot the built phone panel in headless Firefox (desktop and phone landscape),

@@ -24,8 +24,9 @@ CLOCK_W, CLOCK_H = 1024, 600
 
 
 ## @brief Serve @p root on a free local port in a daemon thread.
+## v2: the panel opens with sample data (?mock): no clock to pair with.
 ## @utility
-## @version 1
+## @version 2
 ## @return The server's base URL.
 def serve(root):
     handler = functools.partial(
@@ -34,7 +35,7 @@ def serve(root):
     handler.log_message = lambda *a: None
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    return f"http://127.0.0.1:{srv.server_address[1]}/index.html"
+    return f"http://127.0.0.1:{srv.server_address[1]}/index.html?mock"
 
 
 ## @brief Tap clock pixel (@p x, @p y) on the page's canvas, wherever it is laid out.

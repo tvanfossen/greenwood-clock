@@ -1,6 +1,7 @@
 /**
  * @file sched_store.h
- * @version 1
+ * v2: sched_store_sun_table (the phone panel's sun).
+ * @version 2
  * @brief The device's schedule: /sdcard/schedule.json (see sched_json.h) with a RAM copy
  *        guarded by a mutex, saved only when no profile overlaps another of its kind (checked
  *        a year ahead with the device's own sun), and the profile showing now. The first
@@ -62,6 +63,22 @@ int sched_store_active(const struct tm *now, sched_rule_t *out);
  * @return The sun source (static).
  */
 const sched_sun_src_t *sched_store_sun(void);
+
+/**
+ * @brief Sunrise and sunset for @p days days from @p from at the device's location, into
+ *        @p out (safe from any task; the phone panel's overlap check uses them).
+ * @version 1
+ * @req REQ-BG-004
+ */
+void sched_store_sun_table(sched_date_t from, int days, sched_sun_t *out);
+
+/**
+ * @brief Today as a local date.
+ * @version 1
+ * @req REQ-BG-004
+ * @return The date.
+ */
+sched_date_t sched_store_today(void);
 
 #ifdef __cplusplus
 }

@@ -2,7 +2,9 @@
  * @file panel_main.c
  * v2: the real settings UI (settings_app) over a backend; frames centred; the page's
  *     background follows the theme's screen colour.
- * @version 2
+ * v3: the clock's backend (settings_http) from the state the loader page fetched; the
+ *     sample backend when there is none (?mock).
+ * @version 3
  * @brief The phone panel's WebAssembly entry point: the clock's own LVGL settings screens in
  *        a browser canvas (SDL2 under Emscripten), touch and mouse as the pointer.
  */
@@ -10,11 +12,19 @@
 #include "settings_app.h"
 #include "settings_frame.h"
 #include "settings_mock.h"
+#include "settings_http.h"
 #include "ui_theme.h"
 #include "ui_theme_lvgl.h"
 #include "ui_theme_bind.h"
 
 #include <emscripten.h>
+#include <stdlib.h>
+
+EM_JS_DEPS(panel, "$stringToNewUTF8");
+
+/** The loader page's window.panelState / window.panelToken as heap strings ("" when absent). */
+EM_JS(char *, js_panel_state, (void), { return stringToNewUTF8(window.panelState || ""); });
+EM_JS(char *, js_panel_token, (void), { return stringToNewUTF8(window.panelToken || ""); });
 
 #define PANEL_W 1024
 #define PANEL_H 600
@@ -33,6 +43,21 @@ static void page_background(void)
 }
 
 /**
+ * @brief The backend: the clock's, from the state the loader fetched, or the sample one.
+ * @version 1
+ * @utility
+ * @return It.
+ */
+static const settings_backend_t *pick_backend(void)
+{
+    char *state = js_panel_state(), *token = js_panel_token();
+    const settings_backend_t *be = state[0] ? settings_http_backend(state, token) : NULL;
+    free(state);
+    free(token);
+    return be ? be : settings_mock_backend();
+}
+
+/**
  * @brief One browser frame: run LVGL's timers.
  * @version 1
  * @callback
@@ -46,7 +71,8 @@ static void frame_cb(void)
  * @brief Entry point: LVGL on an SDL window (the page's canvas), the base theme, the
  *        settings at the menu.
  * v2: settings_app over the sample backend.
- * @version 2
+ * v3: over the clock's backend when the loader fetched its state.
+ * @version 3
  * @utility
  * @return 0.
  */
@@ -62,7 +88,7 @@ int main(void)
     ui_bind_fill_role(scr, UI_ROLE_SCREEN);
     page_background();
     settings_frame_set_y((PANEL_H - SETTINGS_FRAME_H) / 2);   // no clock above: centred
-    settings_app_open(scr, settings_mock_backend());
+    settings_app_open(scr, pick_backend());
     emscripten_set_main_loop(frame_cb, 0, 1);
     return 0;
 }

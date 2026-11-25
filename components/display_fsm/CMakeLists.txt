@@ -45,6 +45,7 @@ idf_component_register(
         "src/settings_app.c"
         "src/settings_sched.c"
         "src/settings_pickers.c"
+        "src/settings_lists.c"
         "src/phone_view.c"
         "src/image_rotator.c"
         "src/json_layout.c"

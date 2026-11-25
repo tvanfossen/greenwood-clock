@@ -7,6 +7,7 @@
 
 #include "http_auth.h"
 #include "http_schedule.h"
+#include "http_panel.h"
 #include "http_theme.h"
 #include "http_frame_capture.h"
 #include "frame_capture.h"
@@ -1080,13 +1081,15 @@ static void http_api_register_display_handlers(httpd_handle_t srv)
  * v4: also the theme endpoints.
  * v5: the daily/events schedule endpoints (/api/schedule replaces /api/bg_schedule).
  * v6: the gate on every handler; POST /api/pair.
- * @version 6
+ * v7: the panel endpoints.
+ * @version 7
  * @req REQ-API-001
  */
 static void http_api_register_handlers(httpd_handle_t srv)
 {
     http_frame_capture_register(srv);
     http_auth_register_pairing(srv);   // the one public /api endpoint
+    http_panel_register(srv);
     http_schedule_register(srv);   // before the display handlers' www catch-all
     http_theme_register(srv);
     http_api_register_file_handlers(srv);
@@ -1757,24 +1760,28 @@ static esp_err_t ota_status_handler(httpd_req_t *req)
  * @brief Determine MIME type from file extension.
  *
  * @param path  File path whose extension is inspected.
- * @version 1
+ * v2: a table; .wasm (the phone panel; browsers compile it while it streams only with
+ *     application/wasm).
+ * @version 2
  * @utility
  * @return Static MIME type string; "application/octet-stream" if unknown.
  */
 static const char *www_mime_type(const char *path)
 {
+    static const char *const TYPES[][2] = {
+        { ".html", "text/html" },        { ".htm", "text/html" },
+        { ".css", "text/css" },          { ".js", "application/javascript" },
+        { ".wasm", "application/wasm" }, { ".json", "application/json" },
+        { ".png", "image/png" },         { ".jpg", "image/jpeg" },
+        { ".jpeg", "image/jpeg" },       { ".gif", "image/gif" },
+        { ".svg", "image/svg+xml" },     { ".ico", "image/x-icon" },
+    };
     const char *ext = strrchr(path, '.');
-    if (!ext) return "application/octet-stream";
-    if (strcmp(ext, ".html") == 0 || strcmp(ext, ".htm") == 0) return "text/html";
-    if (strcmp(ext, ".css") == 0)  return "text/css";
-    if (strcmp(ext, ".js") == 0)   return "application/javascript";
-    if (strcmp(ext, ".json") == 0) return "application/json";
-    if (strcmp(ext, ".png") == 0)  return "image/png";
-    if (strcmp(ext, ".jpg") == 0 || strcmp(ext, ".jpeg") == 0) return "image/jpeg";
-    if (strcmp(ext, ".gif") == 0)  return "image/gif";
-    if (strcmp(ext, ".svg") == 0)  return "image/svg+xml";
-    if (strcmp(ext, ".ico") == 0)  return "image/x-icon";
-    return "application/octet-stream";
+    const char *type = "application/octet-stream";
+    for (size_t i = 0; ext && i < sizeof(TYPES) / sizeof(TYPES[0]); i++) {
+        if (strcmp(ext, TYPES[i][0]) == 0) type = TYPES[i][1];
+    }
+    return type;
 }
 
 /**

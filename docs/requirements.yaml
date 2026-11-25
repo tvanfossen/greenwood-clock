@@ -491,10 +491,17 @@ requirements:
     description: Settings screens cover Wi-Fi, brightness, background, clock animation, time zone and software info, with a navigation stack.
     acceptance_criteria: Every setting is reachable and saved from the touchscreen.
   REQ-UI-002:
-    name: Web control panel
+    name: Phone panel (the clock's own settings UI in a browser)
     subsystem: UI
-    description: A browser UI served from /www shows status, current weather and forecast, and edits settings through the API.
-    acceptance_criteria: http://greenwood-clock.local/www/ loads and saves settings.
+    description: >-
+      The clock's settings screens (settings_app, the same LVGL code as the touch screen)
+      compiled to WebAssembly and served from /www/panel/. Opened from the QR code on
+      Settings > Phone; it reads the clock's settings, lists, schedule, time and sun once and
+      sends each change to the API with the session token. No separate web UI exists.
+    acceptance_criteria: >-
+      After scanning the code, the phone shows the same settings menu as the clock; a
+      brightness or schedule change made on the phone shows on the clock; with no session the
+      page says to scan the code.
   REQ-UI-003:
     name: One OKLCH colour theme
     subsystem: UI
