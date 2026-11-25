@@ -1,7 +1,8 @@
 /**
  * @file display_events.h
  * v2: DISPLAY_EVT_PHOTOS_CHANGED.
- * @version 2
+ * v3: no astronomy or ambient screens (the forecast's sky card has them).
+ * @version 3
  * @brief C-compatible display FSM event types, safe to pass through FreeRTOS queues.
  */
 // components/display_events/include/display_events.h
@@ -28,9 +29,7 @@ typedef enum {
     DISPLAY_STATE_CLOCK = 0,
     DISPLAY_STATE_WEATHER,
     DISPLAY_STATE_RADAR,
-    DISPLAY_STATE_ASTRONOMY,
     DISPLAY_STATE_PHOTOS,
-    DISPLAY_STATE_AMBIENT,
     DISPLAY_STATE_SURPRISE,
     DISPLAY_STATE_SETTINGS,
     DISPLAY_STATE_MAX
@@ -46,10 +45,8 @@ typedef enum {
     DISPLAY_EVT_FORECAST_UPDATE,     // new forecast data
     DISPLAY_EVT_ALERT_RECEIVED,      // new/changed alerts
     DISPLAY_EVT_RADAR_READY,         // decoded radar PNG available
-    DISPLAY_EVT_ASTRO_TRIGGER,       // dawn/dusk/midnight trigger
     DISPLAY_EVT_PHOTO_TRIGGER,       // periodic photo rotation
     DISPLAY_EVT_PHOTO_ADVANCE,       // slideshow tick: decode next off-lock + swap
-    DISPLAY_EVT_AMBIENT_TRIGGER,     // periodic ambient info
     DISPLAY_EVT_GESTURE,             // touch gesture detected
     DISPLAY_EVT_SETTINGS_BACK,       // back from settings → clock
     DISPLAY_EVT_SURPRISE_MESSAGE,    // HTTP push message

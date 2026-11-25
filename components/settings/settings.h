@@ -58,12 +58,12 @@ typedef struct {
     uint16_t weather_cooldown_s;  // debounce between triggers (default 1800)
     uint16_t radar_show_s;        // default 30
     uint16_t radar_cooldown_s;    // default 1800
-    uint16_t astro_show_s;        // default 30
-    uint16_t astro_cooldown_s;    // default 43200 (12h)
+    uint16_t astro_show_s;        // unused (no astronomy screen); kept for the NVS layout
+    uint16_t astro_cooldown_s;    // unused, likewise
     uint16_t photos_interval_s;   // periodic trigger interval (default 1800)
     uint16_t photos_show_s;       // default 30
-    uint16_t ambient_interval_s;  // periodic trigger interval (default 2700)
-    uint16_t ambient_show_s;      // default 30
+    uint16_t ambient_interval_s;  // unused (no ambient screen); kept for the NVS layout
+    uint16_t ambient_show_s;      // unused, likewise
 
 } clock_settings_t;
 

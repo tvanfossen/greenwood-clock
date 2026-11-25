@@ -419,9 +419,10 @@ static void poll_radar(float lat, float lon, TickType_t *now,
 }
 
 /**
- * @brief If due (3 h), fetch the Kp index and cache it; emit DISPLAY_EVT_ASTRO_TRIGGER
- *        when Kp >= 6.0 (aurora possible). Last fetch of the cycle, so no stagger.
- * @version 1
+ * @brief If due (3 h), fetch the Kp index and cache it (the forecast's sky card shows the
+ *        aurora from it). Last fetch of the cycle, so no stagger.
+ * v2: no astronomy screen to trigger: the Kp is shown by the sky card.
+ * @version 2
  * @req REQ-ASTRO-001
  * @req REQ-WX-004
  */
@@ -436,7 +437,6 @@ static void poll_kp(TickType_t *now, TickType_t *last, poll_stats_t *st)
         if (kp >= AURORA_KP_THRESHOLD) {
             ESP_LOGW(TAG, "Aurora possible! Kp=%.1f (threshold=%.1f)",
                      kp, AURORA_KP_THRESHOLD);
-            send_simple_event(DISPLAY_EVT_ASTRO_TRIGGER);
         }
     } else {
         st->failed++;

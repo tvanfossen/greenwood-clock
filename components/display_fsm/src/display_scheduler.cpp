@@ -67,18 +67,6 @@ static void photo_trigger_cb(TimerHandle_t timer)
     display_fsm_send_event(&evt);
 }
 
-/**
- * @brief FreeRTOS timer callback: send DISPLAY_EVT_AMBIENT_TRIGGER.
- * @version 1
- * @callback
- */
-static void ambient_trigger_cb(TimerHandle_t timer)
-{
-    (void)timer;
-    display_event_t evt = {};
-    evt.type = DISPLAY_EVT_AMBIENT_TRIGGER;
-    display_fsm_send_event(&evt);
-}
 
 // ---------------------------------------------------------------------------
 // Implementation
@@ -110,12 +98,12 @@ static bool photos_dir_has_png(void)
 }
 
 /**
- * @brief Build per-state durations and cooldowns from NVS, gate radar on precipitation, create the return timer and start the photo (only if PNGs exist) and ambient periodic timers.
- * @version 1
+ * @brief Build per-state durations and cooldowns from NVS, gate radar on precipitation, create the return timer and start the photo timer (only if PNGs exist).
+ * v2: no astronomy or ambient states (the forecast's sky card has them).
+ * @version 2
  * @req REQ-DISP-002
  * @req REQ-RADAR-002
  * @req REQ-PHOTO-001
- * @req REQ-AMB-001
  */
 void DisplayScheduler::init(void)
 {
@@ -133,12 +121,8 @@ void DisplayScheduler::init(void)
                                    (uint32_t)cfg.weather_cooldown_s * 1000 },
         { DISPLAY_STATE_RADAR,     (uint32_t)cfg.radar_show_s * 1000,
                                    (uint32_t)cfg.radar_cooldown_s * 1000 },
-        { DISPLAY_STATE_ASTRONOMY, (uint32_t)cfg.astro_show_s * 1000,
-                                   (uint32_t)cfg.astro_cooldown_s * 1000 },
         { DISPLAY_STATE_PHOTOS,    (uint32_t)cfg.photos_show_s * 1000,
                                    (uint32_t)cfg.photos_interval_s * 1000 },
-        { DISPLAY_STATE_AMBIENT,   (uint32_t)cfg.ambient_show_s * 1000,
-                                   (uint32_t)cfg.ambient_interval_s * 1000 },
         { DISPLAY_STATE_SURPRISE,  30000, 0 },  // no cooldown
     };
 
@@ -164,7 +148,6 @@ void DisplayScheduler::init(void)
 
     // Periodic triggers — auto-repeating timers from NVS settings
     uint32_t photo_ms   = (uint32_t)cfg.photos_interval_s * 1000;
-    uint32_t ambient_ms = (uint32_t)cfg.ambient_interval_s * 1000;
 
     // Check if photos directory has any PNG files — disable state if empty
     bool photos_available = photos_dir_has_png();
@@ -180,17 +163,11 @@ void DisplayScheduler::init(void)
         ESP_LOGI(TAG, "Photos disabled — no PNG files in /sdcard/photos");
     }
 
-    m_ambient_timer = xTimerCreate("fsm_ambient", pdMS_TO_TICKS(ambient_ms),
-                                    pdTRUE, nullptr, ambient_trigger_cb);
-    configASSERT(m_ambient_timer);
-    xTimerStart(m_ambient_timer, 0);
-
     m_active_state = DISPLAY_STATE_CLOCK;
     m_paused = false;
 
-    ESP_LOGI(TAG, "DisplayScheduler initialized (%d configs, photos=%lus, ambient=%lus)",
-             m_config_count, (unsigned long)cfg.photos_interval_s,
-             (unsigned long)cfg.ambient_interval_s);
+    ESP_LOGI(TAG, "DisplayScheduler initialized (%d configs, photos=%lus)", m_config_count,
+             (unsigned long)cfg.photos_interval_s);
 }
 
 /**

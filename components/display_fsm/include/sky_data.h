@@ -53,7 +53,6 @@ typedef struct {
  *        current Kp index @p kp (0 when unknown).
  * @version 1
  * @req REQ-ASTRO-001
- * @req REQ-AMB-001
  */
 void sky_data_compute(time_t now, float lat, float lon, float kp, sky_data_t *out);
 
@@ -69,7 +68,7 @@ void sky_sun_local(time_t noon, float lat, float lon, int *rise, int *set);
 /**
  * @brief Whole days from local date @p now to the next @p month / @p day (0 when today).
  * @version 1
- * @req REQ-AMB-001
+ * @req REQ-ASTRO-001
  * @return Days, 0..365.
  */
 int sky_days_until(time_t now, int month, int day);

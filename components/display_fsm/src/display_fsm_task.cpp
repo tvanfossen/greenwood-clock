@@ -211,7 +211,8 @@ static void lottie_loader_init(void)
  * @utility
  * v3: themes replace the text colour (theme names, theme roles, theme events).
  * v4: PHOTOS_CHANGED is handled before dispatch.
- * @version 4
+ * v5: no astronomy or ambient triggers.
+ * @version 5
  */
 static void dispatch_event(const display_event_t *evt)
 {
@@ -231,14 +232,8 @@ static void dispatch_event(const display_event_t *evt)
         case DISPLAY_EVT_RADAR_READY:
             DisplayFsm::dispatch(EvRadarReady{});
             break;
-        case DISPLAY_EVT_ASTRO_TRIGGER:
-            DisplayFsm::dispatch(EvAstroTrigger{});
-            break;
         case DISPLAY_EVT_PHOTO_TRIGGER:
             DisplayFsm::dispatch(EvPhotoTrigger{});
-            break;
-        case DISPLAY_EVT_AMBIENT_TRIGGER:
-            DisplayFsm::dispatch(EvAmbientTrigger{});
             break;
         case DISPLAY_EVT_GESTURE: {
             EvGesture e;

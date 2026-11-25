@@ -1,6 +1,7 @@
 /**
  * @file sky_body.c
- * @version 1
+ * v2: reports what painting costs (LV_LOG_USER).
+ * @version 2
  * @brief The sun and the moon as LVGL canvases (see sky_body.h).
  */
 #include "sky_body.h"
@@ -21,6 +22,7 @@ typedef struct {
     lv_timer_t     *timer;
     lv_obj_t       *canvas;
     uint32_t        ms;
+    uint32_t        frames, paint_ms;   /**< Since the last report (every 100 frames). */
 } sun_anim_t;
 
 /**
@@ -75,16 +77,24 @@ static void free_buf_cb(lv_event_t *e)
 
 /**
  * @brief One sun frame.
- * @version 1
+ * v2: its paint time reported every 100 frames.
+ * @version 2
  * @callback
  */
 static void sun_tick_cb(lv_timer_t *t)
 {
     sun_anim_t *a = (sun_anim_t *)lv_timer_get_user_data(t);
+    uint32_t t0 = lv_tick_get();
     a->ms = (a->ms + SUN_FRAME_MS) % SUN_LOOP_MS;
     sky_sun_frame(&a->sun, (float)a->ms / SUN_LOOP_MS, a->frame);
     blit(a->buf, a->frame, a->sun.d);
     lv_obj_invalidate(a->canvas);
+    a->paint_ms += lv_tick_elaps(t0);
+    if (++a->frames == 100) {   // what the animation costs, on the device's own clock
+        LV_LOG_USER("sky_body: sun %dpx: 100 frames painted in %u ms", a->sun.d,
+                    (unsigned)a->paint_ms);
+        a->frames = a->paint_ms = 0;
+    }
 }
 
 /**
@@ -154,7 +164,8 @@ lv_obj_t *sky_body_sun_create(lv_obj_t *parent, int32_t d)
 
 /**
  * @brief The moon.
- * @version 1
+ * v2: a slow paint (over 10 ms) is reported.
+ * @version 2
  * @req REQ-ASTRO-001
  * @return It, or NULL.
  */
@@ -164,11 +175,14 @@ lv_obj_t *sky_body_moon_create(lv_obj_t *parent, int32_t d, float age, lv_opa_t 
     lv_draw_buf_t *buf = NULL;
     lv_obj_t *cv = px ? canvas_for(parent, d, &buf) : NULL;
     if (cv) {
+        uint32_t t0 = lv_tick_get();
         sky_paint_moon(px, d, age, rgb(ui_theme_color(UI_ROLE_MOON)),
                        rgb(ui_theme_color(UI_ROLE_SURFACE_INSET)),   // follows the card: light or dark
                        dark_opa);
         blit(buf, px, d);
         lv_obj_add_event_cb(cv, free_buf_cb, LV_EVENT_DELETE, buf);
+        uint32_t took = lv_tick_elaps(t0);
+        if (took > 10) LV_LOG_USER("sky_body: moon %dpx painted in %u ms", (int)d, (unsigned)took);
     }
     lv_free(px);
     return cv;

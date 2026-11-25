@@ -1,6 +1,8 @@
 /**
  * @file image_rotator.c
- * @version 1
+ * v2: the first photo fades in over 1.5 s, eased, with the next decode held until it ends
+ *     (the decode competing with a 600 ms linear fade made it choppy).
+ * @version 2
  * @brief ImageRotator: cycles PNGs from a directory with off-lock RGB565 decode, .r565 file cache, RAM cache and next-image prefetch.
  */
 // Layer 1: ImageRotator — cycles through PNG images from a directory.
@@ -17,6 +19,8 @@
 #include "ui_theme_bind.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <string.h>
 #include <strings.h>
 #include <dirent.h>
@@ -26,6 +30,7 @@
 static const char *TAG = "image_rotator";
 
 #define MAX_IMAGES 50
+#define FADE_IN_MS 1500   // the first photo's fade from the screen colour
 #define MAX_PATH_LEN 128
 
 // lv_obj_set_style_opa takes 3 args; the anim exec cb is (void*, int32_t).
@@ -58,6 +63,7 @@ struct image_rotator_t {
     lv_image_dsc_t *pending_dsc;   // decoded off-lock, awaiting present()
     int             pending_index; // which image pending_dsc holds (-1 = none)
     bool            faded_in;      // first present() fades the container in
+    volatile int64_t fade_end_us;  // when that fade ends (the next decode waits for it)
 };
 
 /**
@@ -311,18 +317,22 @@ void image_rotator_decode_current(image_rotator_t *r)
 // Prefetch the NEXT image (off-lock) so the upcoming advance is an instant swap.
 /**
  * @brief Prefetch the next image into the pending slot (off the LVGL lock) so the next advance is an instant swap.
- * @version 1
+ * v2: waits for the first photo's fade to end: a decode during it starves the render.
+ * @version 2
  * @req REQ-PHOTO-001
  */
 void image_rotator_prefetch_next(image_rotator_t *r)
 {
     if (!r || r->count == 0) return;
+    int64_t wait_us = r->fade_end_us - esp_timer_get_time();
+    if (wait_us > 0) vTaskDelay(pdMS_TO_TICKS(wait_us / 1000 + 1));
     decode_into_pending(r, (r->current_index + 1) % r->count);
 }
 
 /**
- * @brief Swap the pending descriptor in if it holds the current image (under the LVGL lock); fades the image in over 600 ms on first present.
- * @version 1
+ * @brief Swap the pending descriptor in if it holds the current image (under the LVGL lock); fades the image in over 1.5 s on first present.
+ * v2: 1.5 s, eased in and out (was 600 ms linear); notes when it ends for the prefetch.
+ * @version 2
  * @req REQ-PHOTO-001
  */
 void image_rotator_present(image_rotator_t *r)
@@ -350,9 +360,11 @@ void image_rotator_present(image_rotator_t *r)
         lv_anim_init(&a);
         lv_anim_set_var(&a, r->img_current);
         lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
-        lv_anim_set_duration(&a, 600);
+        lv_anim_set_duration(&a, FADE_IN_MS);
+        lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
         lv_anim_set_exec_cb(&a, opa_anim_cb);
         lv_anim_start(&a);
+        r->fade_end_us = esp_timer_get_time() + (int64_t)FADE_IN_MS * 1000;
     }
     ESP_LOGI(TAG, "Present [%d] %s", r->current_index, r->paths[r->current_index]);
 }

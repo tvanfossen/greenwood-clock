@@ -18,7 +18,8 @@
 
 /**
  * @brief ClockFull state: the home screen, full-size clock.
- * @version 1
+ * v2: no astronomy or ambient triggers.
+ * @version 2
  * @req REQ-CLOCK-001
  * @return Not applicable: type declaration (clew-guard parses this struct header as a function).
  */
@@ -35,9 +36,7 @@ struct ClockFull : DisplayFsm
 
     void react(EvWeatherUpdate const &) override;
     void react(EvRadarReady const &) override;
-    void react(EvAstroTrigger const &) override;
     void react(EvPhotoTrigger const &) override;
-    void react(EvAmbientTrigger const &) override;
 };
 
 // ---------------------------------------------------------------------------
@@ -94,26 +93,6 @@ struct RadarOverlay : DisplayFsm
 };
 
 // ---------------------------------------------------------------------------
-// Astronomy — moon phase, sunrise/sunset, aurora
-// ---------------------------------------------------------------------------
-
-/**
- * @brief Astronomy state: moon phase, sunrise/sunset and aurora.
- * @version 1
- * @req REQ-ASTRO-001
- * @return Not applicable: type declaration (clew-guard parses this struct header as a function).
- */
-struct Astronomy : DisplayFsm
-{
-    static lv_obj_t *s_container;
-
-    void entry() override;
-    void exit() override;
-
-    void react(EvDisplayTimeout const &) override;
-};
-
-// ---------------------------------------------------------------------------
 // PhotoSlideshow — SD card image rotation
 // ---------------------------------------------------------------------------
 
@@ -127,7 +106,8 @@ struct PhotoSlideshow : DisplayFsm
     /**
      * @brief Enter the photo slideshow state.
      * v2: class no longer declares apply_clock_contrast (clock uses the user's colour).
-     * @version 2
+     * v3: (declaration block) no astronomy / ambient states around it.
+     * @version 3
      * @req REQ-PHOTO-001
      */
     void entry() override;
@@ -143,20 +123,6 @@ struct PhotoSlideshow : DisplayFsm
     static void prefetch();
     // Sample the shown photo behind the minimized clock and set a legible
     // (OKLCH) clock colour. Call under the LVGL lock after present().
-};
-
-// ---------------------------------------------------------------------------
-// AmbientDashboard — aggregate info panel
-// ---------------------------------------------------------------------------
-
-struct AmbientDashboard : DisplayFsm
-{
-    static lv_obj_t *s_container;
-
-    void entry() override;
-    void exit() override;
-
-    void react(EvDisplayTimeout const &) override;
 };
 
 // ---------------------------------------------------------------------------

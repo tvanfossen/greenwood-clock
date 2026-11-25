@@ -56,9 +56,7 @@ idf_component_register(
         "src/state_clock.cpp"
         "src/state_weather.cpp"
         "src/state_radar.cpp"
-        "src/state_astronomy.cpp"
         "src/state_photos.cpp"
-        "src/state_ambient.cpp"
         "src/state_surprise.cpp"
         "src/state_settings.cpp"
     INCLUDE_DIRS

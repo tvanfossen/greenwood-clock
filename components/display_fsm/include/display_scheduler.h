@@ -84,7 +84,6 @@ private:
     int m_config_count = 0;
     TimerHandle_t m_return_timer = nullptr;
     TimerHandle_t m_photo_timer  = nullptr;
-    TimerHandle_t m_ambient_timer = nullptr;
     display_state_id_t m_active_state = DISPLAY_STATE_CLOCK;
     bool m_paused = false;
 

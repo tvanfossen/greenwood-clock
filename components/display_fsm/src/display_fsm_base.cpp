@@ -39,9 +39,7 @@ static const display_state_id_t CAROUSEL_ORDER[] = {
     DISPLAY_STATE_CLOCK,
     DISPLAY_STATE_WEATHER,
     DISPLAY_STATE_RADAR,
-    DISPLAY_STATE_ASTRONOMY,
     DISPLAY_STATE_PHOTOS,
-    DISPLAY_STATE_AMBIENT,
 };
 static const int CAROUSEL_COUNT = sizeof(CAROUSEL_ORDER) / sizeof(CAROUSEL_ORDER[0]);
 
@@ -155,23 +153,11 @@ void DisplayFsm::react(EvAlertReceived const &)
     }
 }
 /**
- * @brief Default EvAstroTrigger handler: ignored unless a concrete state overrides it.
- * @version 1
- * @req REQ-DISP-001
- */
-void DisplayFsm::react(EvAstroTrigger const &)    { }
-/**
  * @brief Default EvPhotoTrigger handler: ignored unless a concrete state overrides it.
  * @version 1
  * @req REQ-DISP-001
  */
 void DisplayFsm::react(EvPhotoTrigger const &)    { }
-/**
- * @brief Default EvAmbientTrigger handler: ignored unless a concrete state overrides it.
- * @version 1
- * @req REQ-DISP-001
- */
-void DisplayFsm::react(EvAmbientTrigger const &)  { }
 /**
  * @brief Forced state change (API): show the requested state now, bypassing its cooldown
  *        (force_show), or return to the clock. States that are already the target
@@ -258,7 +244,8 @@ void DisplayFsm::carousel_navigate(int offset)
 
 /**
  * @brief Transit to the carousel state @p id (other ids are ignored).
- * @version 1
+ * v2: no astronomy or ambient screens.
+ * @version 2
  * @req REQ-DISP-001
  */
 void DisplayFsm::transit_to(display_state_id_t id)
@@ -267,9 +254,7 @@ void DisplayFsm::transit_to(display_state_id_t id)
         case DISPLAY_STATE_CLOCK:      transit<ClockFull>();        break;
         case DISPLAY_STATE_WEATHER:    transit<WeatherOverlay>();   break;
         case DISPLAY_STATE_RADAR:      transit<RadarOverlay>();     break;
-        case DISPLAY_STATE_ASTRONOMY:  transit<Astronomy>();        break;
         case DISPLAY_STATE_PHOTOS:     transit<PhotoSlideshow>();   break;
-        case DISPLAY_STATE_AMBIENT:    transit<AmbientDashboard>(); break;
         default: break;
     }
 }

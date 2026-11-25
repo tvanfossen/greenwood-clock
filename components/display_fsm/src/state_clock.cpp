@@ -66,19 +66,6 @@ void ClockFull::react(EvRadarReady const &)
 }
 
 /**
- * @brief Open Astronomy if the scheduler allows astronomy (enabled, condition, cooldown).
- * @version 1
- * @req REQ-DISP-002
- * @req REQ-ASTRO-001
- */
-void ClockFull::react(EvAstroTrigger const &)
-{
-    if (display_scheduler_get()->try_show(DISPLAY_STATE_ASTRONOMY)) {
-        transit<Astronomy>();
-    }
-}
-
-/**
  * @brief Open PhotoSlideshow if the scheduler allows photos (enabled, condition, cooldown).
  * @version 1
  * @req REQ-DISP-002
@@ -88,19 +75,6 @@ void ClockFull::react(EvPhotoTrigger const &)
 {
     if (display_scheduler_get()->try_show(DISPLAY_STATE_PHOTOS)) {
         transit<PhotoSlideshow>();
-    }
-}
-
-/**
- * @brief Open AmbientDashboard if the scheduler allows ambient (enabled, condition, cooldown).
- * @version 1
- * @req REQ-DISP-002
- * @req REQ-AMB-001
- */
-void ClockFull::react(EvAmbientTrigger const &)
-{
-    if (display_scheduler_get()->try_show(DISPLAY_STATE_AMBIENT)) {
-        transit<AmbientDashboard>();
     }
 }
 

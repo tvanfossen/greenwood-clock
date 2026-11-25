@@ -1,6 +1,7 @@
 /**
  * @file sky_paint.h
- * @version 1
+ * v2: the sun's per-pixel glow and ray profiles precomputed: a frame is table lookups only.
+ * @version 2
  * @brief The sun and the moon as pixels (ARGB8888, straight alpha, d x d), for the sky dial
  *        and the clear-sky weather icon. The moon is the near side as it really looks (its
  *        maria and bright craters) lit from the sun's direction for its age, waxing lit on
@@ -32,7 +33,10 @@ typedef struct {
     sky_rgb_t core, light;
     uint32_t *disc;    /**< The disc alone (glow and rays left transparent). */
     uint16_t *ang;     /**< Each pixel's angle about the centre (65536 = a turn). */
-    uint8_t  *rad;     /**< Each pixel's distance from the centre (255 = the corner). */
+    uint8_t  *glow;    /**< Each pixel's glow at full breath (255 = opaque). */
+    uint8_t  *ray_l;   /**< How much of a long ray reaches each pixel (255: all). */
+    uint8_t  *ray_s;   /**< ... of a short ray. */
+    uint8_t  *narrow;  /**< How fast a ray narrows sideways there (its distance x 8 / spread). */
 } sky_sun_t;
 
 /**

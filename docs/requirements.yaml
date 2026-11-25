@@ -473,14 +473,6 @@ requirements:
       exactly while it is above the horizon, lit on the side towards the sun; Kp matches NOAA's
       current value.
 
-  # ---------------------------------------------------------------- AMB
-  REQ-AMB-001:
-    name: Ambient dashboard
-    subsystem: AMB
-    description: A periodic ambient screen summarises time, weather and astronomy at a glance.
-    acceptance_criteria: >-
-      The ambient screen appears on its configured interval and shows the current time, weather and astronomy values.
-
   # ---------------------------------------------------------------- SURP
   REQ-SURP-001:
     name: Surprise messages

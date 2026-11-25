@@ -1891,7 +1891,8 @@ static esp_err_t display_state_get_handler(httpd_req_t *req)
  * @brief Map state name string to display_state_id_t.
  * v2: "settings" too.
  * @return DISPLAY_STATE_MAX if not found.
- * @version 2
+ * v3: no astronomy or ambient.
+ * @version 3
  * @req REQ-API-003
  */
 static display_state_id_t state_name_to_id(const char *name)
@@ -1900,9 +1901,7 @@ static display_state_id_t state_name_to_id(const char *name)
         {"clock",     DISPLAY_STATE_CLOCK},
         {"weather",   DISPLAY_STATE_WEATHER},
         {"radar",     DISPLAY_STATE_RADAR},
-        {"astronomy", DISPLAY_STATE_ASTRONOMY},
         {"photos",    DISPLAY_STATE_PHOTOS},
-        {"ambient",   DISPLAY_STATE_AMBIENT},
         {"settings",  DISPLAY_STATE_SETTINGS},
     };
     for (size_t i = 0; i < sizeof(map)/sizeof(map[0]); i++) {
@@ -2036,7 +2035,8 @@ static esp_err_t display_surprise_handler(httpd_req_t *req)
  * GET /api/display/schedule
  *
  * @param req  Incoming request.
- * @version 1
+ * v2: no astronomy or ambient timings.
+ * @version 2
  * @callback
  * @return ESP_OK.
  * @req REQ-API-003
@@ -2053,17 +2053,11 @@ static esp_err_t schedule_get_handler(httpd_req_t *req)
              "\"weather_cooldown_s\":%u,"
              "\"radar_show_s\":%u,"
              "\"radar_cooldown_s\":%u,"
-             "\"astro_show_s\":%u,"
-             "\"astro_cooldown_s\":%u,"
              "\"photos_interval_s\":%u,"
-             "\"photos_show_s\":%u,"
-             "\"ambient_interval_s\":%u,"
-             "\"ambient_show_s\":%u}\n",
+             "\"photos_show_s\":%u}\n",
              cfg.weather_show_s, cfg.weather_cooldown_s,
              cfg.radar_show_s, cfg.radar_cooldown_s,
-             cfg.astro_show_s, cfg.astro_cooldown_s,
-             cfg.photos_interval_s, cfg.photos_show_s,
-             cfg.ambient_interval_s, cfg.ambient_show_s);
+             cfg.photos_interval_s, cfg.photos_show_s);
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
@@ -2090,7 +2084,8 @@ static void json_copy_u16(const cJSON *root, const char *key, uint16_t *out)
  *
  * @param root  Parsed JSON request body.
  * @param cfg   Settings to update in place.
- * @version 1
+ * v2: no astronomy or ambient timings.
+ * @version 2
  * @utility
  */
 static void parse_schedule_fields(const cJSON *root, clock_settings_t *cfg)
@@ -2099,19 +2094,16 @@ static void parse_schedule_fields(const cJSON *root, clock_settings_t *cfg)
     json_copy_u16(root, "weather_cooldown_s", &cfg->weather_cooldown_s);
     json_copy_u16(root, "radar_show_s",       &cfg->radar_show_s);
     json_copy_u16(root, "radar_cooldown_s",   &cfg->radar_cooldown_s);
-    json_copy_u16(root, "astro_show_s",       &cfg->astro_show_s);
-    json_copy_u16(root, "astro_cooldown_s",   &cfg->astro_cooldown_s);
     json_copy_u16(root, "photos_interval_s",  &cfg->photos_interval_s);
     json_copy_u16(root, "photos_show_s",      &cfg->photos_show_s);
-    json_copy_u16(root, "ambient_interval_s", &cfg->ambient_interval_s);
-    json_copy_u16(root, "ambient_show_s",     &cfg->ambient_show_s);
 }
 
 /**
  * @brief Push each state's updated duration/cooldown to the FSM scheduler.
  *
  * @param cfg  Settings holding the new schedule timings.
- * @version 1
+ * v2: no astronomy or ambient.
+ * @version 2
  * @utility
  */
 static void notify_schedule_config(const clock_settings_t *cfg)
@@ -2119,9 +2111,7 @@ static void notify_schedule_config(const clock_settings_t *cfg)
     struct { display_state_id_t id; uint16_t show_s; uint16_t cooldown_s; } sched[] = {
         { DISPLAY_STATE_WEATHER,   cfg->weather_show_s,   cfg->weather_cooldown_s },
         { DISPLAY_STATE_RADAR,     cfg->radar_show_s,     cfg->radar_cooldown_s },
-        { DISPLAY_STATE_ASTRONOMY, cfg->astro_show_s,     cfg->astro_cooldown_s },
         { DISPLAY_STATE_PHOTOS,    cfg->photos_show_s,    cfg->photos_interval_s },
-        { DISPLAY_STATE_AMBIENT,   cfg->ambient_show_s,   cfg->ambient_interval_s },
     };
     for (size_t i = 0; i < sizeof(sched) / sizeof(sched[0]); i++) {
         display_event_t evt = {};

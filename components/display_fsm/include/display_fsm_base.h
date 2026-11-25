@@ -23,9 +23,7 @@ struct EvWeatherUpdate   : tinyfsm::Event { };
 struct EvForecastUpdate  : tinyfsm::Event { };
 struct EvAlertReceived   : tinyfsm::Event { };
 struct EvRadarReady      : tinyfsm::Event { };
-struct EvAstroTrigger    : tinyfsm::Event { };
 struct EvPhotoTrigger    : tinyfsm::Event { };
-struct EvAmbientTrigger  : tinyfsm::Event { };
 struct EvGesture         : tinyfsm::Event { lv_dir_t dir; };
 struct EvSettingsBack    : tinyfsm::Event { };
 struct EvSurpriseMessage : tinyfsm::Event { const char *json_str; uint32_t duration_s; };
@@ -103,19 +101,35 @@ protected:
 
     void set_state_info(display_state_id_t id, const char *name);
 
-    /** Navigate carousel by offset (-1 = prev, +1 = next). Wraps around. */
+    /**
+     * @brief Navigate the carousel by @p offset (-1 = prev, +1 = next); wraps around.
+     * @version 1
+     * @req REQ-DISP-001
+     */
     void carousel_navigate(int offset);
 
-    /** Transit to the carousel state @p id (other ids are ignored). */
+    /**
+     * @brief Transit to the carousel state @p id (other ids are ignored).
+     * v2: no astronomy or ambient screens.
+     * @version 2
+     * @req REQ-DISP-001
+     */
     void transit_to(display_state_id_t id);
 
-    /** Animate an LVGL object from transparent to fully opaque (900ms ease-in-out).
-     *  Caller must hold LVGL lock. */
+    /**
+     * @brief Animate @p obj from transparent to opaque (900 ms ease-in-out). Caller holds the
+     *        LVGL lock.
+     * @version 1
+     * @req REQ-DISP-004
+     */
     static void fade_in(lv_obj_t *obj);
 
-    /** Animate an LVGL object from opaque to transparent (600ms ease-in-out).
-     *  Does NOT destroy the object — use for visual effect before manual destroy.
-     *  Caller must hold LVGL lock. */
+    /**
+     * @brief Animate @p obj from opaque to transparent (600 ms ease-in-out); it is not
+     *        destroyed. Caller holds the LVGL lock.
+     * @version 1
+     * @req REQ-DISP-004
+     */
     static void fade_out(lv_obj_t *obj);
 
 public:
@@ -128,9 +142,7 @@ public:
     virtual void react(EvForecastUpdate const &);
     virtual void react(EvAlertReceived const &);
     virtual void react(EvRadarReady const &);
-    virtual void react(EvAstroTrigger const &);
     virtual void react(EvPhotoTrigger const &);
-    virtual void react(EvAmbientTrigger const &);
 
     // Base handles these — all states get same behavior
     virtual void react(EvGesture const &);
@@ -210,9 +222,17 @@ public:
      */
     static void                 set_top_layer(lv_obj_t *t) { s_top_layer = t; }
 
-    /** Create the carousel dot indicator on the screen. Call once at init. */
+    /**
+     * @brief Create the carousel dot indicator on the screen. Call once at init.
+     * @version 1
+     * @req REQ-DISP-001
+     */
     static void                 create_dot_indicator();
-    /** Update dot indicator to reflect current carousel position. */
+    /**
+     * @brief Update the dot indicator to the current carousel position.
+     * @version 1
+     * @req REQ-DISP-001
+     */
     static void                 update_dot_indicator();
 };
 

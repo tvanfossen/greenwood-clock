@@ -644,22 +644,6 @@ static void scene_alert(void)
     alert_card_open(lv_layer_top(), &s_alerts, 0);
 }
 
-/**
- * @brief The sky screen (sun and moon cards under the minimised clock) at local
- *        @p hour : @p min on 2026-@p mon-@p day, at a public sample place (Chicago, not the
- *        device's).
- * v2: through sample_moment (shared with the weather scene).
- * @version 2
- * @utility
- */
-static void scene_sky(int mon, int day, int hour, int min)
-{
-    lv_obj_t *scr = fresh_screen(true);
-    sky_data_t d;
-    sample_moment(mon, day, hour, min, &d);
-    sky_panel_create(scr, &d);
-    settle(900);
-}
 
 /**
  * @brief The file stem of @p path ("sdcard/themes/sassafras.json" -> "sassafras").
@@ -773,7 +757,8 @@ static void render_edit_demo(const char *out_dir, const char *path)
  * v11: the Phone screen (was the upload mock).
  * v12: the editor's Alert tab.
  * v13: sky dial moments (the real moon, by day and night).
- * @version 13
+ * v14: no sky screen (it is gone: the forecast's dial shows the sky).
+ * @version 14
  * @utility
  * @return Whether the theme parsed.
  */
@@ -815,15 +800,6 @@ static bool render_theme(const char *out_dir, const char *path)
     snprintf(file, sizeof(file), "%s/%s_alert.ppm", out_dir, stem);
     write_frame(file);
     alert_card_close();
-    scene_sky(11, 24, 14, 20);
-    snprintf(file, sizeof(file), "%s/%s_sky_day.ppm", out_dir, stem);
-    write_frame(file);
-    scene_sky(11, 24, 20, 40);
-    snprintf(file, sizeof(file), "%s/%s_sky_night.ppm", out_dir, stem);
-    write_frame(file);
-    scene_sky(12, 5, 6, 10);
-    snprintf(file, sizeof(file), "%s/%s_sky_dawn.ppm", out_dir, stem);
-    write_frame(file);
     printf("%s: %s\n", stem, t.name);
     return true;
 }

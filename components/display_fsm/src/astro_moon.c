@@ -1,6 +1,8 @@
 /**
  * @file astro_moon.c
- * @version 1
+ * v2: single-precision trig after a double-precision argument reduction (the clock's FPU is
+ *     single precision: double trig made the rise / set search take ~75 ms).
+ * @version 2
  * @brief The moon's place, light, rise and set (see astro_moon.h). Pure C.
  */
 #include "astro_moon.h"
@@ -22,19 +24,46 @@ typedef struct {
 } sky_t;
 
 /**
- * @brief Sin of @p deg degrees.
+ * @brief @p deg (any size) reduced to -180..180 degrees, as radians in single precision.
  * @version 1
+ * @utility
+ * @return Radians.
+ */
+static float rad_of(double deg)
+{
+    double r = fmod(deg, 360.0);
+    if (r > 180.0) r -= 360.0;
+    if (r < -180.0) r += 360.0;
+    return (float)(r * DEG);
+}
+
+/**
+ * @brief Sin of @p deg degrees (reduced in double, evaluated in single precision).
+ * v2: single precision after reduction.
+ * @version 2
  * @utility
  * @return It.
  */
 static double sind(double deg)
 {
-    return sin(deg * DEG);
+    return sinf(rad_of(deg));
+}
+
+/**
+ * @brief Cos of @p deg degrees, likewise.
+ * @version 1
+ * @utility
+ * @return It.
+ */
+static double cosd(double deg)
+{
+    return cosf(rad_of(deg));
 }
 
 /**
  * @brief The moon's and the sun's positions at @p t (low-precision series, J2000 epoch).
- * @version 1
+ * v2: single-precision trig after reduction.
+ * @version 2
  * @utility
  * @return Them.
  */
@@ -48,36 +77,35 @@ static sky_t sky_at(time_t t)
                  0.11 * sind(186.6 + 966404.05 * T);
     double lat = 5.13 * sind(93.3 + 483202.03 * T) + 0.28 * sind(228.2 + 960400.87 * T) -
                  0.28 * sind(318.3 + 6003.18 * T) - 0.17 * sind(217.6 - 407332.20 * T);
-    double par = 0.9508 + 0.0518 * cos((134.9 + 477198.85 * T) * DEG) +
-                 0.0095 * cos((259.2 - 413335.38 * T) * DEG) +
-                 0.0078 * cos((235.7 + 890534.23 * T) * DEG) +
-                 0.0028 * cos((269.9 + 954397.70 * T) * DEG);
+    double par = 0.9508 + 0.0518 * cosd(134.9 + 477198.85 * T) + 0.0095 * cosd(259.2 - 413335.38 * T) +
+                 0.0078 * cosd(235.7 + 890534.23 * T) + 0.0028 * cosd(269.9 + 954397.70 * T);
     double g = 357.529 + 0.98560028 * d;                       // the sun's mean anomaly
     double sun = 280.459 + 0.98564736 * d + 1.915 * sind(g) + 0.020 * sind(2 * g);
-    double eps = (23.439 - 0.0000004 * d) * DEG;
-    double l = lon * DEG, b = lat * DEG;
+    float eps = (float)((23.439 - 0.0000004 * d) * DEG);
+    float l = rad_of(lon), b = (float)(lat * DEG);
     sky_t s;
-    s.ra = atan2(sin(l) * cos(eps) - tan(b) * sin(eps), cos(l));
-    s.dec = asin(sin(b) * cos(eps) + cos(b) * sin(eps) * sin(l));
+    s.ra = atan2f(sinf(l) * cosf(eps) - tanf(b) * sinf(eps), cosf(l));
+    s.dec = asinf(sinf(b) * cosf(eps) + cosf(b) * sinf(eps) * sinf(l));
     s.par = par * DEG;
     s.elong = fmod((lon - sun) * DEG, 2 * 3.14159265358979);
-    s.gmst = fmod(280.46061837 + 360.98564736629 * d, 360.0) * DEG;
+    s.gmst = rad_of(280.46061837 + 360.98564736629 * d);
     return s;
 }
 
 /**
  * @brief The moon's topocentric altitude at @p t, degrees.
- * @version 1
+ * v2: single precision.
+ * @version 2
  * @utility
  * @return It.
  */
 static double altitude(time_t t, double lat, double lon)
 {
     sky_t s = sky_at(t);
-    double ha = s.gmst + lon * DEG - s.ra;
-    double phi = lat * DEG;
-    double geo = asin(sin(phi) * sin(s.dec) + cos(phi) * cos(s.dec) * cos(ha));
-    return (geo - s.par * cos(geo)) / DEG;   // the parallax lowers it
+    float ha = (float)(s.gmst + lon * DEG - s.ra);
+    float phi = (float)(lat * DEG), dec = (float)s.dec;
+    float geo = asinf(sinf(phi) * sinf(dec) + cosf(phi) * cosf(dec) * cosf(ha));
+    return (geo - (float)s.par * cosf(geo)) / DEG;   // the parallax lowers it
 }
 
 /**

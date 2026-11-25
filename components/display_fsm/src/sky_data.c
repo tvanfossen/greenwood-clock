@@ -128,7 +128,7 @@ float sky_moon_angle(const sky_data_t *d)
 /**
  * @brief Whole days from local date @p now to the next @p month / @p day (0 when today).
  * @version 1
- * @req REQ-AMB-001
+ * @req REQ-ASTRO-001
  * @return Days, 0..365.
  */
 int sky_days_until(time_t now, int month, int day)
@@ -242,10 +242,41 @@ static float half_turn(time_t now, time_t from, time_t to, float start, float fa
     return wrap_deg(start + 180.0f * (float)(now - from) / (float)(to - from));
 }
 
+/** The moon's horizon crossings around the last moment asked, kept until the next one: they
+ *  do not change in between, and the search costs milliseconds. Not shared between tasks
+ *  (the display task is the only caller on the clock). */
+static struct {
+    float  lat, lon;
+    time_t last_rise, last_set, next_rise, next_set;
+    bool   valid;
+} s_moon;
+
+/**
+ * @brief The moon's last and next rise and set around @p now (from the cache when no crossing
+ *        has happened since it was found).
+ * @version 1
+ * @utility
+ */
+static void moon_crossings(time_t now, float lat, float lon)
+{
+    time_t soonest = s_moon.next_rise && s_moon.next_set ? (s_moon.next_rise < s_moon.next_set ? s_moon.next_rise : s_moon.next_set)
+                                                         : (s_moon.next_rise > s_moon.next_set ? s_moon.next_rise : s_moon.next_set);
+    time_t latest = (s_moon.last_rise > s_moon.last_set ? s_moon.last_rise : s_moon.last_set);
+    bool fresh = s_moon.valid && s_moon.lat == lat && s_moon.lon == lon && now >= latest &&
+                 soonest && now < soonest;
+    if (fresh) return;
+    astro_moon_last(now, lat, lon, &s_moon.last_rise, &s_moon.last_set);
+    astro_moon_next(now, lat, lon, &s_moon.next_rise, &s_moon.next_set);
+    s_moon.lat = lat;
+    s_moon.lon = lon;
+    s_moon.valid = true;
+}
+
 /**
  * @brief Fill @p out's moon from where it really is: lit fraction and side, up or down, its
  *        place on the wheel (rise to set above, set to rise below), the next rise and set.
- * @version 1
+ * v2: the crossings from moon_crossings (cached).
+ * @version 2
  * @utility
  */
 static void moon_part(time_t now, float lat, float lon, sky_data_t *out)
@@ -255,9 +286,9 @@ static void moon_part(time_t now, float lat, float lon, sky_data_t *out)
     out->moon.illumination_pct = m.illum * 100.0f;
     out->waxing = m.waxing;
     out->moon_frac = m.age;
-    time_t last_rise, last_set, next_rise, next_set;
-    astro_moon_last(now, lat, lon, &last_rise, &last_set);
-    astro_moon_next(now, lat, lon, &next_rise, &next_set);
+    moon_crossings(now, lat, lon);
+    time_t last_rise = s_moon.last_rise, last_set = s_moon.last_set;
+    time_t next_rise = s_moon.next_rise, next_set = s_moon.next_set;
     out->moon_up = last_rise > last_set || (!last_set && last_rise);
     out->moon_angle = out->moon_up ? half_turn(now, last_rise, next_set, -90.0f, 0.0f)
                                    : half_turn(now, last_set, next_rise, 90.0f, 180.0f);
@@ -271,7 +302,6 @@ static void moon_part(time_t now, float lat, float lon, sky_data_t *out)
  * v3: the real moon (moon_part): lit fraction, side, place, rise and set.
  * @version 3
  * @req REQ-ASTRO-001
- * @req REQ-AMB-001
  */
 void sky_data_compute(time_t now, float lat, float lon, float kp, sky_data_t *out)
 {

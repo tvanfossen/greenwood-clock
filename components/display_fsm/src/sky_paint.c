@@ -1,6 +1,7 @@
 /**
  * @file sky_paint.c
- * @version 1
+ * v2: the sun's frame from precomputed tables (no transcendental per pixel per frame).
+ * @version 2
  * @brief The sun and the moon as pixels (see sky_paint.h). Pure C.
  */
 #include "sky_paint.h"
@@ -120,13 +121,16 @@ static float wobble(float x, float y, float f)
 
 /**
  * @brief How much of a bright crater's floor and rays is at (@p x, @p y).
- * @version 1
+ * v2: skips points beyond its rays.
+ * @version 2
  * @utility
  * @return 0..1.
  */
 static float crater(const patch_t *c, float x, float y)
 {
-    float dx = x - c->x, dy = y - c->y, dist = sqrtf(dx * dx + dy * dy);
+    float dx = x - c->x, dy = y - c->y, d2 = dx * dx + dy * dy;
+    if (d2 > c->r * c->r * 81.0f) return 0.0f;   // beyond its rays
+    float dist = sqrtf(d2);
     float floor_ = 1.0f - smooth(0.4f, 1.0f, dist / c->r);
     float spokes = powf(fabsf(sinf(atan2f(dy, dx) * 7.0f + c->x * 9.0f)), 12.0f);
     float rays = spokes * (1.0f - smooth(0.0f, c->r * 9.0f, dist)) * c->albedo;
@@ -138,7 +142,8 @@ static float crater(const patch_t *c, float x, float y)
  *        about a quarter darker with ragged edges, bright craters and their rays, a fine
  *        mottling everywhere.
  * v2: ragged, merging maria (they were round spots); rayed craters.
- * @version 2
+ * v3: skips maria that cannot reach the point.
+ * @version 3
  * @utility
  * @return The albedo.
  */
@@ -147,8 +152,9 @@ static float albedo(float x, float y)
     float wx = x + 0.10f * wobble(x, y, 7.0f), wy = y + 0.10f * wobble(y, x, 6.0f);
     float mare = 0.0f;
     for (size_t i = 0; i < sizeof(PATCHES) / sizeof(PATCHES[0]); i++) {
-        float dx = wx - PATCHES[i].x, dy = wy - PATCHES[i].y;
-        float w = 1.0f - smooth(0.35f, 1.0f, sqrtf(dx * dx + dy * dy) / PATCHES[i].r);
+        float dx = wx - PATCHES[i].x, dy = wy - PATCHES[i].y, d2 = dx * dx + dy * dy;
+        if (d2 >= PATCHES[i].r * PATCHES[i].r) continue;   // outside this mare
+        float w = 1.0f - smooth(0.35f, 1.0f, sqrtf(d2) / PATCHES[i].r);
         mare = fmaxf(mare, w * (1.0f - PATCHES[i].albedo) / 0.26f);   // merge, don't stack
     }
     float a = 1.0f - 0.26f * clamp01(mare);
@@ -202,14 +208,15 @@ void sky_paint_moon(uint32_t *out, int d, float age, sky_rgb_t lit, sky_rgb_t da
 
 /**
  * @brief Memory for a sun's tables.
- * @version 1
+ * v2: the glow and ray tables.
+ * @version 2
  * @req REQ-ASTRO-001
  * @return Bytes.
  */
 size_t sky_sun_bytes(int d)
 {
     size_t n = (size_t)d * (size_t)d;
-    return n * (sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint8_t)) + 8;
+    return n * (sizeof(uint32_t) + sizeof(uint16_t) + 4 * sizeof(uint8_t)) + 8;
 }
 
 /**
@@ -227,8 +234,43 @@ static uint32_t disc_pixel(const sky_sun_t *s, float rr, float x, float y, float
 }
 
 /**
- * @brief Prepare a sun.
+ * @brief How much of a ray of length @p len (disc radii) reaches @p rr: none inside the rim,
+ *        fading out along it.
  * @version 1
+ * @utility
+ * @return 0..1.
+ */
+static float ray_reach(float rr, float len)
+{
+    float u = (rr - RAY_IN) / (len - RAY_IN);   // 0 at its root, 1 at its end
+    return u < 0.0f || u > 1.0f ? 0.0f : powf(1.0f - u, 1.6f) * smooth(0.0f, 0.08f, u);
+}
+
+/**
+ * @brief Fill pixel @p i's tables at (@p x, @p y) from the centre (pixels).
+ * @version 1
+ * @utility
+ */
+static void sun_tables_at(sky_sun_t *sun, size_t i, float x, float y)
+{
+    float half = sun->d / 2.0f, r = sun->d * SUN_R;
+    float dist = sqrtf(x * x + y * y), rr = dist / r;
+    float a = atan2f(y, x);
+    sun->ang[i] = (uint16_t)((a < 0 ? a + 2 * PI_F : a) / (2 * PI_F) * 65535.0f);
+    float fade = 1.0f - smooth(0.80f, 0.98f, dist / (half * DIAG) * DIAG);   // gone by the edge
+    float glow = rr < 1.0f ? 0.0f : 0.45f * fade * expf(-powf((rr - 1.0f) * r / (sun->d * GLOW_W), 2.0f));
+    sun->glow[i] = (uint8_t)(clamp01(glow) * 255.0f);
+    sun->ray_l[i] = (uint8_t)(ray_reach(rr, RAY_LONG) * 255.0f);
+    sun->ray_s[i] = (uint8_t)(ray_reach(rr, RAY_SHORT) * 255.0f);
+    sun->narrow[i] = (uint8_t)fminf(255.0f, rr / RAY_HALF * 8.0f);
+    float edge = clamp01(r - dist + 0.5f);
+    sun->disc[i] = edge > 0.0f ? disc_pixel(sun, rr, x / r, y / r, edge) : 0;
+}
+
+/**
+ * @brief Prepare a sun.
+ * v2: the glow and ray profiles into tables (sun_tables_at).
+ * @version 2
  * @req REQ-ASTRO-001
  */
 void sky_sun_init(sky_sun_t *sun, void *mem, int d, sky_rgb_t core, sky_rgb_t light)
@@ -239,40 +281,16 @@ void sky_sun_init(sky_sun_t *sun, void *mem, int d, sky_rgb_t core, sky_rgb_t li
     sun->light = light;
     sun->disc = (uint32_t *)mem;
     sun->ang = (uint16_t *)(sun->disc + n);
-    sun->rad = (uint8_t *)(sun->ang + n);
-    float c = d / 2.0f, r = d * SUN_R;
+    sun->glow = (uint8_t *)(sun->ang + n);
+    sun->ray_l = sun->glow + n;
+    sun->ray_s = sun->ray_l + n;
+    sun->narrow = sun->ray_s + n;
+    float c = d / 2.0f;
     for (int py = 0; py < d; py++) {
         for (int px = 0; px < d; px++) {
-            size_t i = (size_t)py * (size_t)d + (size_t)px;
-            float x = px + 0.5f - c, y = c - py - 0.5f;
-            float dist = sqrtf(x * x + y * y);
-            float a = atan2f(y, x);
-            sun->ang[i] = (uint16_t)((a < 0 ? a + 2 * PI_F : a) / (2 * PI_F) * 65535.0f);
-            sun->rad[i] = (uint8_t)fminf(255.0f, dist / (c * DIAG) * 255.0f);   // to the corner
-            float edge = clamp01(r - dist + 0.5f);
-            sun->disc[i] = edge > 0.0f ? disc_pixel(sun, dist / r, x / r, y / r, edge) : 0;
+            sun_tables_at(sun, (size_t)py * (size_t)d + (size_t)px, px + 0.5f - c, c - py - 0.5f);
         }
     }
-}
-
-/**
- * @brief How much ray covers a point at @p rr disc radii and @p ang (a turn: 1) for rays
- *        turned by @p turn: soft beams, narrowing and fading outwards.
- * v2: soft beams (a gaussian across, fading along) instead of hard spikes.
- * @version 2
- * @utility
- * @return 0..1.
- */
-static float ray_cover(float rr, float ang, float turn)
-{
-    float slot = (ang + turn) * RAYS;
-    int k = (int)floorf(slot + 0.5f);
-    float off = (slot - (float)k) * (2.0f * PI_F / RAYS);   // radians from that ray's middle
-    float len = (k & 1) ? RAY_SHORT : RAY_LONG;
-    float u = (rr - RAY_IN) / (len - RAY_IN);               // 0 at its root, 1 at its end
-    if (u < 0.0f || u > 1.0f) return 0.0f;
-    float spread = RAY_HALF / rr;
-    return expf(-(off * off) / (spread * spread)) * powf(1.0f - u, 1.6f) * smooth(0.0f, 0.08f, u);
 }
 
 /**
@@ -290,28 +308,44 @@ static uint32_t over(uint32_t top, sky_rgb_t c, float a)
     return argb(mix(c, t, k), oa);
 }
 
+/** exp(-x^2) for x = i / 32: the rays' sideways profile. */
+static float s_gauss[256];
+
+/**
+ * @brief Fill s_gauss once.
+ * @version 1
+ * @utility
+ */
+static void gauss_init(void)
+{
+    if (s_gauss[0] > 0.0f) return;
+    for (int i = 0; i < 256; i++) s_gauss[i] = expf(-(i / 32.0f) * (i / 32.0f));
+}
+
 /**
  * @brief The sun at phase @p t.
- * @version 1
+ * v2: from the tables: an angle, a lookup and a few products per pixel.
+ * @version 2
  * @req REQ-ASTRO-001
  */
 void sky_sun_frame(const sky_sun_t *s, float t, uint32_t *out)
 {
+    gauss_init();
     size_t n = (size_t)s->d * (size_t)s->d;
-    float half = s->d / 2.0f, r = s->d * SUN_R;
-    float breath = 0.80f + 0.20f * sinf(t * 2.0f * PI_F);
+    float breath = (0.80f + 0.20f * sinf(t * 2.0f * PI_F)) / 255.0f;
     float turn = t / RAYS;   // one ray's spacing per cycle: it loops seamlessly
     sky_rgb_t ray_c = mix(s->core, s->light, 0.25f);
     for (size_t i = 0; i < n; i++) {
-        if (s->disc[i] >> 24 == 255) {
+        if (s->disc[i] >> 24 == 255 || (!s->glow[i] && !s->ray_l[i])) {
             out[i] = s->disc[i];
             continue;
         }
-        float out_h = s->rad[i] / 255.0f * DIAG;              // half sides
-        float rr = out_h * half / r;                          // disc radii
-        float fade = 1.0f - smooth(0.80f, 0.98f, out_h);       // gone before the square's edge
-        float glow = 0.45f * breath * fade * expf(-powf((rr - 1.0f) * r / (s->d * GLOW_W), 2.0f));
-        float ray = 0.70f * ray_cover(rr, s->ang[i] / 65535.0f, turn);
+        float slot = (s->ang[i] / 65535.0f + turn) * RAYS;
+        float k = floorf(slot + 0.5f);
+        float off = fabsf(slot - k) * (2.0f * PI_F / RAYS) * s->narrow[i] * (32.0f / 8.0f);
+        float reach = ((int)k & 1) ? s->ray_s[i] : s->ray_l[i];
+        float ray = 0.70f / 255.0f * reach * s_gauss[off < 255.0f ? (int)off : 255];
+        float glow = s->glow[i] * breath;
         float a = ray + glow * (1.0f - ray);
         sky_rgb_t c = mix(s->core, ray_c, ray / (a + 1e-3f));
         out[i] = over(s->disc[i], c, a);   // the disc's soft rim over the glow behind it
