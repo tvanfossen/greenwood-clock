@@ -159,20 +159,26 @@ TERMINAL_STATES = {"rebooting", "error"}
 class StatusPoller(threading.Thread):
     """Polls GET /ota/status and stores the last observed state."""
 
-    ## @brief Initialise the daemon poller thread with the device address and a stop event.
-    ## @version 1
+    ## @brief Initialise the daemon poller thread with the device address, the admin token
+    ## and a stop event.
+    ## v2: the token (/ota/status is admin-only behind the auth gate).
+    ## @version 2
     ## @req REQ-TOOL-001
-    def __init__(self, host: str, port: int, stop_event: threading.Event) -> None:
+    def __init__(
+        self, host: str, port: int, token: str, stop_event: threading.Event
+    ) -> None:
         super().__init__(daemon=True)
         self.host = host
         self.port = port
+        self.token = token
         self.stop_event = stop_event
         self.last_state: str = "idle"
         self.last_status: dict = {}
         self._prev_state: str = ""
 
     ## @brief GET /ota/status once.
-    ## @version 1
+    ## v2: with the admin token.
+    ## @version 2
     ## @req REQ-TOOL-001
     ## @return Parsed status JSON on HTTP 200, otherwise None (errors swallowed).
     def _fetch_status(self) -> dict | None:
@@ -180,7 +186,9 @@ class StatusPoller(threading.Thread):
             conn = http.client.HTTPConnection(
                 self.host, self.port, timeout=POLL_CONNECT_TIMEOUT
             )
-            conn.request("GET", "/ota/status")
+            conn.request(
+                "GET", "/ota/status", headers={"Authorization": f"Bearer {self.token}"}
+            )
             resp = conn.getresponse()
             body = resp.read().decode()
             conn.close()
@@ -351,7 +359,8 @@ def evaluate_result(http_status: int, body: str, poller: StatusPoller) -> bool:
 
 
 ## @brief CLI entry: validate inputs, start the status poller, upload the firmware and exit 0 on success or 1 on failure.
-## @version 1
+## v2: the poller gets the token.
+## @version 2
 ## @req REQ-TOOL-001
 def main() -> None:
     args = parse_args()
@@ -371,7 +380,7 @@ def main() -> None:
     print("Starting status poller...")
 
     stop_event = threading.Event()
-    poller = StatusPoller(ip, args.port, stop_event)
+    poller = StatusPoller(ip, args.port, token, stop_event)
     poller.start()
 
     print("Uploading firmware...")

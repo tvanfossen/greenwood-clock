@@ -63,6 +63,29 @@ static void test_sun(void)
 }
 
 /**
+ * @brief The sun alone (sky_sun_local) agrees with the whole sky's sun, summer time included,
+ *        and reports no sunrise in polar night.
+ * @version 1
+ * @utility
+ */
+static void test_sun_local(void)
+{
+    static const int DATES[][3] = { { 2026, 11, 24 }, { 2026, 7, 1 }, { 2026, 3, 8 }, { 2027, 2, 14 } };
+    for (size_t i = 0; i < sizeof(DATES) / sizeof(DATES[0]); i++) {
+        time_t noon = at(DATES[i][0], DATES[i][1], DATES[i][2], 12, 0);
+        sky_data_t s;
+        sky_data_compute(noon, LAT, LON, 0.0f, &s);
+        int rise = 0, set = 0;
+        sky_sun_local(noon, LAT, LON, &rise, &set);
+        CHECK(rise == s.sunrise_min && set == s.sunset_min, "%d-%d-%d: %d/%d vs %d/%d",
+              DATES[i][0], DATES[i][1], DATES[i][2], rise, set, s.sunrise_min, s.sunset_min);
+    }
+    int rise = 0, set = 0;
+    sky_sun_local(at(2026, 12, 21, 12, 0), 80.0f, 15.0f, &rise, &set);
+    CHECK(rise == -1 && set == -1, "polar night: no sunrise (%d/%d)", rise, set);
+}
+
+/**
  * @brief Days to dated events: today is 0, the year wraps, leap days count.
  * @version 1
  * @utility
@@ -141,7 +164,8 @@ static void test_wheel(void)
 /**
  * @brief Run the sky data tests in Chicago time; exit status is the failure count.
  * v2: the sky wheel test.
- * @version 2
+ * v3: the sun alone.
+ * @version 3
  * @utility
  * @return 0 when every check passed.
  */
@@ -150,6 +174,7 @@ int main(void)
     setenv("TZ", "CST6CDT,M3.2.0,M11.1.0", 1);
     tzset();
     test_sun();
+    test_sun_local();
     test_days_until();
     test_moon_and_kp();
     test_wheel();

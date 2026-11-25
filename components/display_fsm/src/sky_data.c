@@ -1,6 +1,7 @@
 /**
  * @file sky_data.c
- * @version 1
+ * v2: sky_sun_local (the sun alone, for the schedule's many lookups).
+ * @version 2
  * @brief What the sky screen shows (see sky_data.h): sun times in local minutes, where the
  *        day is, the moon, the aurora outlook and the next dated sky events. Pure C.
  */
@@ -169,19 +170,45 @@ static const char *next_event(time_t now, const dated_event_t *ev, int n, int *d
 }
 
 /**
- * @brief Fill @p out's sun fields: local sunrise / sunset, daylight, and where the day is.
+ * @brief Local sunrise / sunset for @p t's date (-1 both when the sun does not rise).
  * @version 1
  * @utility
+ * @return The daylight minutes.
  */
-static void sun_part(time_t now, const struct tm *t, float lat, float lon, sky_data_t *out)
+static int sun_local(time_t now, const struct tm *t, float lat, float lon, int *rise, int *set)
 {
     sun_times_t sun;
     astro_calc_sun_times(t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, lat, lon, &sun);
     int off = tz_offset_min(now);
     bool rises = sun.sunrise_hour >= 0;
-    out->sunrise_min = rises ? wrap_day(sun.sunrise_hour * 60 + sun.sunrise_min + off) : -1;
-    out->sunset_min = rises ? wrap_day(sun.sunset_hour * 60 + sun.sunset_min + off) : -1;
-    out->daylight_min = sun.daylight_minutes;
+    *rise = rises ? wrap_day(sun.sunrise_hour * 60 + sun.sunrise_min + off) : -1;
+    *set = rises ? wrap_day(sun.sunset_hour * 60 + sun.sunset_min + off) : -1;
+    return sun.daylight_minutes;
+}
+
+/**
+ * @brief The sun alone at @p noon's date.
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @req REQ-BG-004
+ */
+void sky_sun_local(time_t noon, float lat, float lon, int *rise, int *set)
+{
+    struct tm t;
+    localtime_r(&noon, &t);
+    sun_local(noon, &t, lat, lon, rise, set);
+}
+
+/**
+ * @brief Fill @p out's sun fields: local sunrise / sunset, daylight, and where the day is.
+ * v2: the times from sun_local (shared with sky_sun_local).
+ * @version 2
+ * @utility
+ */
+static void sun_part(time_t now, const struct tm *t, float lat, float lon, sky_data_t *out)
+{
+    out->daylight_min = sun_local(now, t, lat, lon, &out->sunrise_min, &out->sunset_min);
+    bool rises = out->sunrise_min >= 0;
     out->part = SKY_NIGHT_AFTER;
     if (rises && out->now_min < out->sunrise_min) out->part = SKY_NIGHT_BEFORE;
     else if (rises && out->now_min < out->sunset_min) out->part = SKY_DAY;

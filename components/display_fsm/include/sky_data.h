@@ -53,6 +53,15 @@ typedef struct {
 void sky_data_compute(time_t now, float lat, float lon, float kp, sky_data_t *out);
 
 /**
+ * @brief Only the sun, which is cheap (no moon or events): local sunrise and sunset minutes on
+ *        @p noon's date at @p lat / @p lon, both -1 when the sun does not rise.
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @req REQ-BG-004
+ */
+void sky_sun_local(time_t noon, float lat, float lon, int *rise, int *set);
+
+/**
  * @brief Whole days from local date @p now to the next @p month / @p day (0 when today).
  * @version 1
  * @req REQ-AMB-001

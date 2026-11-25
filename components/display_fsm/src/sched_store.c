@@ -3,7 +3,9 @@
  * v2: sched_store_sun_table; sched_store_today public.
  * v3: safe before sched_store_init (the HTTP server runs during the launch window, before
  *     the display task loads the schedule): empty answers, refused saves.
- * @version 3
+ * v4: the sun cached per day for a year (an overlap check used to recompute it thousands of
+ *     times and trip the task watchdog).
+ * @version 4
  * @brief The device's schedule: file, RAM copy, overlap-checked saves, the active profile and
  *        the device's sun (see sched_store.h).
  */
@@ -31,45 +33,78 @@ static float             s_lat, s_lon;      // the location, read at init and on
 static sched_rule_t      s_rules[SCHED_MAX_PROFILES];
 static int               s_count;
 
+#define SUN_DAYS (CHECK_DAYS + 2)            // the day before the first asked, and a spare
+#define SUN_NONE INT32_MIN
+static int32_t           s_sun_base = SUN_NONE;   // day number of s_sun[0]
+static sched_sun_t       s_sun[SUN_DAYS];
+static bool              s_sun_have[SUN_DAYS];
+
 // ---------------------------------------------------------------------------
 // The device's sun
 // ---------------------------------------------------------------------------
 
 /**
- * @brief Re-read the location from the settings.
- * @version 1
+ * @brief Re-read the location from the settings (a new place empties the sun table).
+ * v2: empties the sun table when the place moved.
+ * @version 2
  * @utility
  */
 static void read_location(void)
 {
     clock_settings_t cfg;
     settings_load(&cfg);
+    s_sun_base = (cfg.latitude != s_lat || cfg.longitude != s_lon) ? SUN_NONE : s_sun_base;
     s_lat = cfg.latitude;
     s_lon = cfg.longitude;
 }
 
 /**
- * @brief Sunrise and sunset on local date @p d at the configured location (cached per date;
- *        6:00/18:00 where the sun does not rise or set). Called with s_lock held.
+ * @brief Days since 1970-01-01 for civil date @p d (Howard Hinnant's days_from_civil).
  * @version 1
+ * @utility
+ * @return The day number.
+ */
+static int32_t day_number(sched_date_t d)
+{
+    int32_t y = (int32_t)d.year - (d.month <= 2);
+    int32_t era = (y >= 0 ? y : y - 399) / 400;
+    int32_t yoe = y - era * 400;
+    int32_t mp = (d.month + 9) % 12;
+    int32_t doy = (153 * mp + 2) / 5 + d.day - 1;
+    return era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468;
+}
+
+/**
+ * @brief Sunrise and sunset on local date @p d at the configured location (6:00/18:00 where
+ *        the sun does not rise). Cached in a SUN_DAYS table from the day before the first date
+ *        asked: an overlap check looks each day up many times (and the day before it), and a
+ *        sun calculation per lookup starved the idle task into the task watchdog.
+ *        Called with s_lock held.
+ * v2: a table of days (was one date, missed on nearly every lookup), the sun alone
+ *     (sky_sun_local, not the whole sky).
+ * @version 2
  * @callback
  * @return The sun times.
  */
 static sched_sun_t device_sun(sched_date_t d, void *ctx)
 {
     (void)ctx;
-    static sched_date_t last;
-    static sched_sun_t  cached;
-    if (memcmp(&last, &d, sizeof(d)) != 0) {
+    int32_t i = day_number(d) - s_sun_base;
+    if (s_sun_base == SUN_NONE || i < 0 || i >= SUN_DAYS) {
+        s_sun_base = day_number(d) - 1;
+        memset(s_sun_have, 0, sizeof(s_sun_have));
+        i = 1;
+    }
+    if (!s_sun_have[i]) {
         struct tm t = { .tm_year = d.year - 1900, .tm_mon = d.month - 1, .tm_mday = d.day,
                         .tm_hour = 12, .tm_isdst = -1 };
-        sky_data_t sky;
-        sky_data_compute(mktime(&t), s_lat, s_lon, 0.0f, &sky);
-        cached = sky.sunrise_min >= 0 ? (sched_sun_t){ sky.sunrise_min, sky.sunset_min }
-                                      : (sched_sun_t){ 6 * 60, 18 * 60 };
-        last = d;
+        int rise, set;
+        sky_sun_local(mktime(&t), s_lat, s_lon, &rise, &set);
+        s_sun[i] = rise >= 0 ? (sched_sun_t){ rise, set }
+                             : (sched_sun_t){ 6 * 60, 18 * 60 };
+        s_sun_have[i] = true;
     }
-    return cached;
+    return s_sun[i];
 }
 
 static const sched_sun_src_t SUN = { device_sun, NULL };   // for callers holding s_lock
@@ -268,7 +303,8 @@ sched_date_t sched_store_today(void)
  * @brief Check, write and adopt a schedule.
  * v2: sched_store_today.
  * v3: refused before init.
- * @version 3
+ * v4: the location re-read under the lock (it resets the sun table); the check timed.
+ * @version 4
  * @req REQ-BG-004
  * @return ESP_OK, ESP_ERR_INVALID_ARG, or the write's error.
  */
@@ -280,8 +316,9 @@ esp_err_t sched_store_set(const sched_rule_t *r, int n, char *why, size_t why_n)
         return ESP_ERR_INVALID_STATE;
     }
     sched_overlap_t o;
-    read_location();
+    TickType_t t0 = xTaskGetTickCount();
     xSemaphoreTake(s_lock, portMAX_DELAY);   // the sun cache is shared with sched_store_active
+    read_location();
     for (int i = 0; i < n && err == ESP_OK; i++) {
         if (sched_find_overlap(r, n, i, sched_store_today(), CHECK_DAYS, &SUN, &o)) {
             if (why) sched_fmt_overlap(r, &o, why, why_n);
@@ -290,6 +327,8 @@ esp_err_t sched_store_set(const sched_rule_t *r, int n, char *why, size_t why_n)
         }
     }
     xSemaphoreGive(s_lock);
+    ESP_LOGI(TAG, "overlap check: %d profiles x %d days in %lu ms", n, CHECK_DAYS,
+             (unsigned long)pdTICKS_TO_MS(xTaskGetTickCount() - t0));
     if (err == ESP_OK) err = write_file(r, n);
     if (err == ESP_OK) {
         xSemaphoreTake(s_lock, portMAX_DELAY);

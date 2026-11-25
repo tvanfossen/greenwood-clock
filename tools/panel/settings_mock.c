@@ -1,7 +1,8 @@
 /**
  * @file settings_mock.c
  * v2: a pretend upload (it says what would happen).
- * @version 2
+ * v3: the sun alone.
+ * @version 3
  * @brief An in-memory settings backend with sample data, for rendering and clicking through
  *        the settings screens off the device (host preview, the panel before it talks to a
  *        clock). The sun is the real calculation for a public sample place (Chicago); "now" is
@@ -28,7 +29,8 @@ static const char *const ANIMS[] = { "Hummingbird", "Snowfall", "Leaves", "None"
 
 /**
  * @brief Sunrise and sunset at the sample place on @p d.
- * @version 1
+ * v2: the sun alone (sky_sun_local).
+ * @version 2
  * @callback
  * @return The sun times.
  */
@@ -37,9 +39,9 @@ static sched_sun_t mock_sun_fn(sched_date_t d, void *ctx)
     (void)ctx;
     struct tm t = { .tm_year = d.year - 1900, .tm_mon = d.month - 1, .tm_mday = d.day,
                     .tm_hour = 12, .tm_isdst = -1 };
-    sky_data_t sky;
-    sky_data_compute(mktime(&t), SAMPLE_LAT, SAMPLE_LON, 0.0f, &sky);
-    return (sched_sun_t){ sky.sunrise_min, sky.sunset_min };
+    sched_sun_t sun;
+    sky_sun_local(mktime(&t), SAMPLE_LAT, SAMPLE_LON, &sun.rise_min, &sun.set_min);
+    return sun;
 }
 
 static const sched_sun_src_t SUN = { mock_sun_fn, NULL };
