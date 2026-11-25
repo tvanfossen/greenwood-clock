@@ -2,7 +2,8 @@
  * @file ui_theme.c
  * v2: slots (which role fills each themed place).
  * v3: the base theme is named "Default" (was "Greenwood").
- * @version 3
+ * v4: text straight on the picture (the clock) by APCA, its side from the picture.
+ * @version 4
  * @brief The UI colour theme: three OKLCH cores derived into named roles. The only file
  *        that writes colour values down (see ui_theme.h).
  *
@@ -466,7 +467,10 @@ bool ui_theme_slot_by_name(const char *name, ui_slot_t *out)
 
 /**
  * @brief The theme's ink made legible over the picture under @p a (or @p fallback).
- * @version 1
+ * v2: by APCA with the light/dark side from the picture (ui_legible_apca): the ink gives
+ *     hue and chroma only (was WCAG from the ink's own lightness, so a mid-tone photo
+ *     turned white ink black).
+ * @version 2
  * @req REQ-UI-003
  * @req REQ-BG-002
  * @return The text colour.
@@ -479,8 +483,7 @@ lv_color_t ui_theme_ink_on_picture(const lv_image_dsc_t *picture, const lv_area_
         behind = ui_image_region_mean(picture, a->x1, a->y1 < 0 ? 0 : a->y1, a->x2 - a->x1 + 1,
                                       a->y2 - a->y1 + 1, fallback);
     }
-    return ui_legible_to(ui_oklch_to_color(current()->ink), behind,
-                         target_of(current(), UI_ROLE_TEXT));
+    return ui_legible_apca(ui_oklch_to_color(current()->ink), behind, UI_APCA_LARGE);
 }
 
 /**

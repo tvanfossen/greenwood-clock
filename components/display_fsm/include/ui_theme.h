@@ -229,10 +229,12 @@ bool ui_theme_slot_by_name(const char *name, ui_slot_t *out);
 bool ui_theme_parse(const char *json, ui_theme_t *out);
 
 /**
- * @brief The theme's ink made legible at the TEXT target over the mean of @p picture in
- *        screen area @p a (a screen-sized, top-down picture), or over @p fallback without a
- *        picture: the colour of text drawn straight on the background (the clock).
- * @version 1
+ * @brief The theme's ink made legible over the mean of @p picture in screen area @p a (a
+ *        screen-sized, top-down picture), or over @p fallback without a picture: the colour
+ *        of text drawn straight on the background (the clock). Light or dark is decided by
+ *        the picture (APCA, ui_legible_apca); the ink gives the hue and chroma.
+ * v2: APCA, the side from the picture (was WCAG from the ink's lightness).
+ * @version 2
  * @req REQ-UI-003
  * @req REQ-BG-002
  * @return The text colour.

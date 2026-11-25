@@ -3,8 +3,10 @@
  * v2: OKLCH conversions public; the legibility target is a parameter (ui_legible_to).
  * v3: no colour literals: ui_text_on (unused) is gone; the region mean's fallback is the
  *     caller's.
- * @version 3
- * @brief Text-legibility helpers: WCAG luminance/contrast, black/white pick, OKLCH
+ * v4: APCA contrast (ui_apca_lc) and ui_legible_apca: the light/dark side from the
+ *     background, the lightness moved along it.
+ * @version 4
+ * @brief Text-legibility helpers: WCAG luminance/contrast, APCA contrast, OKLCH
  *        conversions, minimal OKLCH lightness shift and image-region mean colour.
  */
 // Text-legibility helpers — see ui_contrast.h.
@@ -108,12 +110,11 @@ static void srgb_to_oklab(lv_color_t c, float *L, float *a, float *b)
 }
 
 /**
- * @brief Convert OKLab to an sRGB colour (channels clamped).
+ * @brief Convert OKLab to linear sRGB (unclamped: out of gamut when outside 0..1).
  * @version 1
  * @utility
- * @return sRGB colour.
  */
-static lv_color_t oklab_to_srgb(float L, float a, float b)
+static void oklab_to_linear(float L, float a, float b, float rgb[3])
 {
     float l_ = L + 0.3963377774f * a + 0.2158037573f * b;
     float m_ = L - 0.1055613458f * a - 0.0638541728f * b;
@@ -121,44 +122,112 @@ static lv_color_t oklab_to_srgb(float L, float a, float b)
 
     float l = cube(l_), m = cube(m_), s = cube(s_);
 
-    float r  = +4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s;
-    float g  = -1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s;
-    float bl = -0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s;
+    rgb[0] = +4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s;
+    rgb[1] = -1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s;
+    rgb[2] = -0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s;
+}
 
-    return lv_color_make((uint8_t)(linear_to_srgb(r)  * 255.0f + 0.5f),
-                         (uint8_t)(linear_to_srgb(g)  * 255.0f + 0.5f),
-                         (uint8_t)(linear_to_srgb(bl) * 255.0f + 0.5f));
+/**
+ * @brief Convert OKLab to an sRGB colour (channels clamped).
+ * v2: the matrix half is oklab_to_linear (shared with the gamut-mapped conversion).
+ * @version 2
+ * @utility
+ * @return sRGB colour.
+ */
+static lv_color_t oklab_to_srgb(float L, float a, float b)
+{
+    float rgb[3];
+    oklab_to_linear(L, a, b, rgb);
+    return lv_color_make((uint8_t)(linear_to_srgb(rgb[0]) * 255.0f + 0.5f),
+                         (uint8_t)(linear_to_srgb(rgb[1]) * 255.0f + 0.5f),
+                         (uint8_t)(linear_to_srgb(rgb[2]) * 255.0f + 0.5f));
+}
+
+#define GAMUT_EPS 0.0005f   // linear-channel slack treated as in gamut
+
+/**
+ * @brief Whether OKLab (@p L, @p a, @p b) is inside the sRGB gamut.
+ * @version 1
+ * @utility
+ * @return True when every linear channel is within 0..1.
+ */
+static bool in_gamut(float L, float a, float b)
+{
+    float rgb[3];
+    oklab_to_linear(L, a, b, rgb);
+    bool ok = true;
+    for (int i = 0; i < 3; i++) ok = ok && rgb[i] >= -GAMUT_EPS && rgb[i] <= 1.0f + GAMUT_EPS;
+    return ok;
+}
+
+/**
+ * @brief Convert OKLab to sRGB keeping lightness and hue: an out-of-gamut colour has its
+ *        chroma reduced (bisected) until it fits, instead of each channel clamped (which
+ *        bends the hue: a darkened gold turns orange).
+ * @version 1
+ * @utility
+ * @return sRGB colour.
+ */
+static lv_color_t oklab_to_srgb_mapped(float L, float a, float b)
+{
+    float lo = 0.0f, hi = 1.0f;
+    if (!in_gamut(L, a, b)) {
+        for (int i = 0; i < 16; i++) {
+            float mid = 0.5f * (lo + hi);
+            if (in_gamut(L, a * mid, b * mid)) lo = mid;
+            else hi = mid;
+        }
+        a *= lo;
+        b *= lo;
+    }
+    return oklab_to_srgb(L, a, b);
 }
 
 #define LEGIBLE_STEPS 16   /* bisection steps on OKLCH L: 2^-16 is far below one 8-bit step */
 
+/** A contrast measure of text against a background; larger is more legible. */
+typedef float (*contrast_fn)(lv_color_t text, lv_color_t bg);
+
 /**
- * @brief WCAG contrast against @p bg of the OKLab colour (@p L, @p a, @p b).
+ * @brief APCA contrast magnitude (the polarity sign dropped), as a contrast_fn.
  * @version 1
  * @utility
- * @return Contrast ratio.
+ * @return |Lc|.
  */
-static float contrast_at(float L, float a, float b, lv_color_t bg)
+static float apca_abs(lv_color_t text, lv_color_t bg)
 {
-    return ui_contrast_ratio(oklab_to_srgb(L, a, b), bg);
+    return fabsf(ui_apca_lc(text, bg));
+}
+
+/**
+ * @brief Contrast by @p fn against @p bg of the OKLab colour (@p L, @p a, @p b).
+ * v2: the measure is a parameter (WCAG or APCA).
+ * @version 2
+ * @utility
+ * @return The contrast.
+ */
+static float contrast_at(contrast_fn fn, float L, float a, float b, lv_color_t bg)
+{
+    return fn(oklab_to_srgb(L, a, b), bg);
 }
 
 /**
  * @brief Smallest move of lightness from @p L toward @p end (0 or 1) that reaches
- *        @p target against @p bg; @p L itself is known to fall short.
+ *        @p target against @p bg by @p fn; @p L itself is known to fall short.
  * v2: the target is a parameter (was always UI_CONTRAST_AA).
- * @version 2
+ * v3: the measure is a parameter.
+ * @version 3
  * @utility
  * @return Whether that direction reaches the target at all (@p out is set when it does).
  */
-static bool shift_toward(float L, float a, float b, lv_color_t bg, float end, float target,
-                         float *out)
+static bool shift_toward(contrast_fn fn, float L, float a, float b, lv_color_t bg, float end,
+                         float target, float *out)
 {
-    if (contrast_at(end, a, b, bg) < target) return false;
+    if (contrast_at(fn, end, a, b, bg) < target) return false;
     float fail = L, pass = end;
     for (int i = 0; i < LEGIBLE_STEPS; i++) {
         float mid = 0.5f * (fail + pass);
-        if (contrast_at(mid, a, b, bg) >= target) pass = mid;
+        if (contrast_at(fn, mid, a, b, bg) >= target) pass = mid;
         else fail = mid;
     }
     *out = pass;
@@ -170,7 +239,8 @@ static bool shift_toward(float L, float a, float b, lv_color_t bg, float end, fl
  *        OKLCH hue and chroma with lightness moved only as far as @p target needs, in
  *        whichever direction needs the smaller move (the extreme with the better contrast
  *        when neither reaches it).
- * @version 1
+ * v2: shift_toward and contrast_at take the measure (WCAG here).
+ * @version 2
  * @req REQ-BG-002
  * @return Legible text colour.
  */
@@ -179,13 +249,89 @@ lv_color_t ui_legible_to(lv_color_t desired, lv_color_t bg, float target)
     if (ui_contrast_ratio(desired, bg) >= target) return desired;
     float L, a, b, up_L = 1.0f, down_L = 0.0f;
     srgb_to_oklab(desired, &L, &a, &b);
-    bool up = shift_toward(L, a, b, bg, 1.0f, target, &up_L);
-    bool down = shift_toward(L, a, b, bg, 0.0f, target, &down_L);
+    contrast_fn fn = ui_contrast_ratio;
+    bool up = shift_toward(fn, L, a, b, bg, 1.0f, target, &up_L);
+    bool down = shift_toward(fn, L, a, b, bg, 0.0f, target, &down_L);
     float out;
     if (up && down) out = (up_L - L <= L - down_L) ? up_L : down_L;
     else if (up || down) out = up ? up_L : down_L;
-    else out = (contrast_at(1.0f, a, b, bg) >= contrast_at(0.0f, a, b, bg)) ? 1.0f : 0.0f;
+    else out = (contrast_at(fn, 1.0f, a, b, bg) >= contrast_at(fn, 0.0f, a, b, bg)) ? 1.0f : 0.0f;
     return oklab_to_srgb(out, a, b);
+}
+
+// ---------------------------------------------------------------------------
+// APCA (Accessible Perceptual Contrast Algorithm, apca-w3 0.0.98G-4g constants)
+// ---------------------------------------------------------------------------
+
+#define APCA_BLK_THRS  0.022f    // soft black clamp: luminance below this is lifted
+#define APCA_BLK_CLMP  1.414f
+#define APCA_NORM_BG   0.56f     // dark text on a light background
+#define APCA_NORM_TXT  0.57f
+#define APCA_REV_BG    0.65f     // light text on a dark background
+#define APCA_REV_TXT   0.62f
+#define APCA_SCALE     1.14f
+#define APCA_OFFSET    0.027f
+#define APCA_LO_CLIP   0.1f
+#define APCA_DELTA_MIN 0.0005f
+
+/**
+ * @brief APCA screen luminance of @p c (simple 2.4 power, soft-clamped near black).
+ * @version 1
+ * @utility
+ * @return Luminance 0..1.
+ */
+static float apca_y(lv_color_t c)
+{
+    float y = 0.2126729f * powf(c.red / 255.0f, 2.4f) +
+              0.7151522f * powf(c.green / 255.0f, 2.4f) +
+              0.0721750f * powf(c.blue / 255.0f, 2.4f);
+    return y > APCA_BLK_THRS ? y : y + powf(APCA_BLK_THRS - y, APCA_BLK_CLMP);
+}
+
+/**
+ * @brief APCA lightness contrast Lc of @p text on @p bg.
+ * @version 1
+ * @req REQ-BG-002
+ * @return Lc: positive for dark text on a light background, negative for light on dark,
+ *         about -108..106; 0 when too close to tell.
+ */
+float ui_apca_lc(lv_color_t text, lv_color_t bg)
+{
+    float yt = apca_y(text), yb = apca_y(bg), lc = 0.0f;
+    if (fabsf(yb - yt) >= APCA_DELTA_MIN) {
+        bool normal = yb > yt;
+        float sapc = normal ? (powf(yb, APCA_NORM_BG) - powf(yt, APCA_NORM_TXT)) * APCA_SCALE
+                            : (powf(yb, APCA_REV_BG) - powf(yt, APCA_REV_TXT)) * APCA_SCALE;
+        if (normal && sapc >= APCA_LO_CLIP) lc = (sapc - APCA_OFFSET) * 100.0f;
+        else if (!normal && sapc <= -APCA_LO_CLIP) lc = (sapc + APCA_OFFSET) * 100.0f;
+    }
+    return lc;
+}
+
+/**
+ * @brief @p ink made legible over @p bg by APCA: the light or dark side is whichever of
+ *        white and black reads better on @p bg (not the ink's own); the ink's lightness is
+ *        mirrored onto that side when it is on the other, kept when it already reaches
+ *        @p lc_target, else moved only as far as the target needs (to the extreme when even
+ *        that falls short). Hue and chroma are the ink's; chroma is reduced, never the hue
+ *        bent, when the new lightness cannot hold it.
+ * @version 1
+ * @req REQ-BG-002
+ * @return Legible text colour.
+ */
+lv_color_t ui_legible_apca(lv_color_t ink, lv_color_t bg, float lc_target)
+{
+    float L, a, b;
+    srgb_to_oklab(ink, &L, &a, &b);
+    bool light = apca_abs(lv_color_white(), bg) >= apca_abs(lv_color_black(), bg);
+    float end = light ? 1.0f : 0.0f;
+    float start = (light == (L >= 0.5f)) ? L : 1.0f - L;
+    float out = start;
+    if (contrast_at(apca_abs, start, a, b, bg) < lc_target &&
+        !shift_toward(apca_abs, start, a, b, bg, end, lc_target, &out)) {
+        out = end;
+    }
+    return out == L ? ink : oklab_to_srgb_mapped(out, a, b);
 }
 
 /**

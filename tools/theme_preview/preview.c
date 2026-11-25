@@ -1,13 +1,15 @@
 /**
  * @file preview.c
  * v2: theme bindings; a live-switch scene.
- * @version 2
+ * v3: the home clock scene.
+ * @version 3
  * @brief Host theme preview: renders the firmware's own widgets with the real LVGL fork (built
  *        from the device sdkconfig) and the real theme code, one PNG-ready frame per theme and
  *        scene, so a theme can be judged before anything goes to the device.
  *
  * Usage: theme_preview <out_dir> <background LVGL path, e.g. A:/backgrounds/x.png | -> <theme.json>...
  * Writes <out_dir>/<theme-stem>_<scene>.ppm (RGB888) for each theme and scene:
+ *   clock    — the home screen: the full-size clock over the background
  *   weather  — the weather screen: card, forecast strip and a Severe alert over the background
  *   gallery  — every role: surfaces and text tiers, stock widgets, the alert severities, the
  *              accent palette (leaves, swatches)
@@ -466,6 +468,17 @@ static void scene_gallery(void)
     alert_stack(scr);
 }
 
+/**
+ * @brief The home screen: the full-size clock over the background.
+ * @version 1
+ * @utility
+ */
+static void scene_clock(void)
+{
+    fresh_screen(true);
+    clock_in(CLOCK_MODE_FULL);
+}
+
 static bool install_theme(const char *path, ui_theme_t *t);
 
 /**
@@ -686,7 +699,8 @@ static void render_edit_demo(const char *out_dir, const char *path)
  * v4: settings and alert-card scenes.
  * v5: sky scenes (day, night, dawn).
  * v6: weather at noon, dusk and night.
- * @version 6
+ * v7: the home clock.
+ * @version 7
  * @utility
  * @return Whether the theme parsed.
  */
@@ -696,6 +710,9 @@ static bool render_theme(const char *out_dir, const char *path)
     if (!install_theme(path, &t)) return false;
     char stem[64], file[512];
     stem_of(path, stem, sizeof(stem));
+    scene_clock();
+    snprintf(file, sizeof(file), "%s/%s_clock.ppm", out_dir, stem);
+    write_frame(file);
     scene_weather(12, 9);
     snprintf(file, sizeof(file), "%s/%s_weather.ppm", out_dir, stem);
     write_frame(file);
