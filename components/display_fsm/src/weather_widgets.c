@@ -3,7 +3,8 @@
  * v2: forecast icons resolved off-lock into a cache (forecast_icons_rescan).
  * v3: panel text colours judged against the panel's composite backdrop; Lottie top right.
  * v4: colours are theme bindings (ui_theme_bind); the set_color / set_contrast calls are gone.
- * @version 4
+ * v5: degree signs; forecast high and low on two lines.
+ * @version 5
  * @brief Layer 1: WeatherCard + ForecastStrip widgets.
  *
  * Caller must hold LVGL lock for all functions, EXCEPT forecast_icons_rescan() (SD I/O: off-lock).
@@ -209,7 +210,7 @@ void forecast_icons_rescan(void)
 struct weather_card_t {
     lv_obj_t *container;
     lv_obj_t *lbl_temp;         // large temperature number
-    lv_obj_t *lbl_temp_unit;    // "F" suffix (separate — Nunito lacks °)
+    lv_obj_t *lbl_temp_unit;    // "°F" suffix (Montserrat: Nunito here has no ° glyph)
     lv_obj_t *lbl_description;  // "Mostly Cloudy"
     lv_obj_t *lbl_feels;        // "Feels like 68F"
     lv_obj_t *lbl_wind;         // "Wind: NW 12 mph"
@@ -240,7 +241,8 @@ static float kmh_to_mph(float k) { return k * 0.621371f; }
  *        humidity labels) on a dark rounded panel at the top-left of @p parent.
  * v3: colours from the theme roles (ui_theme), no literals.
  * v4: colours bound to theme roles (ui_bind_*): repainted live on a theme change.
- * @version 4
+ * v5: "°F" unit (Montserrat, which has the degree sign).
+ * @version 5
  * @return New card, or NULL on allocation failure (logged).
  * @req REQ-WX-002
  */
@@ -274,12 +276,12 @@ weather_card_t *weather_card_create(lv_obj_t *parent)
     lv_obj_align(w->lbl_temp, LV_ALIGN_TOP_LEFT, 0, 20);
     lv_label_set_text(w->lbl_temp, "--");
 
-    // "°F" suffix — Nunito fonts are ASCII-only (no ° glyph), use Montserrat
+    // "°F" suffix: these Nunito fonts are ASCII-only (no ° glyph), Montserrat has it
     w->lbl_temp_unit = lv_label_create(w->container);
-    lv_obj_set_style_text_font(w->lbl_temp_unit, &nunito_48, 0);
+    lv_obj_set_style_text_font(w->lbl_temp_unit, &lv_font_montserrat_48, 0);
     ui_bind_text(w->lbl_temp_unit, UI_ROLE_TEXT_MUTED);
     lv_obj_align_to(w->lbl_temp_unit, w->lbl_temp, LV_ALIGN_OUT_RIGHT_TOP, 4, 8);
-    lv_label_set_text(w->lbl_temp_unit, "F");
+    lv_label_set_text(w->lbl_temp_unit, "\xC2\xB0" "F");
 
     // Description
     w->lbl_description = lv_label_create(w->container);
@@ -351,7 +353,8 @@ lv_obj_t *weather_card_container(const weather_card_t *w)
  *        temperatures and humidity) and re-align them. Ignores NULL or invalid input.
  * v2: "--" for missing values (the em dash is not in the font: it drew nothing); humidity too
  *     (showed "-1%").
- * @version 2
+ * v3: degree sign on the feels-like temperature.
+ * @version 3
  * @req REQ-WX-002
  */
 void weather_card_update(weather_card_t *w, const nws_conditions_t *cond)
@@ -379,7 +382,7 @@ void weather_card_update(weather_card_t *w, const nws_conditions_t *cond)
     if (cond->feels_like_c <= -200.0f) {
         lv_label_set_text(w->lbl_feels, "Feels like --");
     } else {
-        snprintf(buf, sizeof(buf), "Feels like %.0fF", c_to_f(cond->feels_like_c));
+        snprintf(buf, sizeof(buf), "Feels like %.0f\xC2\xB0" "F", c_to_f(cond->feels_like_c));
         lv_label_set_text(w->lbl_feels, buf);
     }
 
@@ -482,7 +485,8 @@ struct forecast_strip_t {
         lv_obj_t *lbl_name;
         lv_obj_t *lbl_condition;   /* fallback when no icon asset exists */
         lv_obj_t *img_icon;        /* static condition icon (sdcard/icons/weather) */
-        lv_obj_t *lbl_temps;
+        lv_obj_t *lbl_hi;
+        lv_obj_t *lbl_lo;
     } days[FORECAST_DAYS];
 };
 
@@ -490,24 +494,27 @@ struct forecast_strip_t {
  * @brief Create one label in a forecast column.
  * v2: colours from the theme roles (ui_theme), no literals.
  * v3: text bound to the theme (ui_bind_text).
- * @version 3
+ * v4: takes the text role.
+ * @version 4
  * @utility
  * @return The label.
  */
-static lv_obj_t *strip_label(lv_obj_t *col, const lv_font_t *font, lv_align_t align, int32_t y,
-                             const char *text)
+static lv_obj_t *strip_label(lv_obj_t *col, const lv_font_t *font, ui_role_t role,
+                             lv_align_t align, int32_t y, const char *text)
 {
     lv_obj_t *lbl = lv_label_create(col);
     lv_obj_set_style_text_font(lbl, font, 0);
-    ui_bind_text(lbl, UI_ROLE_TEXT);
+    ui_bind_text(lbl, role);
     lv_obj_align(lbl, align, 0, y);
     lv_label_set_text(lbl, text);
     return lbl;
 }
 
 /**
- * @brief Create day column @p i: name, condition icon (text fallback), hi/lo.
- * @version 1
+ * @brief Create day column @p i: name, condition icon (text fallback), the high and, below
+ *        it, the low.
+ * v2: high and low on two lines (was "hi/lo" on one).
+ * @version 2
  * @utility
  */
 static void strip_create_column(forecast_strip_t *s, int i)
@@ -520,18 +527,24 @@ static void strip_create_column(forecast_strip_t *s, int i)
     lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE);
     s->days[i].col = col;
 
-    s->days[i].lbl_name = strip_label(col, &lv_font_montserrat_20, LV_ALIGN_TOP_MID, 0, "---");
+    s->days[i].lbl_name = strip_label(col, &lv_font_montserrat_20, UI_ROLE_TEXT, LV_ALIGN_TOP_MID,
+                                      0, "---");
 
-    s->days[i].img_icon = lv_image_create(col);
-    lv_obj_align(s->days[i].img_icon, LV_ALIGN_CENTER, 0, 2);
+    s->days[i].img_icon = lv_image_create(col);   // 64 px, between the name and the high
+    lv_obj_align(s->days[i].img_icon, LV_ALIGN_TOP_MID, 0, 24);
     lv_obj_add_flag(s->days[i].img_icon, LV_OBJ_FLAG_HIDDEN);
 
-    s->days[i].lbl_condition = strip_label(col, &lv_font_montserrat_14, LV_ALIGN_CENTER, 4, "");
+    s->days[i].lbl_condition = strip_label(col, &lv_font_montserrat_14, UI_ROLE_TEXT,
+                                           LV_ALIGN_TOP_MID, 48, "");
     lv_obj_set_width(s->days[i].lbl_condition, 120);
+    lv_obj_set_style_text_align(s->days[i].lbl_condition, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(s->days[i].lbl_condition, LV_LABEL_LONG_DOT);
     lv_obj_add_flag(s->days[i].lbl_condition, LV_OBJ_FLAG_HIDDEN);
 
-    s->days[i].lbl_temps = strip_label(col, &lv_font_montserrat_24, LV_ALIGN_BOTTOM_MID, 0, "--/--");
+    s->days[i].lbl_hi = strip_label(col, &lv_font_montserrat_24, UI_ROLE_TEXT, LV_ALIGN_TOP_MID,
+                                    86, "--");
+    s->days[i].lbl_lo = strip_label(col, &lv_font_montserrat_20, UI_ROLE_TEXT_MUTED,
+                                    LV_ALIGN_TOP_MID, 110, "--");
 }
 
 /**
@@ -643,8 +656,10 @@ static void strip_day_name(int day_idx, char *out, size_t out_sz)
 }
 
 /**
- * @brief Fill one column from a forecast period (night period @p p only for "Tonight").
- * @version 1
+ * @brief Fill one column from a forecast period (night period @p p only for "Tonight"): the
+ *        high ("Tonight" has none) over the low, in degrees.
+ * v2: high and low on two lines with degree signs; a missing low shows "--".
+ * @version 2
  * @utility
  */
 static void strip_fill_day(forecast_strip_t *s, int day, const nws_forecast_t *fc, int i)
@@ -654,14 +669,15 @@ static void strip_fill_day(forecast_strip_t *s, int day, const nws_forecast_t *f
     if (p->is_daytime) {
         strip_day_name(day, buf, sizeof(buf));
         lv_label_set_text(s->days[day].lbl_name, buf);
+        lv_label_set_text_fmt(s->days[day].lbl_hi, "%d\xC2\xB0", p->temperature);
         bool has_night = i + 1 < fc->period_count && !fc->periods[i + 1].is_daytime;
-        int lo = has_night ? fc->periods[i + 1].temperature : p->temperature;
-        snprintf(buf, sizeof(buf), "%d/%d", p->temperature, lo);
+        if (has_night) lv_label_set_text_fmt(s->days[day].lbl_lo, "%d\xC2\xB0", fc->periods[i + 1].temperature);
+        else lv_label_set_text(s->days[day].lbl_lo, "--");
     } else {
         lv_label_set_text(s->days[day].lbl_name, "Tonight");
-        snprintf(buf, sizeof(buf), "--/%d", p->temperature);
+        lv_label_set_text(s->days[day].lbl_hi, "");
+        lv_label_set_text_fmt(s->days[day].lbl_lo, "%d\xC2\xB0", p->temperature);
     }
-    lv_label_set_text(s->days[day].lbl_temps, buf);
     strip_set_condition(s, day, p->short_forecast, p->is_daytime);
 }
 
