@@ -65,6 +65,7 @@ HOST_TESTS = {
     "conditions_merge": ("nws/src/nws_conditions_merge",),
     "sky_data": ("sky_data", "astro_calc"),
     "sched_rule": ("sched_rule", "sky_data", "astro_calc"),
+    "sched_engine": ("sched_engine", "sched_rule", "sky_data", "astro_calc"),
 }
 
 #: Include directories for the host tests.

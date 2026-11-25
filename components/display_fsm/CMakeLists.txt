@@ -38,6 +38,7 @@ idf_component_register(
         "src/sky_panel.c"
         "src/sky_dial.c"
         "src/sched_rule.c"
+        "src/sched_engine.c"
         "src/sched_view.c"
         "src/upload_view.c"
         "src/image_rotator.c"
