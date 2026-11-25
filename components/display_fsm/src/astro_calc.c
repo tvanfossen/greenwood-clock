@@ -1,12 +1,13 @@
 /**
  * @file astro_calc.c
- * @version 1
+ * v2: declared in astro_calc.h (pure; host tests link it).
+ * @version 2
  * @brief Layer 1: Astronomical computation — moon phase, sunrise/sunset, aurora.
  *
  * Pure math — no LVGL, no network. Based on Jean Meeus "Astronomical Algorithms".
  */
 
-#include "display_widgets.h"
+#include "astro_calc.h"
 #include <math.h>
 #include <string.h>
 

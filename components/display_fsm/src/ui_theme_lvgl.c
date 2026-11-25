@@ -1,9 +1,10 @@
 /**
  * @file ui_theme_lvgl.c
  * v2: pressed and disabled states themed (no default-theme black / grey recolours).
- * @version 2
+ * v3: arcs themed.
+ * @version 3
  * @brief The OKLCH theme as an LVGL theme: stock widgets (containers, buttons, lists,
- *        sliders, switches, rollers, text areas, keyboards, message boxes, scrollbars) draw
+ *        sliders, switches, arcs, rollers, text areas, keyboards, message boxes, scrollbars) draw
  *        with the theme's roles instead of LVGL's built-in palette.
  *
  * Layered on LVGL's default theme (kept for its geometry, padding and transitions; given the
@@ -29,7 +30,9 @@ static lv_style_t s_list_item;    // list buttons
 static lv_style_t s_list_header;  // list section text
 static lv_style_t s_track;        // bar / slider / switch background
 static lv_style_t s_indicator;    // bar / slider fill, switch when on
-static lv_style_t s_knob;         // slider and switch knob
+static lv_style_t s_knob;         // slider, switch and arc knob
+static lv_style_t s_arc_track;    // arc background stroke
+static lv_style_t s_arc_ind;      // arc indicator stroke
 static lv_style_t s_input;        // text area
 static lv_style_t s_cursor;       // text area cursor
 static lv_style_t s_placeholder;  // text area placeholder
@@ -68,6 +71,9 @@ static const theme_rule_t RULES[] = {
     { &lv_switch_class,       true,  &s_track,       LV_PART_MAIN },
     { &lv_switch_class,       true,  &s_indicator,   LV_PART_INDICATOR | LV_STATE_CHECKED },
     { &lv_switch_class,       true,  &s_knob,        LV_PART_KNOB },
+    { &lv_arc_class,          true,  &s_arc_track,   LV_PART_MAIN },
+    { &lv_arc_class,          true,  &s_arc_ind,     LV_PART_INDICATOR },
+    { &lv_arc_class,          true,  &s_knob,        LV_PART_KNOB },
     { &lv_roller_class,       true,  &s_surface,     LV_PART_MAIN },
     { &lv_roller_class,       true,  &s_active,      LV_PART_SELECTED },
     { &lv_textarea_class,     true,  &s_input,       LV_PART_MAIN },
@@ -113,7 +119,8 @@ static void set_fill(lv_style_t *st, ui_role_t fill)
 /**
  * @brief Write the current theme's colours into every style.
  * v2: pressed and disabled states: the default theme's black / grey recolours cancelled.
- * @version 2
+ * v3: arc strokes.
+ * @version 3
  * @utility
  */
 static void recolor_styles(void)
@@ -137,6 +144,8 @@ static void recolor_styles(void)
     set_fill(&s_indicator, UI_ROLE_ACCENT);
     set_fill(&s_knob, UI_ROLE_ACCENT);
     lv_style_set_shadow_color(&s_knob, shadow);
+    lv_style_set_arc_color(&s_arc_track, ui_theme_color(UI_ROLE_SURFACE_INSET));
+    lv_style_set_arc_color(&s_arc_ind, ui_theme_color(UI_ROLE_ACCENT));
     set_fill(&s_input, UI_ROLE_SURFACE_INSET);
     lv_style_set_border_color(&s_input, border);
     lv_style_set_border_color(&s_cursor, ui_theme_color(UI_ROLE_ACCENT));
@@ -174,7 +183,8 @@ static lv_theme_t *init_base(void)
 /**
  * @brief Install the themed LVGL theme on @p disp (once; later calls only recolour).
  * v2: initialises the disabled style.
- * @version 2
+ * v3: initialises the arc styles.
+ * @version 3
  * @req REQ-UI-003
  */
 void ui_theme_lvgl_init(lv_display_t *disp)
@@ -187,7 +197,7 @@ void ui_theme_lvgl_init(lv_display_t *disp)
     lv_style_t *all[] = { &s_surface, &s_button, &s_active, &s_list_item, &s_list_header,
                           &s_track, &s_indicator, &s_knob, &s_input, &s_cursor,
                           &s_placeholder, &s_backdrop, &s_scrollbar, &s_disabled,
-                          &s_disabled_fg };
+                          &s_disabled_fg, &s_arc_track, &s_arc_ind };
     for (size_t i = 0; i < sizeof(all) / sizeof(all[0]); i++) lv_style_init(all[i]);
     recolor_styles();
 

@@ -1,7 +1,8 @@
 /**
  * @file display_widgets.h
  * v2: adds forecast_icons_rescan (the one off-lock widget call).
- * @version 2
+ * v3: AstroCalc moved to astro_calc.h (included here).
+ * @version 3
  * @brief Layer 1: Reusable UI widget components (C API).
  *
  * Widgets never call lvgl_port_lock — caller (FSM task) holds the lock.
@@ -16,6 +17,7 @@ extern "C" {
 
 #include "lvgl.h"
 #include "ui_theme.h"   // ui_slot_t
+#include "astro_calc.h"
 #include <stdbool.h>
 #include <time.h>
 
@@ -305,29 +307,6 @@ typedef struct json_layout_t json_layout_t;
 
 json_layout_t *json_layout_create(lv_obj_t *parent, const char *json_str);
 void json_layout_destroy(json_layout_t *jl);
-
-// ---------------------------------------------------------------------------
-// AstroCalc — pure computation, no UI
-// ---------------------------------------------------------------------------
-
-typedef struct {
-    float illumination_pct;        // 0.0 - 100.0
-    char  phase_name[20];          // "Waxing Crescent", "Full Moon", etc.
-    int   phase_index;             // 0-7
-    int   days_to_full;
-    int   days_to_new;
-} moon_phase_t;
-
-typedef struct {
-    int   sunrise_hour, sunrise_min;
-    int   sunset_hour, sunset_min;
-    int   daylight_minutes;
-    float solar_noon_elevation;    // degrees
-} sun_times_t;
-
-void  astro_calc_moon_phase(int year, int month, int day, moon_phase_t *out);
-void  astro_calc_sun_times(int year, int month, int day, float lat, float lon, sun_times_t *out);
-float astro_calc_aurora_probability(float kp_index, float latitude);
 
 #ifdef __cplusplus
 }

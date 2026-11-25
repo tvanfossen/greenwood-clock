@@ -30,6 +30,7 @@
 #include "theme_editor.h"
 #include "alert_card.h"
 #include "settings_frame.h"
+#include "sky_panel.h"
 #include "nws.h"
 #include "src/libs/lodepng/lodepng.h"
 
@@ -488,7 +489,8 @@ static void scene_settings(void)
 
 /**
  * @brief Fill s_alerts with three alerts of different severities and lengths.
- * @version 1
+ * v2: generic place names (no real region).
+ * @version 2
  * @utility
  */
 static void fake_alerts(void)
@@ -502,15 +504,15 @@ static void fake_alerts(void)
         strcpy(a->severity, SEV[i]);
         strcpy(a->urgency, "Expected");
         strcpy(a->certainty, "Likely");
-        strcpy(a->area_desc, "Kent; Ottawa; a nearby city; the sample place; Montcalm");
+        strcpy(a->area_desc, "North County; Lake County; River County; Hill County");
         a->onset = 1795993200 + i * 3600;
         a->expires = a->onset + 9 * 3600;
     }
     strcpy(s_alerts.alerts[0].headline, "Winter Storm Warning issued November 24 at 9:12AM EST until "
-           "November 24 at 7:00PM EST by NWS Chicago MI");
+           "November 24 at 7:00PM EST by NWS Example Office");
     strcpy(s_alerts.alerts[0].description, "* WHAT...Heavy snow expected. Total snow accumulations "
-           "of 6 to 10 inches. Winds gusting as high as 35 mph.\n\n* WHERE...Portions of west "
-           "Illinois.\n\n* WHEN...Until 7 PM EST this evening.\n\n* IMPACTS...Travel could be "
+           "of 6 to 10 inches. Winds gusting as high as 35 mph.\n\n* WHERE...Portions of the "
+           "region.\n\n* WHEN...Until 7 PM EST this evening.\n\n* IMPACTS...Travel could be "
            "very difficult to impossible. The hazardous conditions could impact the evening "
            "commute.");
     strcpy(s_alerts.alerts[0].instruction, "If you must travel, keep an extra flashlight, food, "
@@ -530,6 +532,30 @@ static void scene_alert(void)
     fake_alerts();
     scene_weather();
     alert_card_open(lv_layer_top(), &s_alerts, 0);
+}
+
+/**
+ * @brief The sky screen (sun and moon cards under the minimised clock) at local
+ *        @p hour : @p min on 2026-@p mon-@p day, at a public sample place (Chicago, not the
+ *        device's).
+ * @version 1
+ * @utility
+ */
+static void scene_sky(int mon, int day, int hour, int min)
+{
+    setenv("TZ", "CST6CDT,M3.2.0,M11.1.0", 1);
+    tzset();
+    struct tm tm = { .tm_year = 126, .tm_mon = mon - 1, .tm_mday = day, .tm_hour = hour,
+                     .tm_min = min, .tm_isdst = -1 };
+    time_t t = mktime(&tm);
+    localtime_r(&t, &tm);
+    lv_obj_t *scr = fresh_screen(true);
+    clock_in(CLOCK_MODE_MINIMIZED);
+    clock_widget_update(s_clock, &tm);
+    sky_data_t d;
+    sky_data_compute(t, 41.88f, -87.63f, 2.3f, &d);
+    sky_panel_create(scr, &d);
+    settle(900);
 }
 
 /**
@@ -634,7 +660,8 @@ static void render_edit_demo(const char *out_dir, const char *path)
  * v2: installs through install_theme (bindings repainted).
  * v3: editor scenes per tab.
  * v4: settings and alert-card scenes.
- * @version 4
+ * v5: sky scenes (day, night, dawn).
+ * @version 5
  * @utility
  * @return Whether the theme parsed.
  */
@@ -662,6 +689,15 @@ static bool render_theme(const char *out_dir, const char *path)
     snprintf(file, sizeof(file), "%s/%s_alert.ppm", out_dir, stem);
     write_frame(file);
     alert_card_close();
+    scene_sky(11, 24, 14, 20);
+    snprintf(file, sizeof(file), "%s/%s_sky_day.ppm", out_dir, stem);
+    write_frame(file);
+    scene_sky(11, 24, 20, 40);
+    snprintf(file, sizeof(file), "%s/%s_sky_night.ppm", out_dir, stem);
+    write_frame(file);
+    scene_sky(12, 5, 6, 10);
+    snprintf(file, sizeof(file), "%s/%s_sky_dawn.ppm", out_dir, stem);
+    write_frame(file);
     printf("%s: %s\n", stem, t.name);
     return true;
 }
