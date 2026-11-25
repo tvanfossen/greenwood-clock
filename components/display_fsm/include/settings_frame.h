@@ -3,7 +3,9 @@
  * v2: settings_text, the themed label every settings screen uses.
  * v3: the settings kit: content column, title button, chip, field row, buttons, segmented
  *     choice, banner; the frame's top is settable (the phone panel centres it).
- * @version 3
+ * v4: the frame's area is set per display (settings_frame_set_area): any width; narrow
+ *     frames (a phone held upright) stack each label over its value, one menu column.
+ * @version 4
  * @brief Settings screen layout and widget kit, kept free of the settings behaviour (and its
  *        ESP-IDF dependencies) so the host preview and the phone panel build it too: the
  *        sub-screen frame (a centred dialog panel with a title and Back), the menu grid and the
@@ -18,14 +20,12 @@
 extern "C" {
 #endif
 
-/** Frame geometry: centred below the top-bar clock. */
+/** The clock's frame area: centred below its top-bar clock (the default). */
 #define SETTINGS_FRAME_Y 114
 #define SETTINGS_FRAME_W 800
 #define SETTINGS_FRAME_H 478
-
-/** The scrolling content area under a frame's title row. */
-#define SETTINGS_CONTENT_W (SETTINGS_FRAME_W - 42)
-#define SETTINGS_CONTENT_H (SETTINGS_FRAME_H - 42 - 64)
+/** Frames narrower than this stack each field's label over its value. */
+#define SETTINGS_NARROW_W 640
 /** A field row's height (label left, value right). */
 #define SETTINGS_FIELD_H 46
 
@@ -56,20 +56,51 @@ lv_obj_t *settings_frame_create(lv_obj_t *parent, const char *title, lv_event_cb
 lv_obj_t *settings_text(lv_obj_t *parent, const char *s, const lv_font_t *font, ui_role_t role);
 
 /**
- * @brief Where frames are placed: their top edge (default SETTINGS_FRAME_Y, under the
- *        clock's top bar; the phone panel, which has no clock, centres them).
+ * @brief Keep @p label to one line @p w wide, ending in "..." when its text is longer.
  * @version 1
  * @req REQ-UI-001
  */
-void settings_frame_set_y(int32_t y);
+void settings_one_line(lv_obj_t *label, int32_t w);
 
 /**
- * @brief Where frames are placed (see settings_frame_set_y).
+ * @brief Where frames go: top edge @p y, size @p w x @p h, centred across (the clock: under its
+ *        top bar; the phone panel: the browser's viewport). Frames made later use it.
  * @version 1
  * @req REQ-UI-001
- * @return Their top edge.
+ */
+void settings_frame_set_area(int32_t y, int32_t w, int32_t h);
+
+/**
+ * @brief The frames' top edge.
+ * @version 1
+ * @req REQ-UI-001
+ * @return It.
  */
 int32_t settings_frame_get_y(void);
+
+/**
+ * @brief The width of the content area under a frame's title row.
+ * @version 1
+ * @req REQ-UI-001
+ * @return Pixels.
+ */
+int32_t settings_content_w(void);
+
+/**
+ * @brief The height of the content area under a frame's title row.
+ * @version 1
+ * @req REQ-UI-001
+ * @return Pixels.
+ */
+int32_t settings_content_h(void);
+
+/**
+ * @brief Whether frames are narrow (under SETTINGS_NARROW_W): labels over values.
+ * @version 1
+ * @req REQ-UI-001
+ * @return Whether.
+ */
+bool settings_narrow(void);
 
 /**
  * @brief The scrolling content column under @p frame's title row (flex, top to bottom).

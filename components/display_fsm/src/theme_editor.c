@@ -1,7 +1,9 @@
 /**
  * @file theme_editor.c
  * v2: an Alert tab for the fourth core.
- * @version 2
+ * v3: any screen: upright, the preview above the controls; sideways, the clock's layout;
+ *     each scaled down to fit.
+ * @version 3
  * @brief On-screen theme editor (see theme_editor.h): the design preview on the left; on the
  *        right, tabs for the four OKLCH cores (L, C, h sliders over their gradients), the text
  *        contrast target, and the slot grid. Every edit is applied to the running theme
@@ -18,6 +20,9 @@
 
 #define PANE_W        500
 #define PANEL_X       524
+#define PANEL_W       (1024 - PANEL_X - 16)   // the controls' own width
+#define WIDE_W        1024                    // narrower screens stack and scale
+#define NARROW_PANEL_H 470                    // the controls' own height when stacked
 #define TAB_W         70
 #define APPLY_MS      80     // apply at most this often while a slider is dragged
 #define CONTRAST_MIN  30     // slider units: tenths of a WCAG ratio
@@ -410,16 +415,18 @@ static void build_slots_body(lv_obj_t *panel)
 }
 
 /**
- * @brief The control panel: tabs, the three bodies, Revert / Back / Save.
+ * @brief The control panel at @p x, @p y, @p h tall: tabs, the bodies, Revert / Back / Save.
  * v2: the where-to-save row.
- * @version 2
+ * v3: placed by the caller; returned (a narrow layout scales it).
+ * @version 3
  * @utility
+ * @return The panel.
  */
-static void build_panel(lv_obj_t *root, int32_t h)
+static lv_obj_t *build_panel(lv_obj_t *root, int32_t x, int32_t y, int32_t h)
 {
     lv_obj_t *panel = lv_obj_create(root);
-    lv_obj_set_pos(panel, PANEL_X, 0);
-    lv_obj_set_size(panel, 1024 - PANEL_X - 16, h - 8);
+    lv_obj_set_pos(panel, x, y);
+    lv_obj_set_size(panel, PANEL_W, h - 8);
     lv_obj_set_style_bg_opa(panel, LV_OPA_90, 0);
     lv_obj_set_style_pad_all(panel, 12, 0);
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
@@ -445,13 +452,63 @@ static void build_panel(lv_obj_t *root, int32_t h)
                            LV_LABEL_LONG_MODE_DOTS);
     button(s_ed.save_choice, "Cancel", 380, 0, 80, save_cancel_cb, 0);
     lv_obj_add_flag(s_ed.save_choice, LV_OBJ_FLAG_HIDDEN);
+    return panel;
+}
+
+/**
+ * @brief Draw @p obj at @p scale (256: its own size) from its top-left corner; input follows.
+ * @version 1
+ * @utility
+ */
+static void scale_from_corner(lv_obj_t *obj, int32_t scale)
+{
+    lv_obj_set_style_transform_pivot_x(obj, 0, 0);
+    lv_obj_set_style_transform_pivot_y(obj, 0, 0);
+    lv_obj_set_style_transform_scale(obj, scale, 0);
+}
+
+/**
+ * @brief A screen narrower than the clock's, @p w x @p h, held upright: the controls along
+ *        the bottom and the preview above them, each at its own layout scaled to the width
+ *        (never enlarged; the controls take at most 60 % of the height).
+ * @version 1
+ * @utility
+ */
+static void layout_stacked(int32_t w, int32_t h)
+{
+    int32_t k = LV_MIN((w - 16) * 256 / PANEL_W, h * 154 / NARROW_PANEL_H);   // 154/256: 60 %
+    k = LV_MIN(k, 256);
+    int32_t panel_h = NARROW_PANEL_H * k / 256;
+    lv_obj_t *panel = build_panel(s_ed.root, 8, h - panel_h - 8, NARROW_PANEL_H + 8);
+    scale_from_corner(panel, k);
+    int32_t kp = LV_MIN((w - 16) * 256 / PANE_W, 256);
+    int32_t pane_h = (h - panel_h - 24) * 256 / kp;
+    lv_obj_t *pane = plain(s_ed.root, 8, 0, PANE_W, pane_h);
+    te_preview_create(pane);   // transparent: the picture shows
+    scale_from_corner(pane, kp);
+}
+
+/**
+ * @brief The clock's side-by-side layout in a 1024-wide box of @p h, drawn at @p scale.
+ * @version 1
+ * @utility
+ */
+static void layout_side_by_side(int32_t h, int32_t scale)
+{
+    int32_t lh = h * 256 / scale;   // the box's own height
+    lv_obj_t *box = plain(s_ed.root, 0, 0, WIDE_W, lh);
+    te_preview_create(plain(box, 16, 0, PANE_W, lh));   // transparent: the picture shows
+    build_panel(box, PANEL_X, 0, lh);
+    if (scale < 256) scale_from_corner(box, scale);
 }
 
 /**
  * @brief Build the editor on @p parent from @p y down, starting from the current theme; Save
  *        asks global-or-@p profile when a profile is given.
  * v2: takes the active profile's name.
- * @version 2
+ * v3: the parent's size: upright screens stack and scale, wide ones scale the clock's
+ *     layout down when narrower than it.
+ * @version 3
  * @req REQ-UI-004
  * @return The editor's root object.
  */
@@ -464,11 +521,11 @@ lv_obj_t *theme_editor_create(lv_obj_t *parent, int32_t y, const char *profile,
     s_ed.work = s_ed.orig;
     s_ed.on_save = on_save;
     s_ed.on_close = on_close;
-    int32_t h = lv_obj_get_height(parent) - y;
-    s_ed.root = plain(parent, 0, y, 1024, h);
+    int32_t w = lv_obj_get_width(parent), h = lv_obj_get_height(parent) - y;
+    s_ed.root = plain(parent, 0, y, w, h);
     lv_obj_add_event_cb(s_ed.root, root_delete_cb, LV_EVENT_DELETE, NULL);
-    te_preview_create(plain(s_ed.root, 16, 0, PANE_W, h));   // transparent: the picture shows
-    build_panel(s_ed.root, h);
+    if (w < h) layout_stacked(w, h);                             // a phone held upright
+    else layout_side_by_side(h, LV_MIN(w * 256 / WIDE_W, 256));  // the clock; a phone sideways
     s_ed.apply_timer = lv_timer_create(apply_timer_cb, APPLY_MS, NULL);
     lv_timer_pause(s_ed.apply_timer);
     theme_editor_set_tab(THEME_EDITOR_INK);

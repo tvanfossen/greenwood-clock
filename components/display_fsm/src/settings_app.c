@@ -92,6 +92,20 @@ void settings_app_refresh(void)
 }
 
 /**
+ * @brief Build every open screen again for the current frame area.
+ * @version 1
+ * @req REQ-UI-001
+ */
+void settings_app_relayout(void)
+{
+    for (int i = 0; i <= s_top; i++) {
+        lv_obj_delete(s_stack[i].obj);
+        s_stack[i].obj = s_stack[i].fn(s_root, s_stack[i].ctx);
+        if (i < s_top) lv_obj_add_flag(s_stack[i].obj, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+/**
  * @brief Back: close the top screen.
  * @version 1
  * @callback
@@ -194,7 +208,8 @@ static void add_choice(lv_obj_t *list, const char *label, bool current, int i)
 /**
  * @brief The picker screen.
  * v2: Customize first for themes (no Global).
- * @version 2
+ * v3: the frame area's size.
+ * @version 3
  * @utility
  * @return The frame.
  */
@@ -204,7 +219,7 @@ static lv_obj_t *chooser_screen(lv_obj_t *parent, void *ctx)
     chooser_t *c = &s_chooser;
     lv_obj_t *frame = settings_frame_create(parent, c->title, settings_app_back_cb);
     lv_obj_t *list = lv_list_create(frame);
-    lv_obj_set_size(list, SETTINGS_CONTENT_W, SETTINGS_CONTENT_H);
+    lv_obj_set_size(list, settings_content_w(), settings_content_h());
     lv_obj_align(list, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_text_font(list, &lv_font_montserrat_20, 0);
     if (c->which == SETTINGS_LIST_THEMES) add_choice(list, "Customize...", false, -1);
@@ -266,7 +281,8 @@ static void text_done_cb(lv_event_t *e)
 
 /**
  * @brief The text entry screen: a one-line text area over a keyboard.
- * @version 1
+ * v2: the keyboard fits short frames (a phone sideways).
+ * @version 2
  * @utility
  * @return The frame.
  */
@@ -279,11 +295,11 @@ static lv_obj_t *text_screen(lv_obj_t *parent, void *ctx)
     lv_textarea_set_one_line(s_text.ta, true);
     lv_textarea_set_max_length(s_text.ta, SCHED_NAME_LEN - 1);
     lv_textarea_set_text(s_text.ta, s_text.initial);
-    lv_obj_set_width(s_text.ta, SETTINGS_CONTENT_W);
+    lv_obj_set_width(s_text.ta, settings_content_w());
     lv_obj_align(s_text.ta, LV_ALIGN_TOP_MID, 0, 70);
     lv_obj_t *kb = lv_keyboard_create(frame);
     lv_keyboard_set_textarea(kb, s_text.ta);
-    lv_obj_set_size(kb, SETTINGS_CONTENT_W, 260);
+    lv_obj_set_size(kb, settings_content_w(), LV_MIN(260, settings_content_h() - 60));
     lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_add_event_cb(kb, text_done_cb, LV_EVENT_READY, NULL);
     return frame;
@@ -371,8 +387,21 @@ static void upload_cb(lv_event_t *e)
 }
 
 /**
- * @brief The Upload screen: send a background picture or an album photo from the phone.
+ * @brief A paragraph in a column: wraps to its width.
  * @version 1
+ * @utility
+ */
+static void wrapped(lv_obj_t *col, const char *s, const lv_font_t *font, ui_role_t role)
+{
+    lv_obj_t *l = settings_text(col, s, font, role);
+    lv_obj_set_width(l, settings_content_w() - 12);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_WRAP);
+}
+
+/**
+ * @brief The Upload screen: send a background picture or an album photo from the phone.
+ * v2: its text wraps (narrow screens).
+ * @version 2
  * @utility
  * @return The frame.
  */
@@ -381,16 +410,16 @@ static lv_obj_t *upload_screen(lv_obj_t *parent, void *ctx)
     LV_UNUSED(ctx);
     lv_obj_t *frame = settings_frame_create(parent, "Upload", settings_app_back_cb);
     lv_obj_t *col = settings_column(frame);
-    settings_text(col, "Send a picture from this phone to the clock.", &lv_font_montserrat_20,
-                  UI_ROLE_TEXT);
+    wrapped(col, "Send a picture from this phone to the clock.", &lv_font_montserrat_20,
+            UI_ROLE_TEXT);
     settings_button(settings_field(col, "Background"), LV_SYMBOL_IMAGE "  Choose a picture",
                     upload_cb, (void *)(uintptr_t)SETTINGS_UPLOAD_BACKGROUND);
-    settings_text(col, "Cropped to fill the screen; it joins the backgrounds.",
-                  &lv_font_montserrat_16, UI_ROLE_TEXT_FAINT);
+    wrapped(col, "Cropped to fill the screen; it joins the backgrounds.", &lv_font_montserrat_16,
+            UI_ROLE_TEXT_FAINT);
     settings_button(settings_field(col, "Album photo"), LV_SYMBOL_IMAGE "  Choose a photo",
                     upload_cb, (void *)(uintptr_t)SETTINGS_UPLOAD_PHOTO);
-    settings_text(col, "Fitted whole; it joins the photo slideshow.", &lv_font_montserrat_16,
-                  UI_ROLE_TEXT_FAINT);
+    wrapped(col, "Fitted whole; it joins the photo slideshow.", &lv_font_montserrat_16,
+            UI_ROLE_TEXT_FAINT);
     return frame;
 }
 
@@ -430,7 +459,8 @@ static void reboot_cb(lv_event_t *e)
 /**
  * @brief Append the backend's optional entries to @p items from @p n.
  * v2: Upload.
- * @version 2
+ * v3: no Animation (preview) entry.
+ * @version 3
  * @utility
  * @return The new count.
  */
@@ -438,7 +468,6 @@ static int optional_items(settings_menu_item_t *items, int n)
 {
     if (s_be->wifi_create) items[n++] = (settings_menu_item_t){ LV_SYMBOL_WIFI, "WiFi", device_cb, (void *)s_be->wifi_create };
     if (s_be->phone_create) items[n++] = (settings_menu_item_t){ LV_SYMBOL_CALL, "Phone", device_cb, (void *)s_be->phone_create };
-    if (s_be->preview_create) items[n++] = (settings_menu_item_t){ LV_SYMBOL_PLAY, "Animation", device_cb, (void *)s_be->preview_create };
     if (s_be->upload) items[n++] = (settings_menu_item_t){ LV_SYMBOL_UPLOAD, "Upload", menu_cb, (void *)upload_screen };
     if (s_be->reboot) items[n++] = (settings_menu_item_t){ LV_SYMBOL_POWER, "Reboot", reboot_cb, NULL };
     return n;

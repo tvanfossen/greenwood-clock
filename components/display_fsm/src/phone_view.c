@@ -49,7 +49,8 @@ static void qr_code(lv_obj_t *frame, const char *url)
 
 /**
  * @brief The Phone screen.
- * @version 1
+ * v2: widths from the frame area (settings_content_w).
+ * @version 2
  * @req REQ-UI-005
  * @return The frame.
  */
@@ -66,7 +67,7 @@ lv_obj_t *phone_view_create(lv_obj_t *parent, const char *url, lv_event_cb_t bac
     qr_code(frame, url);
     lv_obj_t *col = lv_obj_create(frame);
     lv_obj_remove_style_all(col);
-    lv_obj_set_size(col, SETTINGS_CONTENT_W - TEXT_X, LV_SIZE_CONTENT);
+    lv_obj_set_size(col, settings_content_w() - TEXT_X, LV_SIZE_CONTENT);
     lv_obj_set_pos(col, TEXT_X, TITLE_ROW + 8);
     lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(col, 10, 0);

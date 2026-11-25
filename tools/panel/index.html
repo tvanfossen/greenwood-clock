@@ -7,9 +7,9 @@
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; font: 18px system-ui, sans-serif; }
   body { display: grid; place-items: center; }
-  /* The canvas box itself keeps the clock's 1024:600 shape, so a touch maps 1:1 to LVGL. */
-  canvas { display: block; width: min(100vw, calc(100vh * 1024 / 600)); aspect-ratio: 1024 / 600;
-           touch-action: none; }
+  /* The canvas is the viewport, one LVGL pixel per CSS pixel (sized by fitCanvas), so a
+     touch maps 1:1 and the settings lay out for this phone, upright or sideways. */
+  canvas { display: block; touch-action: none; }
   #note { display: none; max-width: 28em; padding: 1em; text-align: center; }
 </style>
 </head>
@@ -31,6 +31,21 @@
     if (!r.ok) return null;
     return (await r.json()).token;
   }
+  // The canvas box follows the viewport; a change (the phone turned, the address bar went)
+  // re-lays the settings out for the new size, a moment after it settles.
+  function fitCanvas() {
+    const c = document.getElementById('canvas');
+    c.style.width = window.innerWidth + 'px';
+    c.style.height = window.innerHeight + 'px';
+  }
+  let resizeTimer = 0;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      fitCanvas();
+      if (window.panelReady) Module._panel_resize(window.innerWidth, window.innerHeight);
+    }, 150);
+  });
   async function start() {
     const mock = new URLSearchParams(location.search).has('mock');
     const code = location.hash.slice(1);
@@ -48,6 +63,7 @@
       window.panelState = await r.text();
       window.panelToken = token;
     }
+    fitCanvas();
     window.Module = { canvas: document.getElementById('canvas'),
                       onRuntimeInitialized: function () { window.panelReady = true; } };
     const s = document.createElement('script');

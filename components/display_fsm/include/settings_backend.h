@@ -4,7 +4,8 @@
  * v3: leave is optional (the phone has no Back at its menu).
  * v4: no global settings (profiles set everything): get / set_* are gone; save_theme keeps
  *     a named theme.
- * @version 4
+ * v5: no animation preview entry.
+ * @version 5
  * @brief What the settings screens (settings_app) need from the device they run for: read and
  *        change the settings, the lists to choose from, the schedule, the sun, and the few
  *        device-only screens. Two implementations: the clock's own (state_settings.cpp:
@@ -58,7 +59,6 @@ typedef struct {
     void (*about)(char *out, size_t n);
     lv_obj_t *(*wifi_create)(lv_obj_t *parent);      /**< Optional: the Wi-Fi screen. */
     lv_obj_t *(*phone_create)(lv_obj_t *parent);     /**< Optional: pair a phone (QR). */
-    lv_obj_t *(*preview_create)(lv_obj_t *parent);   /**< Optional: animation preview. */
     void (*upload)(settings_upload_t kind, settings_done_cb_t done, void *ctx);   /**< Optional: pick and send a picture. */
     void (*reboot)(void);                            /**< Optional. */
     void (*leave)(void);                             /**< Optional: Back from the menu (none: no Back). */

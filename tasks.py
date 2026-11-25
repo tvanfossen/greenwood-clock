@@ -868,6 +868,7 @@ PANEL_SRCS = (
     "tools/panel/settings_mock.c",
     "tools/panel/settings_http.c",
     "tools/panel/panel_main.c",
+    "tools/panel/panel_find.c",
 )
 PANEL_OUT = REPO / "sdcard" / "www" / "panel"
 
@@ -878,8 +879,9 @@ PANEL_OUT = REPO / "sdcard" / "www" / "panel"
 ## v3: the clock backend (settings_http; -sFETCH) beside the sample one.
 ## v4: exports panel_upload_done and ccall (the upload's answer).
 ## v5: gzipped twins of panel.js and panel.wasm (the clock sends them to browsers that take gzip).
+## v6: exports panel_resize (the viewport changed) and panel_find (tap by label in tests).
 ## @req REQ-UI-002
-## @version 5
+## @version 6
 @task
 def panel_build(c):
     if not EMCC.exists():
@@ -892,7 +894,7 @@ def panel_build(c):
     c.run(
         f"{EMCC} -std=gnu11 -O2 -w -include {compat} {LVGL_HOST_DEFINE} {PANEL_FLAGS} {incs} "
         f"{srcs} {lib} -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=33554432 -sFETCH=1 "
-        f"-sEXPORTED_FUNCTIONS=_main,_panel_upload_done -sEXPORTED_RUNTIME_METHODS=ccall "
+        f"-sEXPORTED_FUNCTIONS=_main,_panel_upload_done,_panel_resize,_panel_find -sEXPORTED_RUNTIME_METHODS=ccall "
         f"-o {PANEL_OUT / 'panel.js'}"
     )
     (PANEL_OUT / "index.html").write_text(

@@ -44,7 +44,8 @@ static void *tap(sched_ui_action_t a, int index)
 
 /**
  * @brief One profile row: name, when, look; a "Now" chip; a side note. Tapping opens it.
- * @version 1
+ * v2: every line one line, dotted to the row's width (narrow screens).
+ * @version 2
  * @utility
  */
 static void list_row(lv_obj_t *col, const sched_rule_t *r, const sched_row_state_t *st, int i)
@@ -54,7 +55,7 @@ static void list_row(lv_obj_t *col, const sched_rule_t *r, const sched_row_state
     sched_fmt_look(r, look, sizeof(look));
 
     lv_obj_t *row = lv_obj_create(col);
-    lv_obj_set_size(row, SETTINGS_CONTENT_W - 12, ROW_H);
+    lv_obj_set_size(row, settings_content_w() - 12, ROW_H);
     lv_obj_set_style_radius(row, 12, 0);
     lv_obj_set_style_pad_all(row, 10, 0);
     lv_obj_set_style_border_width(row, st->active ? 2 : 0, 0);
@@ -64,13 +65,16 @@ static void list_row(lv_obj_t *col, const sched_rule_t *r, const sched_row_state
     ui_bind_fill(row, UI_SLOT_CONTROL);
     ui_bind_border(row, UI_ROLE_ACCENT);
 
-    settings_text(row, r->name, &lv_font_montserrat_24, UI_ROLE_TEXT);
+    int32_t inner = settings_content_w() - 12 - 20;   // the row less its padding
+    int32_t side = st->note[0] ? 110 : 0;               // the note's room, bottom right
+    settings_one_line(settings_text(row, r->name, &lv_font_montserrat_24, UI_ROLE_TEXT),
+                      inner - (st->active ? 70 : 0));
     lv_obj_t *w = settings_text(row, when, &lv_font_montserrat_20, UI_ROLE_TEXT_MUTED);
+    settings_one_line(w, inner);
     lv_obj_set_pos(w, 0, 30);
     lv_obj_t *lk = settings_text(row, look, &lv_font_montserrat_16, UI_ROLE_TEXT_FAINT);
+    settings_one_line(lk, inner - (settings_narrow() ? side : LV_MAX(side, 160)));
     lv_obj_set_pos(lk, 0, 56);
-    lv_obj_set_width(lk, SETTINGS_CONTENT_W - 200);
-    lv_label_set_long_mode(lk, LV_LABEL_LONG_MODE_DOTS);
     if (st->active) lv_obj_align(settings_chip(row, "Now", UI_ROLE_ACCENT), LV_ALIGN_TOP_RIGHT, 0, 0);
     if (st->note[0]) {
         lv_obj_t *n = settings_text(row, st->note, &lv_font_montserrat_16, UI_ROLE_TEXT_MUTED);
@@ -80,14 +84,15 @@ static void list_row(lv_obj_t *col, const sched_rule_t *r, const sched_row_state
 
 /**
  * @brief A section header: @p title and an Add button reporting @p add.
- * @version 1
+ * v2: the frame area's width.
+ * @version 2
  * @utility
  */
 static void section_header(lv_obj_t *col, const char *title, sched_ui_action_t add)
 {
     lv_obj_t *h = lv_obj_create(col);
     lv_obj_remove_style_all(h);
-    lv_obj_set_size(h, SETTINGS_CONTENT_W - 12, HEADER_H);
+    lv_obj_set_size(h, settings_content_w() - 12, HEADER_H);
     lv_obj_align(settings_text(h, title, &lv_font_montserrat_24, UI_ROLE_ACCENT), LV_ALIGN_LEFT_MID,
                  4, 0);
     settings_title_button(h, LV_SYMBOL_PLUS " Add", tap_cb, tap(add, 0));

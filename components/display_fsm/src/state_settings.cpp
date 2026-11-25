@@ -6,23 +6,22 @@
  *     Settings FSM state.
  * v4: the Phone screen (QR pairing for the phone panel).
  * v5: no global setters; the theme editor keeps named themes.
- * @version 5
+ * v6: no animation preview screen (it was a test).
+ * @version 6
  * @brief Settings state: the clock's settings backend (NVS settings, SD lists, the schedule
- *        store, the display) for settings_app, the Wi-Fi and animation preview screens, and
+ *        store, the display) for settings_app, the Wi-Fi and Phone screens, and
  *        the FSM state that opens and closes the settings.
  */
 
 #include "display_states.h"
 #include "display_scheduler.h"
 #include "display_fsm.h"
-#include "clock_animation.h"
 
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
 #include "esp_system.h"     // esp_restart
 #include "esp_mac.h"        // MAC address
 #include "esp_netif.h"      // IP address
-#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -291,105 +290,6 @@ static lv_obj_t *wifi_screen(lv_obj_t *parent)
 }
 
 // ============================================================================
-// Animation preview (device only)
-// ============================================================================
-
-#if LV_USE_LOTTIE
-
-#define LOTTIE_FILE_PATH   "/sdcard/lottie/hummingbird.json"
-#define LOTTIE_W           200
-#define LOTTIE_H           200
-
-static uint8_t *s_lottie_buf = nullptr;
-
-/**
- * @brief Create a centered Lottie widget and attach a shared 64-byte aligned SPIRAM render buffer.
- * @version 1
- * @utility
- * @return The Lottie widget, or nullptr if creation, render task start or buffer allocation fails.
- */
-static lv_obj_t *anim_create_widget(lv_obj_t *scr)
-{
-    lv_obj_t *widget = lv_lottie_create(scr);
-    if (!widget) {
-        ESP_LOGE(TAG, "anim: lv_lottie_create returned NULL");
-        return nullptr;
-    }
-    if (lv_lottie_render_failed(widget)) {
-        ESP_LOGE(TAG, "anim: render task failed to start");
-        lv_obj_delete(widget);
-        return nullptr;
-    }
-
-    // Allocate render buffer if needed
-    if (!s_lottie_buf) {
-        uint32_t stride = lv_draw_buf_width_to_stride(LOTTIE_W,
-                            LV_COLOR_FORMAT_ARGB8888_PREMULTIPLIED);
-        size_t buf_sz = (size_t)stride * LOTTIE_H;
-        ESP_LOGI(TAG, "anim: allocating SPIRAM render buf %zu B (stride=%lu)",
-                 buf_sz, (unsigned long)stride);
-        s_lottie_buf = (uint8_t *)heap_caps_aligned_alloc(64, buf_sz, MALLOC_CAP_SPIRAM);
-        if (!s_lottie_buf) {
-            ESP_LOGE(TAG, "anim: SPIRAM alloc FAILED");
-            lv_obj_delete(widget);
-            return nullptr;
-        }
-    }
-
-    lv_obj_set_size(widget, LOTTIE_W, LOTTIE_H);
-    lv_lottie_set_buffer(widget, LOTTIE_W, LOTTIE_H, s_lottie_buf);
-    lv_obj_align(widget, LV_ALIGN_CENTER, 0, 0);
-    return widget;
-}
-
-/**
- * @brief Queue an asynchronous Lottie file load for the widget via display_fsm_load_lottie().
- * @version 1
- * @utility
- */
-static void anim_spawn_load_task(lv_obj_t *widget, const char *path)
-{
-    lottie_load_job_t job = {};
-    job.widget     = widget;
-    job.target_fps = 0;  // use default animation speed
-    strlcpy(job.path, path, sizeof(job.path));
-    display_fsm_load_lottie(&job);
-    ESP_LOGI(TAG, "anim: Lottie load queued '%s'", path);
-}
-
-#endif // LV_USE_LOTTIE
-
-/**
- * @brief The animation preview screen: a Lottie preview if enabled and the heap allows,
- *        otherwise why not.
- * v2: a settings_app screen.
- * @version 2
- * @utility
- * @return The frame.
- */
-static lv_obj_t *preview_screen(lv_obj_t *parent)
-{
-    lv_obj_t *cont = settings_frame_create(parent, "Animation Preview", settings_app_back_cb);
-    const char *problem = nullptr;
-#if LV_USE_LOTTIE
-    size_t free_heap = esp_get_free_heap_size();
-    ESP_LOGI(TAG, "Animation preview: free heap %lu, SPIRAM %lu", (unsigned long)free_heap,
-             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-    lv_obj_t *widget = free_heap >= 500000 ? anim_create_widget(cont) : nullptr;
-    if (widget) anim_spawn_load_task(widget, LOTTIE_FILE_PATH);
-    else problem = free_heap < 500000 ? "Not enough memory (needs 500 KB free)"
-                                      : "Animation unavailable (no PSRAM for its render task)";
-#else
-    problem = "Lottie is not enabled (CONFIG_LV_USE_LOTTIE)";
-#endif
-    if (problem) {
-        lv_obj_t *lbl = settings_text(cont, problem, &lv_font_montserrat_20, UI_ROLE_WARN);
-        lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
-    }
-    return cont;
-}
-
-// ============================================================================
 // Phone (device only): pair a phone by QR code
 // ============================================================================
 
@@ -609,7 +509,8 @@ static void be_leave(void)
  * @brief The clock's backend.
  * v2: the Phone screen.
  * v3: no global setters (profiles set everything).
- * @version 3
+ * v4: no animation preview.
+ * @version 4
  * @utility
  * @return It (static).
  */
@@ -625,7 +526,6 @@ static const settings_backend_t *clock_backend(void)
     be.about = be_about;
     be.wifi_create = wifi_screen;
     be.phone_create = phone_screen;
-    be.preview_create = preview_screen;
     be.reboot = be_reboot;
     be.leave = be_leave;
     return &be;
@@ -639,7 +539,8 @@ static const settings_backend_t *clock_backend(void)
  * @brief FSM entry: pause the scheduler and open the settings (settings_app) at the menu,
  *        under the top-bar clock.
  * v2: the screens are settings_app over the clock's backend.
- * @version 2
+ * v3: the clock's frame area (settings_frame_set_area).
+ * @version 3
  * @req REQ-UI-001
  * @req REQ-DISP-002
  */
@@ -656,7 +557,7 @@ void Settings::entry()
     lv_obj_set_style_pad_all(s_settings_root, 0, 0);
     lv_obj_clear_flag(s_settings_root, LV_OBJ_FLAG_SCROLLABLE);
 
-    settings_frame_set_y(SETTINGS_FRAME_Y);   // under the top-bar clock
+    settings_frame_set_area(SETTINGS_FRAME_Y, SETTINGS_FRAME_W, SETTINGS_FRAME_H);   // under the top-bar clock
     settings_app_open(s_settings_root, clock_backend());
     fade_in(s_settings_root);
     ESP_LOGI(TAG, "Settings: entry");

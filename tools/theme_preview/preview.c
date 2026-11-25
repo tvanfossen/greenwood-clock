@@ -495,14 +495,15 @@ static void noop_cb(lv_event_t *e);
 /**
  * @brief The Phone screen under the top-bar clock: a sample address and code, one phone
  *        connected.
- * @version 1
+ * v2: the clock's frame area.
+ * @version 2
  * @utility
  */
 static void scene_phone(void)
 {
     lv_obj_t *scr = fresh_screen(true);
     clock_in(CLOCK_MODE_TOPBAR);
-    settings_frame_set_y(SETTINGS_FRAME_Y);
+    settings_frame_set_area(SETTINGS_FRAME_Y, SETTINGS_FRAME_W, SETTINGS_FRAME_H);
     phone_view_create(scr, "http://192.168.1.50/www/panel/index.html#0f3a9c1d2e4b5a6978c0d1e2f3a4b5c6",
                       noop_cb, noop_cb);
     phone_view_update(582, 1);
@@ -541,14 +542,15 @@ static void noop_cb(lv_event_t *e)
 /**
  * @brief The settings menu (the device's frame and grid) under the top-bar clock.
  * v2: the real settings app over the sample backend.
- * @version 2
+ * v3: the clock's frame area.
+ * @version 3
  * @utility
  */
 static void scene_settings(void)
 {
     lv_obj_t *scr = fresh_screen(true);
     clock_in(CLOCK_MODE_TOPBAR);
-    settings_frame_set_y(SETTINGS_FRAME_Y);
+    settings_frame_set_area(SETTINGS_FRAME_Y, SETTINGS_FRAME_W, SETTINGS_FRAME_H);
     settings_app_open(scr, settings_mock_backend());
 }
 

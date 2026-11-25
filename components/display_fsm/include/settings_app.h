@@ -80,6 +80,14 @@ void settings_app_back_cb(lv_event_t *e);
 void settings_app_toast(const char *msg, bool pop);
 
 /**
+ * @brief Build every open screen again (the display changed size): the same screens, laid out
+ *        for the frame area now set (settings_frame_set_area); the top one shows.
+ * @version 1
+ * @req REQ-UI-001
+ */
+void settings_app_relayout(void);
+
+/**
  * @brief Push a picker listing @p which with @p current marked; a choice calls @p cb and
  *        closes the picker. Themes list "Customize..." first: a new theme from the editor,
  *        whose stem @p cb gets once it is saved.

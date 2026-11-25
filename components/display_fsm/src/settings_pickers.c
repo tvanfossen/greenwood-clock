@@ -23,7 +23,8 @@ static const char MONTHS[] = "Jan\nFeb\nMar\nApr\nMay\nJun\nJul\nAug\nSep\nOct\n
 
 /**
  * @brief A row of rollers in @p col (flex, centred).
- * @version 1
+ * v2: wraps (narrow frames); the frame area's width.
+ * @version 2
  * @utility
  * @return The row.
  */
@@ -31,10 +32,11 @@ static lv_obj_t *roller_row(lv_obj_t *col)
 {
     lv_obj_t *row = lv_obj_create(col);
     lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, SETTINGS_CONTENT_W - 12, LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_size(row, settings_content_w() - 12, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);   // a narrow frame wraps the year
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(row, 12, 0);
+    lv_obj_set_style_pad_row(row, 8, 0);
     return row;
 }
 
@@ -162,7 +164,8 @@ static void clock_rollers(lv_obj_t *col)
 
 /**
  * @brief The sun-offset roller.
- * @version 1
+ * v2: the roller fits the frame width.
+ * @version 2
  * @utility
  */
 static void offset_roller(lv_obj_t *col)
@@ -176,7 +179,7 @@ static void offset_roller(lv_obj_t *col)
         at += (size_t)snprintf(opts + at, sizeof(opts) - at, "%s%s", i ? "\n" : "", l);
     }
     int sel = (s_time.t.min + OFFSET_MAX) / OFFSET_STEP;
-    s_time.offset = roller(roller_row(col), opts, 400, sel < 0 ? 0 : (sel >= OFFSETS ? OFFSETS - 1 : sel));
+    s_time.offset = roller(roller_row(col), opts, LV_MIN(400, settings_content_w() - 24), sel < 0 ? 0 : (sel >= OFFSETS ? OFFSETS - 1 : sel));
 }
 
 /**
@@ -350,7 +353,8 @@ static void pct_done_cb(lv_event_t *e)
 /**
  * @brief The brightness picker screen: a slider and its value.
  * v2: no Global: profiles set their brightness.
- * @version 2
+ * v3: the slider fits the frame width.
+ * @version 3
  * @utility
  * @return The frame.
  */
@@ -363,7 +367,7 @@ static lv_obj_t *pct_screen(lv_obj_t *parent, void *ctx)
     lv_obj_t *col = settings_column(frame);
     lv_obj_t *row = settings_field(col, "Brightness");
     s_pct.slider = lv_slider_create(row);
-    lv_obj_set_width(s_pct.slider, 420);
+    lv_obj_set_width(s_pct.slider, LV_MIN(420, settings_content_w() - 110));
     lv_slider_set_range(s_pct.slider, 5, 100);
     lv_slider_set_value(s_pct.slider, pct, LV_ANIM_OFF);
     lv_obj_add_event_cb(s_pct.slider, pct_moved_cb, LV_EVENT_VALUE_CHANGED, NULL);
