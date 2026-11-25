@@ -1,7 +1,8 @@
 /**
  * @file test_sky_paint.c
  * v2: the sky events (aurora, meteors).
- * @version 2
+ * v3: the moon's texture matches its model.
+ * @version 3
  * @brief Host tests for the sun and moon painter: the moon's lit share of the disc matches its
  *        phase (within 0.05) and is on the right while waxing; full is all lit, new nothing;
  *        the dark side shows only the asked earthshine, past a thin soft terminator; the sun is an opaque disc in a glow
@@ -203,9 +204,30 @@ static void test_events(void)
 }
 
 /**
+ * @brief The committed texture is the model's (regenerate with `inv moon-texture` after
+ *        changing the model): every sample within one step of it.
+ * @version 1
+ * @utility
+ */
+static void test_texture(void)
+{
+    int off = 0;
+    for (int py = 0; py < SKY_MOON_TEX; py += 3) {
+        for (int px = 0; px < SKY_MOON_TEX; px += 3) {
+            float x = -1.0f + 2.0f * px / (SKY_MOON_TEX - 1), y = 1.0f - 2.0f * py / (SKY_MOON_TEX - 1);
+            int want = (int)(sky_moon_albedo_model(x, y) / SKY_MOON_ALBEDO_MAX * 255.0f + 0.5f);
+            want = want < 0 ? 0 : (want > 255 ? 255 : want);
+            off += abs(SKY_MOON_ALBEDO[py * SKY_MOON_TEX + px] - want) > 1;
+        }
+    }
+    CHECK(off == 0, "the texture is stale: %d samples off the model (inv moon-texture)", off);
+}
+
+/**
  * @brief Run the painter tests; exit status is the failure count.
  * v2: the sky events.
- * @version 2
+ * v3: the moon's texture.
+ * @version 3
  * @utility
  * @return 0 when every check passed.
  */
@@ -214,6 +236,7 @@ int main(void)
     test_moon();
     test_sun();
     test_events();
+    test_texture();
     printf("sky_paint: %d/%d checks passed\n", s_checks - s_failures, s_checks);
     return s_failures;
 }

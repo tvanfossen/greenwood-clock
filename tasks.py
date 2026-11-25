@@ -76,7 +76,7 @@ HOST_TESTS = {
     "sched_json": ("sched_json", "cjson/cjson/cJSON"),
     "auth_core": ("auth/auth_core",),
     "astro_moon": ("astro_moon",),
-    "sky_paint": ("sky_paint",),
+    "sky_paint": ("sky_paint", "sky_moon_albedo"),
 }
 
 #: Include directories for the host tests.
@@ -761,6 +761,7 @@ THEME_PREVIEW_SRCS = (
     "components/display_fsm/src/sky_panel.c",
     "components/display_fsm/src/sky_body.c",
     "components/display_fsm/src/sky_paint.c",
+    "components/display_fsm/src/sky_moon_albedo.c",
     "components/display_fsm/src/sky_dial.c",
     "components/display_fsm/src/sched_rule.c",
     "components/display_fsm/src/phone_view.c",
@@ -883,6 +884,24 @@ PANEL_SRCS = (
     "tools/panel/panel_find.c",
 )
 PANEL_OUT = REPO / "sdcard" / "www" / "panel"
+
+
+## @brief Generate the moon's surface texture (components/display_fsm/src/sky_moon_albedo.c)
+## from sky_moon_albedo_model, so the clock samples a table (the model costs ~12 us a pixel
+## there). Re-run after changing the model; the sky_paint host test checks they agree.
+## @req REQ-ASTRO-001
+## @version 1
+@task
+def moon_texture(c):
+    exe = TMP / "gen_moon_albedo"
+    exe.parent.mkdir(parents=True, exist_ok=True)
+    inc = REPO / "components" / "display_fsm" / "include"
+    c.run(
+        f"gcc -std=gnu11 -O1 -Wall -Werror -I{inc} "
+        f"{REPO / 'components/display_fsm/src/sky_paint.c'} "
+        f"{REPO / 'tools/sky_texture/gen_moon_albedo.c'} -lm -o {exe}"
+    )
+    c.run(f"{exe} {REPO / 'components/display_fsm/src/sky_moon_albedo.c'}")
 
 
 ## @brief Build the phone panel: the clock's LVGL settings screens compiled to WebAssembly

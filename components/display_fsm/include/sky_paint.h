@@ -2,7 +2,8 @@
  * @file sky_paint.h
  * v2: the sun's per-pixel glow and ray profiles precomputed: a frame is table lookups only.
  * v3: the sky's events: an aurora and meteors, randomised per night.
- * @version 3
+ * v4: the moon's surface from a generated texture (the model per pixel cost ~12 us).
+ * @version 4
  * @brief The sun and the moon as pixels (ARGB8888, straight alpha, d x d), for the sky dial
  *        and the clear-sky weather icon. The moon is the near side as it really looks (its
  *        maria and bright craters) lit from the sun's direction for its age, waxing lit on
@@ -22,6 +23,23 @@ extern "C" {
 
 /** The moon's radius as a share of the square's side. */
 #define SKY_MOON_R 0.46f
+
+/** The moon's surface texture: SKY_MOON_TEX x SKY_MOON_TEX brightness samples over the unit
+ *  disc's square (row 0 at the top), albedo x 255 / SKY_MOON_ALBEDO_MAX. Generated from
+ *  sky_moon_albedo_model by `inv moon-texture` (sky_moon_albedo.c); the painter samples it. */
+#define SKY_MOON_TEX        128
+#define SKY_MOON_ALBEDO_MAX 1.6f
+extern const uint8_t SKY_MOON_ALBEDO[SKY_MOON_TEX * SKY_MOON_TEX];
+
+/**
+ * @brief The moon's surface brightness at unit-disc point (@p x, @p y) (y up): highlands 1,
+ *        the maria darker with ragged edges, bright rayed craters. The model the texture is
+ *        generated from (slow: not for painting).
+ * @version 1
+ * @req REQ-ASTRO-001
+ * @return The albedo, 0..SKY_MOON_ALBEDO_MAX.
+ */
+float sky_moon_albedo_model(float x, float y);
 
 /** A colour. */
 typedef struct {

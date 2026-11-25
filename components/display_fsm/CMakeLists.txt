@@ -39,6 +39,7 @@ idf_component_register(
         "src/sky_panel.c"
         "src/sky_body.c"
         "src/sky_paint.c"
+        "src/sky_moon_albedo.c"
         "src/sky_dial.c"
         "src/sched_rule.c"
         "src/sched_engine.c"

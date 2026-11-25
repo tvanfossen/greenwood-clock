@@ -2,7 +2,8 @@
  * @file sky_paint.c
  * v2: the sun's frame from precomputed tables (no transcendental per pixel per frame).
  * v3: the sky's events: aurora curtains and meteors.
- * @version 3
+ * v4: the moon's surface sampled from its generated texture.
+ * @version 4
  * @brief The sun and the moon as pixels (see sky_paint.h). Pure C.
  */
 #include "sky_paint.h"
@@ -145,11 +146,12 @@ static float crater(const patch_t *c, float x, float y)
  *        mottling everywhere.
  * v2: ragged, merging maria (they were round spots); rayed craters.
  * v3: skips maria that cannot reach the point.
- * @version 3
- * @utility
+ * v4: public: the texture's generator model.
+ * @version 4
+ * @req REQ-ASTRO-001
  * @return The albedo.
  */
-static float albedo(float x, float y)
+float sky_moon_albedo_model(float x, float y)
 {
     float wx = x + 0.10f * wobble(x, y, 7.0f), wy = y + 0.10f * wobble(y, x, 6.0f);
     float mare = 0.0f;
@@ -167,8 +169,27 @@ static float albedo(float x, float y)
 }
 
 /**
- * @brief One moon pixel at unit-disc point (@p x, @p y) lit from (@p lx, 0, @p lz).
+ * @brief The surface brightness at unit-disc point (@p x, @p y), from the texture (bilinear).
  * @version 1
+ * @utility
+ * @return The albedo.
+ */
+static float tex_albedo(float x, float y)
+{
+    float fx = (x + 1.0f) * 0.5f * (SKY_MOON_TEX - 1), fy = (1.0f - y) * 0.5f * (SKY_MOON_TEX - 1);
+    fx = fminf(fmaxf(fx, 0.0f), SKY_MOON_TEX - 1.001f);
+    fy = fminf(fmaxf(fy, 0.0f), SKY_MOON_TEX - 1.001f);
+    int ix = (int)fx, iy = (int)fy;
+    float ax = fx - ix, ay = fy - iy;
+    const uint8_t *r0 = &SKY_MOON_ALBEDO[iy * SKY_MOON_TEX + ix], *r1 = r0 + SKY_MOON_TEX;
+    float top = r0[0] + (r0[1] - r0[0]) * ax, bot = r1[0] + (r1[1] - r1[0]) * ax;
+    return (top + (bot - top) * ay) * (SKY_MOON_ALBEDO_MAX / 255.0f);
+}
+
+/**
+ * @brief One moon pixel at unit-disc point (@p x, @p y) lit from (@p lx, 0, @p lz).
+ * v2: the surface from the texture.
+ * @version 2
  * @utility
  * @return The pixel.
  */
@@ -179,7 +200,7 @@ static uint32_t moon_pixel(float x, float y, float lx, float lz, float edge, sky
     float mu0 = x * lx + z * lz;                           // the sun's height there
     float day = smooth(-0.04f, 0.06f, mu0);                // a soft terminator
     float shade = 0.45f + 0.55f * clamp01(2.0f * fmaxf(mu0, 0.0f) / (fmaxf(mu0, 0.0f) + z + 1e-3f));
-    float alb = albedo(x, y);
+    float alb = tex_albedo(x, y);
     sky_rgb_t lit_c = scale(lit, clamp01(shade * alb));
     sky_rgb_t dark_c = mix(dark, lit, 0.10f * alb);        // earthshine shows the maria faintly
     return argb(mix(dark_c, lit_c, day), edge * (dark_a + (1.0f - dark_a) * day));
