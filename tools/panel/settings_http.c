@@ -85,6 +85,8 @@ static sched_date_t add_days(sched_date_t d, int n)
 typedef struct {
     settings_done_cb_t done;
     void              *ctx;
+    char              *body;   /**< The request's own copy: emscripten_fetch keeps only the
+                                    pointer and reads it later, so it lives until the answer. */
 } pending_t;
 
 /**
@@ -104,7 +106,8 @@ static void failure_text(emscripten_fetch_t *f, char *out, size_t n)
 
 /**
  * @brief A request finished: tell whoever asked (or show a failure).
- * @version 1
+ * v2: frees the request's body copy.
+ * @version 2
  * @callback
  */
 static void fetch_done(emscripten_fetch_t *f)
@@ -115,14 +118,18 @@ static void fetch_done(emscripten_fetch_t *f)
     if (!ok) failure_text(f, why, sizeof(why));
     if (p && p->done) p->done(ok, why, p->ctx);
     else if (!ok) settings_app_toast(why, false);
+    if (p) free(p->body);
     free(p);
     emscripten_fetch_close(f);
 }
 
 /**
  * @brief POST @p body (JSON) to @p path with the session token; @p done (may be NULL)
- *        hears how it went.
- * @version 1
+ *        hears how it went. The body is copied: the caller may free its own at once.
+ * v2: the request keeps its own copy of the body until it finishes (emscripten_fetch keeps
+ *     only the pointer; a caller freeing it right away sent freed memory, which the clock
+ *     refused as invalid JSON).
+ * @version 2
  * @utility
  */
 static void post(const char *path, const char *body, settings_done_cb_t done, void *ctx)
@@ -130,19 +137,25 @@ static void post(const char *path, const char *body, settings_done_cb_t done, vo
     static char auth[96];
     snprintf(auth, sizeof(auth), "Bearer %s", s_token);
     const char *headers[] = { "Authorization", auth, "Content-Type", "application/json", NULL };
+    pending_t *p = calloc(1, sizeof(*p));
+    char *copy = p ? strdup(body) : NULL;
+    if (!copy) {
+        free(p);
+        if (done) done(false, "Out of memory", ctx);
+        return;
+    }
+    *p = (pending_t){ done, ctx, copy };
     emscripten_fetch_attr_t attr;
     emscripten_fetch_attr_init(&attr);
     strcpy(attr.requestMethod, "POST");
     attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
-    attr.requestHeaders = headers;
-    attr.requestData = body;
-    attr.requestDataSize = strlen(body);
+    attr.requestHeaders = headers;   // copied by emscripten_fetch
+    attr.requestData = copy;
+    attr.requestDataSize = strlen(copy);
     attr.onsuccess = fetch_done;
     attr.onerror = fetch_done;
-    pending_t *p = calloc(1, sizeof(*p));
-    if (p) *p = (pending_t){ done, ctx };
     attr.userData = p;
-    emscripten_fetch(&attr, path);   // copies the headers and the body
+    emscripten_fetch(&attr, path);
 }
 
 /**

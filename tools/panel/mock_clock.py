@@ -223,18 +223,39 @@ def tap(page, x, y):
     page.wait_for_timeout(500)
 
 
+## @brief The failed checks of the brightness posts: at least one reached the clock and each
+## is a JSON object with a whole-number brightness (what the clock's handler accepts).
+## @utility
+## @version 1
+## @return The failures.
+def brightness_fails(posts):
+    bodies = [body for path, body in posts if path == "/api/settings"]
+    fails = [] if bodies else ["no brightness change reached the clock"]
+    for body in bodies:
+        try:
+            ok = isinstance(json.loads(body).get("brightness"), int)
+        except (ValueError, AttributeError):
+            ok = False
+        if not ok:
+            fails.append(f"brightness post is not {{'brightness': N}}: {body!r}")
+    return fails
+
+
 ## @brief Pair, load, save a schedule profile, upload a background picture; then a second
 ## phone with the used code is refused.
 ## v2: the upload.
 ## v3: the panel loads through its gzipped twins.
+## v4: a brightness change posts a valid body.
 ## @utility
-## @version 3
+## @version 4
 ## @return The failed checks' descriptions.
 def run(base, out):
     clock, fails = serve.clock, []
     with sync_playwright() as p:
         browser = p.firefox.launch()
         page = browser.new_page(viewport={"width": 1024, "height": 600})
+        page.on("console", lambda m: print(f"[panel] {m.type}: {m.text}"))
+        page.on("pageerror", lambda e: print(f"[panel] page error: {e}"))
         page.goto(f"{base}/www/panel/index.html#{CODE}")
         page.wait_for_function("window.panelReady === true", timeout=20000)
         page.wait_for_timeout(600)
@@ -242,6 +263,12 @@ def run(base, out):
             fails.append("the code stayed in the address bar")
         if not {"panel.js", "panel.wasm"} <= set(clock.gzipped):
             fails.append(f"the panel did not load gzipped: {clock.gzipped}")
+        tap(page, 320, 176)  # Brightness
+        tap(page, 700, 320)  # the slider, past the middle
+        page.wait_for_timeout(600)
+        page.screenshot(path=str(out / "e2e_brightness.png"))
+        fails += brightness_fails(clock.posts)
+        tap(page, 190, 106)  # Back to the menu
         tap(page, 320, 248)  # Schedule
         page.screenshot(path=str(out / "e2e_schedule.png"))
         tap(page, 400, 250)  # Morning
