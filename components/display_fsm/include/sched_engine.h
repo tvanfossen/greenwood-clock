@@ -1,6 +1,7 @@
 /**
  * @file sched_engine.h
- * @version 1
+ * v2: sched_days_until.
+ * @version 2
  * @brief The schedule engine: which profile is showing at a local date and minute, and the
  *        overlap check that refuses a save. Daily profiles are the default state and may not
  *        overlap each other; events (yearly or once) may not overlap each other and replace
@@ -60,6 +61,14 @@ int sched_active(const sched_rule_t *r, int n, sched_date_t day, int min,
  */
 bool sched_find_overlap(const sched_rule_t *r, int n, int cand, sched_date_t from, int days,
                         const sched_sun_src_t *sun, sched_overlap_t *out);
+
+/**
+ * @brief Days from @p today until @p r next runs (0: it runs today).
+ * @version 1
+ * @req REQ-BG-004
+ * @return Days (0..366), or -1 when it never runs again (a past one-off).
+ */
+int sched_days_until(const sched_rule_t *r, sched_date_t today);
 
 /**
  * @brief The editor's reason for refusing a save: "Overlaps Christmas on Dec 24 - Dec 25";

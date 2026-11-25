@@ -1,6 +1,7 @@
 /**
  * @file sched_engine.c
- * @version 1
+ * v2: sched_days_until.
+ * @version 2
  * @brief The schedule engine (see sched_engine.h): profile coverage per local day as minute
  *        spans, the active profile, and the overlap check. Pure C.
  */
@@ -253,6 +254,24 @@ bool sched_find_overlap(const sched_rule_t *r, int n, int cand, sched_date_t fro
         }
     }
     if (found) out->every_day = hits == days;
+    return found;
+}
+
+#define DAYS_AHEAD 800   // far enough for a one-off next year
+
+/**
+ * @brief Days until a profile next runs.
+ * @version 1
+ * @req REQ-BG-004
+ * @return Days, or -1.
+ */
+int sched_days_until(const sched_rule_t *r, sched_date_t today)
+{
+    int found = -1;
+    sched_date_t d = today;
+    for (int k = 0; k < DAYS_AHEAD && found < 0; k++, d = next_day(d)) {
+        if (on_date(r, d)) found = k;
+    }
     return found;
 }
 

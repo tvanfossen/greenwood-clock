@@ -1,4 +1,13 @@
 [
-  {"name": "menu"},
-  {"name": "schedule", "taps": [[320, 300]]}
+  {"name": "01_menu"},
+  {"name": "02_schedule", "taps": [[320, 248]]},
+  {"name": "03_edit_morning", "taps": [[400, 250]]},
+  {"name": "04_time_picker", "taps": [[390, 222]]},
+  {"name": "05_time_sunset", "taps": [[700, 168]]},
+  {"name": "06_events", "taps": [[190, 106], [190, 106]], "drags": []},
+  {"name": "07_events_scrolled", "drags": [[512, 450, 0, -400]]},
+  {"name": "08_edit_christmas", "taps": [[400, 260]]},
+  {"name": "09_window", "taps": [[505, 330]]},
+  {"name": "10_dates", "taps": [[380, 276]]},
+  {"name": "11_look_picker", "taps": [[190, 106]], "drags": [[512, 450, 0, -300]]}
 ]

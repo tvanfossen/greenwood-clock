@@ -1,21 +1,19 @@
 /**
  * @file state_settings.cpp
  * v2: colours bound to the theme (ui_bind_*): repainted live on a theme change.
- * @version 2
- * @brief Settings state: on-device settings sub-screens (Wi-Fi, brightness, background, colour, animation, about) on an internal navigation stack.
+ * v3: the settings screens are settings_app (shared with the phone panel); this file is the
+ *     clock's settings backend, its device-only screens (Wi-Fi, animation preview) and the
+ *     Settings FSM state.
+ * @version 3
+ * @brief Settings state: the clock's settings backend (NVS settings, SD lists, the schedule
+ *        store, the display) for settings_app, the Wi-Fi and animation preview screens, and
+ *        the FSM state that opens and closes the settings.
  */
-// Settings state — manages settings sub-screens with an internal navigation
-// stack.  All sub-screens are LVGL containers on the shared s_screen, not
-// separate LVGL screens.  The FSM sees only one state: Settings.
-//
-// Migrated from components/ui/screen_manager.c (Phase 1.7).
 
 #include "display_states.h"
 #include "display_scheduler.h"
 #include "display_fsm.h"
 #include "clock_animation.h"
-#include "settings_ui.h"
-#include "settings_frame.h"
 
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
@@ -27,279 +25,35 @@
 #include "freertos/task.h"
 
 extern "C" {
-#include "bg_schedule.h"
 #include "network.h"
 #include "settings.h"
 #include "sdcard.h"
-#include "display_fsm.h"    // display_fsm_refresh_background, display_fsm_refresh_theme
 #include "ui_theme_bind.h"
 #include "theme_store.h"
-#include "theme_editor.h"
-#include "bsp/display.h"    // bsp_display_brightness_set
+#include "bsp/display.h"      // bsp_display_brightness_set
 #include "clock_anim_pref.h"  // clock_anim_pref_get/set
 #include "theme_pref.h"       // theme_pref_get/set
+#include "settings_app.h"
+#include "settings_frame.h"
+#include "sched_store.h"
 }
 
 #include <cstring>
 #include <cerrno>
+#include <ctime>
 #include <dirent.h>
+#include <strings.h>
 #include <sys/stat.h>
 
 static const char *TAG = "state_settings";
 
-// ============================================================================
-// Internal sub-screen IDs and navigation stack
-// ============================================================================
-
-#define MAX_SUB_STACK 6   // menu > schedule > profiles > profile, with room
-
-static settings_sub_screen_t s_sub_stack[MAX_SUB_STACK];
-static int s_sub_top = -1;
-static lv_obj_t *s_sub_containers[SUB_MAX] = {};
-
-// Forward declarations
-static lv_obj_t *create_sub_menu(lv_obj_t *parent);
-static lv_obj_t *create_sub_wifi(lv_obj_t *parent);
-static lv_obj_t *create_sub_brightness(lv_obj_t *parent);
-static lv_obj_t *create_sub_background(lv_obj_t *parent);
-static lv_obj_t *create_sub_theme(lv_obj_t *parent);
-static lv_obj_t *create_sub_theme_editor(lv_obj_t *parent);
-static lv_obj_t *create_sub_animation(lv_obj_t *parent);
-static lv_obj_t *create_sub_clock_anim(lv_obj_t *parent);
-static lv_obj_t *create_sub_about(lv_obj_t *parent);
-
-typedef lv_obj_t *(*sub_creator_fn_t)(lv_obj_t *parent);
-static const sub_creator_fn_t SUB_CREATORS[SUB_MAX] = {
-    [SUB_MENU]       = create_sub_menu,
-    [SUB_WIFI]       = create_sub_wifi,
-    [SUB_BRIGHTNESS] = create_sub_brightness,
-    [SUB_BACKGROUND] = create_sub_background,
-    [SUB_THEME]       = create_sub_theme,
-    [SUB_ANIMATION]  = create_sub_animation,
-    [SUB_CLOCK_ANIM] = create_sub_clock_anim,
-    [SUB_ABOUT]      = create_sub_about,
-    [SUB_SCHEDULE]       = create_sub_schedule,
-    [SUB_SCHED_PROFILES] = create_sub_sched_profiles,
-    [SUB_SCHED_PROFILE]  = create_sub_sched_profile,
-    [SUB_THEME_EDITOR]   = create_sub_theme_editor,   // enum order (C++ designated init)
-};
-
-// ============================================================================
-// Internal navigation
-// ============================================================================
+#define CUSTOM_THEME_STEM "custom"
+#define BG_DIR "/sdcard/backgrounds"
 
 static lv_obj_t *s_settings_root = nullptr;  // root container for all settings
 
-/**
- * @brief Delete every created sub-screen container and reset the navigation stack.
- * @version 1
- * @utility
- */
-static void destroy_all_subs(void)
-{
-    for (int i = 0; i < SUB_MAX; i++) {
-        if (s_sub_containers[i]) {
-            lv_obj_delete(s_sub_containers[i]);
-            s_sub_containers[i] = nullptr;
-        }
-    }
-    s_sub_top = -1;
-}
-
-/**
- * @brief Hide the current sub-screen, create the requested one on demand, show it and push it on the stack.
- * v2: shared with the schedule editor (settings_ui.h).
- * @version 2
- * @req REQ-UI-001
- */
-void show_sub(settings_sub_screen_t sub)
-{
-    if (sub >= SUB_MAX || !s_settings_root) return;
-
-    // Hide current
-    if (s_sub_top >= 0) {
-        settings_sub_screen_t cur = s_sub_stack[s_sub_top];
-        if (s_sub_containers[cur]) {
-            lv_obj_add_flag(s_sub_containers[cur], LV_OBJ_FLAG_HIDDEN);
-        }
-    }
-
-    // Create on demand
-    if (!s_sub_containers[sub]) {
-        s_sub_containers[sub] = SUB_CREATORS[sub](s_settings_root);
-    }
-
-    // Show
-    lv_obj_clear_flag(s_sub_containers[sub], LV_OBJ_FLAG_HIDDEN);
-
-    // Push stack
-    if (s_sub_top < MAX_SUB_STACK - 1) {
-        s_sub_top++;
-        s_sub_stack[s_sub_top] = sub;
-    }
-    ESP_LOGI(TAG, "show_sub: %d (depth=%d)", sub, s_sub_top + 1);
-}
-
-/**
- * @brief Destroy the top sub-screen and re-show the previous one; at menu level, send DISPLAY_EVT_SETTINGS_BACK to exit settings.
- * v2: shared with the schedule editor (settings_ui.h).
- * @version 2
- * @req REQ-UI-001
- */
-void pop_sub(void)
-{
-    if (s_sub_top <= 0) {
-        // At menu level — exit settings entirely
-        display_event_t evt = {};
-        evt.type = DISPLAY_EVT_SETTINGS_BACK;
-        display_fsm_send_event(&evt);
-        return;
-    }
-
-    // Hide + destroy current
-    settings_sub_screen_t cur = s_sub_stack[s_sub_top];
-    if (s_sub_containers[cur]) {
-        lv_obj_delete(s_sub_containers[cur]);
-        s_sub_containers[cur] = nullptr;
-    }
-    s_sub_top--;
-
-    // Show previous
-    settings_sub_screen_t prev = s_sub_stack[s_sub_top];
-    if (s_sub_containers[prev]) {
-        lv_obj_clear_flag(s_sub_containers[prev], LV_OBJ_FLAG_HIDDEN);
-    }
-    ESP_LOGI(TAG, "pop_sub: now at %d (depth=%d)", prev, s_sub_top + 1);
-}
-
 // ============================================================================
-// Shared UI helpers
-// ============================================================================
-
-/**
- * @brief Back button handler: pop the current sub-screen.
- * @version 1
- * @callback
- */
-static void back_btn_cb(lv_event_t *e)
-{
-    (void)e;
-    pop_sub();
-}
-
-/**
- * @brief Create a styled container with title and back button.
- *
- * All sub-screens share the same visual style: dark bg, rounded corners, centered.
- * v2: shared with the schedule editor (settings_ui.h).
- * v3: colours from the theme roles (ui_theme), no literals.
- * v4: colours bound to the theme (ui_bind_*): repainted live on a theme change.
- * v5: the frame is settings_frame (centred; renderable on the host).
- * @version 5
- * @req REQ-UI-001
- * @return The new sub-screen container.
- */
-lv_obj_t *make_sub_container(lv_obj_t *parent, const char *title)
-{
-    return settings_frame_create(parent, title, back_btn_cb);
-}
-
-/**
- * @brief Dismiss callback — fired by lv_timer after 1.5 s; deletes the msgbox and pops the sub-screen.
- *
- * Runs inside lv_timer_handler() in the LVGL task, so the lock is already
- * held — no extra lock/unlock needed.
- * @version 1
- * @callback
- */
-static void success_dismiss_cb(lv_timer_t *timer)
-{
-    lv_obj_t *mbox = (lv_obj_t *)lv_timer_get_user_data(timer);
-    if (mbox) lv_msgbox_close(mbox);  // deletes both msgbox AND its backdrop overlay
-    pop_sub();
-    lv_timer_delete(timer);
-}
-
-/**
- * @brief Show success message box, auto-dismiss after 1.5 s, then pop.
- *
- * Non-blocking — returns immediately so the LVGL task keeps rendering.
- * @version 1
- * @utility
- */
-static void show_success_and_pop(const char *msg)
-{
-    lv_obj_t *mbox = lv_msgbox_create(NULL);
-    lv_msgbox_add_title(mbox, "Success");
-    lv_msgbox_add_text(mbox, msg);
-    lv_obj_center(mbox);
-
-    lv_timer_t *t = lv_timer_create(success_dismiss_cb, 1500, mbox);
-    lv_timer_set_repeat_count(t, 1);
-}
-
-// ============================================================================
-// Settings menu
-// ============================================================================
-
-/**
- * @brief Menu list click handler: show the sub-screen stored in the event user data.
- * @version 1
- * @callback
- */
-static void menu_item_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    settings_sub_screen_t sub = (settings_sub_screen_t)(uintptr_t)lv_event_get_user_data(e);
-    show_sub(sub);
-}
-
-/**
- * @brief Reboot button handler: release the LVGL lock, wait 500 ms, then restart the device.
- * @version 1
- * @callback
- */
-static void reboot_btn_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    ESP_LOGI(TAG, "Reboot button clicked");
-    lvgl_port_unlock();
-    vTaskDelay(pdMS_TO_TICKS(500));
-    esp_restart();
-}
-
-
-/**
- * @brief Build the top-level settings menu list, including the reboot button.
- * v2: adds the background schedule editor.
- * v3: themes replace the text colour (theme names, theme roles, theme events).
- * v4: a two-column grid (every entry visible; the list scrolled and cut 'About' off).
- * @version 4
- * @req REQ-UI-001
- * @return The sub-screen container.
- */
-static lv_obj_t *create_sub_menu(lv_obj_t *parent)
-{
-    lv_obj_t *cont = make_sub_container(parent, "Settings");
-#define SUB(s) menu_item_cb, (void *)(uintptr_t)(s)
-    static const settings_menu_item_t ITEMS[] = {
-        { LV_SYMBOL_WIFI,     "WiFi",            SUB(SUB_WIFI) },
-        { LV_SYMBOL_IMAGE,    "Brightness",      SUB(SUB_BRIGHTNESS) },
-        { LV_SYMBOL_IMAGE,    "Background",      SUB(SUB_BACKGROUND) },
-        { LV_SYMBOL_LIST,     "Schedule",        SUB(SUB_SCHEDULE) },
-        { LV_SYMBOL_EDIT,     "Theme",           SUB(SUB_THEME) },
-        { LV_SYMBOL_LOOP,     "Clock Animation", SUB(SUB_CLOCK_ANIM) },
-        { LV_SYMBOL_PLAY,     "Animation",       SUB(SUB_ANIMATION) },
-        { LV_SYMBOL_SETTINGS, "About",           SUB(SUB_ABOUT) },
-        { LV_SYMBOL_POWER,    "Reboot",          reboot_btn_cb, nullptr },
-    };
-#undef SUB
-    settings_menu_grid(cont, ITEMS, (int)(sizeof(ITEMS) / sizeof(ITEMS[0])));
-    return cont;
-}
-
-// ============================================================================
-// WiFi settings
+// WiFi (device only)
 // ============================================================================
 
 static lv_obj_t *s_wifi_keyboard    = nullptr;
@@ -324,31 +78,6 @@ static bool wifi_creds_mutator(clock_settings_t *cfg, void *)
     cfg->wifi_configured = true;
     return true;
 }
-
-/**
- * @brief settings_update mutator: store the brightness percentage in @p ctx (uint8_t).
- * @version 1
- * @utility
- * @return true (always save).
- */
-static bool brightness_mutator(clock_settings_t *cfg, void *ctx)
-{
-    cfg->brightness = *(const uint8_t *)ctx;
-    return true;
-}
-
-/**
- * @brief settings_update mutator: store "A:<filename>" (@p ctx) as the background image.
- * @version 1
- * @utility
- * @return true (always save).
- */
-static bool background_mutator(clock_settings_t *cfg, void *ctx)
-{
-    snprintf(cfg->background_image, sizeof(cfg->background_image), "A:%s", (const char *)ctx);
-    return true;
-}
-
 
 /**
  * @brief Append a network button (lock marker, SSID, RSSI) to the WiFi list, storing an lv_malloc'd SSID copy as user data.
@@ -501,21 +230,19 @@ static void wifi_connect_btn_cb(lv_event_t *e)
 }
 
 /**
- * @brief Build the WiFi sub-screen: status label, scan button, network list, hidden password entry, connect button and keyboard.
- * v2: colours from the theme roles (ui_theme), no literals.
- * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
- * @version 3
+ * @brief The WiFi screen: status, scan, network list, hidden password entry, connect and
+ *        keyboard.
+ * v2: a settings_app screen (was a sub-screen of the old settings stack).
+ * @version 2
  * @req REQ-UI-001
  * @req REQ-NET-002
- * @return The sub-screen container.
+ * @return The frame.
  */
-static lv_obj_t *create_sub_wifi(lv_obj_t *parent)
+static lv_obj_t *wifi_screen(lv_obj_t *parent)
 {
-    lv_obj_t *cont = make_sub_container(parent, "WiFi Settings");
-    // Allow scrolling for this screen (keyboard needs space)
-    lv_obj_add_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *cont = settings_frame_create(parent, "WiFi Settings", settings_app_back_cb);
+    lv_obj_add_flag(cont, LV_OBJ_FLAG_SCROLLABLE);   // the keyboard needs the room
 
-    // Status label
     s_wifi_status_label = lv_label_create(cont);
     char ssid[33] = "";
     if (network_is_connected() && network_get_ssid(ssid) == ESP_OK) {
@@ -528,7 +255,6 @@ static lv_obj_t *create_sub_wifi(lv_obj_t *parent)
     ui_bind_text(s_wifi_status_label, UI_ROLE_TEXT);
     lv_obj_align(s_wifi_status_label, LV_ALIGN_TOP_MID, 0, 50);
 
-    // Scan button
     lv_obj_t *scan_btn = lv_button_create(cont);
     lv_obj_set_size(scan_btn, 200, 50);
     lv_obj_align(scan_btn, LV_ALIGN_TOP_MID, 0, 90);
@@ -537,12 +263,10 @@ static lv_obj_t *create_sub_wifi(lv_obj_t *parent)
     lv_label_set_text(scan_lbl, LV_SYMBOL_REFRESH " Scan");
     lv_obj_center(scan_lbl);
 
-    // Network list
     s_wifi_list = lv_list_create(cont);
     lv_obj_set_size(s_wifi_list, 700, 200);
     lv_obj_align(s_wifi_list, LV_ALIGN_TOP_MID, 0, 150);
 
-    // Password textarea (hidden initially)
     s_password_textarea = lv_textarea_create(cont);
     lv_obj_set_size(s_password_textarea, 550, 50);
     lv_obj_align(s_password_textarea, LV_ALIGN_TOP_LEFT, 10, 360);
@@ -550,7 +274,6 @@ static lv_obj_t *create_sub_wifi(lv_obj_t *parent)
     lv_textarea_set_password_mode(s_password_textarea, true);
     lv_obj_add_flag(s_password_textarea, LV_OBJ_FLAG_HIDDEN);
 
-    // Connect button
     lv_obj_t *conn_btn = lv_button_create(cont);
     lv_obj_set_size(conn_btn, 120, 50);
     lv_obj_align_to(conn_btn, s_password_textarea, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
@@ -559,434 +282,16 @@ static lv_obj_t *create_sub_wifi(lv_obj_t *parent)
     lv_label_set_text(conn_lbl, "Connect");
     lv_obj_center(conn_lbl);
 
-    // On-screen keyboard (hidden initially)
     s_wifi_keyboard = lv_keyboard_create(cont);
     lv_keyboard_set_textarea(s_wifi_keyboard, s_password_textarea);
     lv_obj_set_size(s_wifi_keyboard, 750, 220);
     lv_obj_align(s_wifi_keyboard, LV_ALIGN_TOP_MID, 0, 420);
     lv_obj_add_flag(s_wifi_keyboard, LV_OBJ_FLAG_HIDDEN);
-
     return cont;
 }
 
 // ============================================================================
-// Brightness settings
-// ============================================================================
-
-/**
- * @brief Slider handler: apply the new backlight brightness, update the label and save it to NVS with the LVGL lock released.
- * v2: atomic read-modify-write via settings_update (no lost concurrent writes).
- * @version 2
- * @callback
- * @req REQ-UI-001
- */
-static void brightness_slider_cb(lv_event_t *e)
-{
-    lv_obj_t *slider = (lv_obj_t *)lv_event_get_target(e);
-    int32_t value = lv_slider_get_value(slider);
-    ESP_LOGI(TAG, "Brightness changed to %ld%%", value);
-    bsp_display_brightness_set(value);
-
-    lv_obj_t *label = (lv_obj_t *)lv_event_get_user_data(e);
-    if (label) {
-        char buf[32];
-        snprintf(buf, sizeof(buf), "Brightness: %ld%%", value);
-        lv_label_set_text(label, buf);
-    }
-
-    // Save to NVS (release LVGL lock)
-    lvgl_port_unlock();
-    {
-        uint8_t brightness = (uint8_t)value;
-        esp_err_t err = settings_update(brightness_mutator, &brightness);
-        if (err == ESP_OK) {
-            ESP_LOGI(TAG, "Brightness %ld%% saved", value);
-        } else {
-            ESP_LOGW(TAG, "Failed to save brightness: %s", esp_err_to_name(err));
-        }
-    }
-    lvgl_port_lock(0);
-}
-
-/**
- * @brief Build the brightness sub-screen with a 10-100% slider initialised from saved settings.
- * v2: colours from the theme roles (ui_theme), no literals.
- * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
- * @version 3
- * @req REQ-UI-001
- * @return The sub-screen container.
- */
-static lv_obj_t *create_sub_brightness(lv_obj_t *parent)
-{
-    lv_obj_t *cont = make_sub_container(parent, "Brightness");
-
-    // Current brightness label
-    lv_obj_t *lbl = lv_label_create(cont);
-    clock_settings_t cfg;
-    int current = 50;
-    if (settings_load(&cfg) == ESP_OK) {
-        current = cfg.brightness;
-    }
-    char buf[32];
-    snprintf(buf, sizeof(buf), "Brightness: %d%%", current);
-    lv_label_set_text(lbl, buf);
-    ui_bind_text(lbl, UI_ROLE_TEXT);
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_24, 0);
-    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, -60);
-
-    // Slider
-    lv_obj_t *slider = lv_slider_create(cont);
-    lv_obj_set_width(slider, 600);
-    lv_slider_set_range(slider, 10, 100);
-    lv_slider_set_value(slider, current, LV_ANIM_OFF);
-    lv_obj_align(slider, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_add_event_cb(slider, brightness_slider_cb, LV_EVENT_VALUE_CHANGED, lbl);
-
-    // Instruction text
-    lv_obj_t *instr = lv_label_create(cont);
-    lv_label_set_text(instr, "Slide to adjust screen brightness");
-    ui_bind_text(instr, UI_ROLE_TEXT_FAINT);
-    lv_obj_align(instr, LV_ALIGN_CENTER, 0, 60);
-
-    return cont;
-}
-
-// ============================================================================
-// Background selector
-// ============================================================================
-
-/**
- * @brief Check whether a file extension is a supported background image (.png or .gif, case-insensitive).
- * @version 1
- * @utility
- * @return true if the extension is .png or .gif.
- */
-static bool bg_is_image_file(const char *ext)
-{
-    return (strcasecmp(ext, ".png") == 0 || strcasecmp(ext, ".gif") == 0);
-}
-
-/**
- * @brief Button delete handler: free the strdup'd background path stored in the event user data.
- * @version 1
- * @callback
- */
-static void bg_path_cleanup_cb(lv_event_t *e)
-{
-    free(lv_event_get_user_data(e));
-}
-
-/**
- * @brief Background button handler: save the chosen image path to NVS, refresh the background and show success.
- * v2: atomic read-modify-write via settings_update (no lost concurrent writes).
- * @version 2
- * @callback
- * @req REQ-UI-001
- * @req REQ-BG-001
- */
-static void background_select_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    const char *filename = (const char *)lv_event_get_user_data(e);
-    if (!filename) return;
-    ESP_LOGI(TAG, "Background selected: %s", filename);
-
-    // Save to NVS
-    lvgl_port_unlock();
-    esp_err_t err = settings_update(background_mutator, (void *)filename);
-    lvgl_port_lock(0);
-
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Background save failed: %d", (int)err);
-        return;
-    }
-    ESP_LOGI(TAG, "Background saved: A:%s", filename);
-    display_fsm_refresh_background();
-    show_success_and_pop("Background updated!");
-}
-
-/**
- * @brief Add a selectable list button for each PNG/GIF file in /sdcard/backgrounds.
- * @version 1
- * @req REQ-UI-001
- * @req REQ-BG-001
- * @return Number of image files added, or -1 if the directory cannot be opened.
- */
-static int bg_scan_directory(lv_obj_t *list)
-{
-    DIR *dir = opendir("/sdcard/backgrounds");
-    if (!dir) {
-        ESP_LOGE(TAG, "Failed to open /sdcard/backgrounds directory");
-        return -1;
-    }
-    int count = 0;
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_type == DT_DIR) continue;
-        const char *ext = strrchr(entry->d_name, '.');
-        if (!ext || !bg_is_image_file(ext)) continue;
-
-        bool is_gif = (strcasecmp(ext, ".gif") == 0);
-        const char *icon = is_gif ? LV_SYMBOL_LOOP : LV_SYMBOL_IMAGE;
-        char filepath[256];
-        snprintf(filepath, sizeof(filepath), "/backgrounds/%s", entry->d_name);
-        lv_obj_t *btn = lv_list_add_button(list, icon, entry->d_name);
-        // strdup the path so callback has valid pointer; free on button delete
-        char *path = strdup(filepath);
-        lv_obj_add_event_cb(btn, background_select_cb, LV_EVENT_CLICKED, path);
-        lv_obj_add_event_cb(btn, bg_path_cleanup_cb, LV_EVENT_DELETE, path);
-        count++;
-    }
-    closedir(dir);
-    return count;
-}
-
-/**
- * @brief Build the background selector list from the SD card, showing a warning entry if unmounted, unreadable or empty.
- * @version 1
- * @req REQ-UI-001
- * @req REQ-BG-001
- * @return The sub-screen container.
- */
-static lv_obj_t *create_sub_background(lv_obj_t *parent)
-{
-    lv_obj_t *cont = make_sub_container(parent, "Select Background");
-
-    lv_obj_t *list = lv_list_create(cont);
-    lv_obj_set_size(list, 700, 380);
-    lv_obj_align(list, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_text_font(list, &lv_font_montserrat_20, 0);
-
-    if (!sdcard_is_mounted()) {
-        lv_obj_t *btn = lv_list_add_button(list, LV_SYMBOL_WARNING, "SD card not mounted");
-        lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
-        return cont;
-    }
-
-    int count = bg_scan_directory(list);
-    if (count < 0) {
-        lv_obj_t *btn = lv_list_add_button(list, LV_SYMBOL_WARNING, "Failed to read SD card");
-        lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
-    } else if (count == 0) {
-        lv_obj_t *btn = lv_list_add_button(list, LV_SYMBOL_WARNING, "No PNG/GIF files found");
-        lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
-    } else {
-        ESP_LOGI(TAG, "Found %d background files on SD card", count);
-    }
-
-    return cont;
-}
-
-// ============================================================================
-// Theme picker
-// ============================================================================
-
-/**
- * @brief Theme button handler: store the chosen theme (an index into the theme cache) as the
- *        global theme, re-apply it and show success.
- * @version 1
- * @callback
- * @req REQ-UI-001
- * @req REQ-UI-003
- */
-static void theme_select_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    const theme_entry_t *t = theme_store_entry((int)(intptr_t)lv_event_get_user_data(e));
-    if (!t) return;
-    char stem[BG_THEME_LEN];
-    strlcpy(stem, t->stem, sizeof(stem));
-    ESP_LOGI(TAG, "Theme selected: %s", stem);
-
-    lvgl_port_unlock();   // NVS write off the LVGL lock
-    esp_err_t err = theme_pref_set(stem);
-    lvgl_port_lock(0);
-
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Theme save failed: %s", esp_err_to_name(err));
-        return;
-    }
-    display_fsm_refresh_theme();
-    show_success_and_pop("Theme updated!");
-}
-
-/**
- * @brief Build the list of installed themes with the current global theme focused.
- * v2: a Customize... entry opens the on-screen theme editor.
- * @version 2
- * @req REQ-UI-001
- * @req REQ-UI-003
- * @return The sub-screen container.
- */
-static lv_obj_t *create_sub_theme(lv_obj_t *parent)
-{
-    lv_obj_t *cont = make_sub_container(parent, "Theme");
-    char current[BG_THEME_LEN];
-    theme_pref_get(current);
-
-    lv_obj_t *list = lv_list_create(cont);
-    lv_obj_set_size(list, 700, 380);
-    lv_obj_align(list, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_text_font(list, &lv_font_montserrat_20, 0);
-    lv_obj_t *edit = lv_list_add_button(list, LV_SYMBOL_SETTINGS, "Customize...");
-    lv_obj_add_event_cb(edit, menu_item_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)SUB_THEME_EDITOR);
-
-    for (int i = 0; i < theme_store_count(); i++) {
-        const theme_entry_t *t = theme_store_entry(i);
-        lv_obj_t *btn = lv_list_add_button(list, LV_SYMBOL_BULLET, t->name);
-        lv_obj_add_event_cb(btn, theme_select_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
-        if (strcmp(t->stem, current) == 0) lv_obj_add_state(btn, LV_STATE_CHECKED);
-    }
-    if (theme_store_count() == 0) lv_list_add_text(list, "No themes in /sdcard/themes");
-    return cont;
-}
-
-#define CUSTOM_THEME_STEM "custom"
-static bool s_editor_saved = false;   // the editor saved: leave the theme list too on close
-
-/**
- * @brief Make theme @p stem the active schedule profile's theme (SD-free: NVS only).
- * @version 1
- * @utility
- * @return Whether the schedule was saved.
- */
-static bool set_active_profile_theme(const char *stem)
-{
-    time_t now = time(NULL);
-    struct tm ti;
-    localtime_r(&now, &ti);
-    bg_schedule_t s;
-    bg_schedule_get(&s);
-    int idx = bg_schedule_active(&ti, NULL);
-    bool ok = idx >= 0 && idx < s.profile_count;
-    if (ok) {
-        strlcpy(s.profiles[idx].theme, stem, sizeof(s.profiles[idx].theme));
-        ok = bg_schedule_set(&s) == ESP_OK;
-    }
-    return ok;
-}
-
-/**
- * @brief Theme editor save: write the edited theme as custom.json and make it the global
- *        theme, or the active schedule profile's (@p for_profile); SD and NVS writes off the
- *        LVGL lock, then fsm_task re-applies.
- * v2: saves for the active profile or globally.
- * @version 2
- * @callback
- * @req REQ-UI-004
- */
-static void theme_editor_saved(const ui_theme_t *t, bool for_profile)
-{
-    ui_theme_t copy = *t;
-    lvgl_port_unlock();
-    bool ok = theme_store_save(CUSTOM_THEME_STEM, &copy) &&
-              (for_profile ? set_active_profile_theme(CUSTOM_THEME_STEM)
-                           : theme_pref_set(CUSTOM_THEME_STEM) == ESP_OK);
-    lvgl_port_lock(0);
-    ESP_LOGI(TAG, "Theme editor: %s (%s)", ok ? "saved as custom" : "save FAILED",
-             for_profile ? "active profile" : "global");
-    s_editor_saved = ok;
-    if (ok && for_profile) display_fsm_refresh_background();   // re-applies the profile
-    else if (ok) display_fsm_refresh_theme();
-}
-
-/**
- * @brief Theme editor closed: back to the theme list, or to the menu after a save (the list
- *        is rebuilt with the new theme next time).
- * @version 1
- * @callback
- * @req REQ-UI-004
- */
-static void theme_editor_closed(void)
-{
-    bool saved = s_editor_saved;
-    s_editor_saved = false;
-    pop_sub();
-    if (saved) pop_sub();
-}
-
-/**
- * @brief The on-screen theme editor, full width below the top-bar clock.
- * v2: passes the active profile (when the schedule has several).
- * @version 2
- * @req REQ-UI-001
- * @req REQ-UI-004
- * @return The sub-screen container.
- */
-static lv_obj_t *create_sub_theme_editor(lv_obj_t *parent)
-{
-    lv_obj_t *cont = lv_obj_create(parent);
-    lv_obj_remove_style_all(cont);
-    lv_obj_set_size(cont, lv_pct(100), lv_pct(100));
-    lv_obj_remove_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_update_layout(cont);
-    s_editor_saved = false;
-    time_t now = time(NULL);
-    struct tm ti;
-    localtime_r(&now, &ti);
-    bg_schedule_t sched;
-    bg_schedule_get(&sched);
-    bg_profile_t prof;
-    bg_schedule_active(&ti, &prof);   // a one-profile schedule is no choice: save globally
-    theme_editor_create(cont, SETTINGS_FRAME_Y, sched.profile_count > 1 ? prof.name : "",
-                        theme_editor_saved, theme_editor_closed);
-    return cont;
-}
-
-// ============================================================================
-// Clock animation selector (hummingbird / snowfall / none)
-// ============================================================================
-
-/**
- * @brief Persist the chosen clock animation and make it active.
- * @version 1
- * @req REQ-ANIM-001
- * @callback
- */
-static void clock_anim_select_cb(lv_event_t *e)
-{
-    clock_anim_t anim = (clock_anim_t)(uintptr_t)lv_event_get_user_data(e);
-    ESP_LOGI(TAG, "Clock animation selected: %s", clock_anim_name(anim));
-
-    lvgl_port_unlock();                    // NVS write off the LVGL lock
-    esp_err_t err = clock_anim_pref_set(anim);
-    lvgl_port_lock(0);
-
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Clock animation save failed: %s", esp_err_to_name(err));
-        return;
-    }
-    clock_animation_select(anim);          // shown when the clock screen is restored
-    show_success_and_pop("Clock animation updated!");
-}
-
-/**
- * @brief List the available clock animations with the current one focused.
- * @version 2
- * @req REQ-ANIM-001
- * @return The sub-screen container.
- */
-static lv_obj_t *create_sub_clock_anim(lv_obj_t *parent)
-{
-    lv_obj_t *cont = make_sub_container(parent, "Clock Animation");
-    clock_anim_t current = clock_anim_pref_get();
-
-    lv_obj_t *list = lv_list_create(cont);
-    lv_obj_set_size(list, 700, 380);
-    lv_obj_align(list, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_text_font(list, &lv_font_montserrat_20, 0);
-
-    for (int i = 0; i < CLOCK_ANIM_COUNT; i++) {
-        clock_anim_t anim = CLOCK_ANIM_MENU_ORDER[i];
-        lv_obj_t *btn = lv_list_add_button(list, LV_SYMBOL_BULLET, clock_anim_name(anim));
-        lv_obj_add_event_cb(btn, clock_anim_select_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)anim);
-        if (anim == current) lv_obj_add_state(btn, LV_STATE_FOCUSED);
-    }
-    return cont;
-}
-
-// ============================================================================
-// Animation preview
+// Animation preview (device only)
 // ============================================================================
 
 #if LV_USE_LOTTIE
@@ -1055,118 +360,356 @@ static void anim_spawn_load_task(lv_obj_t *widget, const char *path)
 #endif // LV_USE_LOTTIE
 
 /**
- * @brief Build the animation preview sub-screen: a Lottie preview if enabled and heap allows, otherwise an error label.
- * v2: colours from the theme roles (ui_theme), no literals.
- * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
- * @version 3
+ * @brief The animation preview screen: a Lottie preview if enabled and the heap allows,
+ *        otherwise why not.
+ * v2: a settings_app screen.
+ * @version 2
  * @utility
- * @return The sub-screen container.
+ * @return The frame.
  */
-static lv_obj_t *create_sub_animation(lv_obj_t *parent)
+static lv_obj_t *preview_screen(lv_obj_t *parent)
 {
-    lv_obj_t *cont = make_sub_container(parent, "Animation Preview");
-
+    lv_obj_t *cont = settings_frame_create(parent, "Animation Preview", settings_app_back_cb);
+    const char *problem = nullptr;
 #if LV_USE_LOTTIE
     size_t free_heap = esp_get_free_heap_size();
-    ESP_LOGI(TAG, "Animation preview — free heap: %lu SPIRAM: %lu",
-             (unsigned long)free_heap,
+    ESP_LOGI(TAG, "Animation preview: free heap %lu, SPIRAM %lu", (unsigned long)free_heap,
              (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-
-    if (free_heap < 500000) {
-        lv_obj_t *lbl = lv_label_create(cont);
-        lv_label_set_text(lbl, "ERROR: Insufficient memory\nRequires 500 KB free heap");
-        ui_bind_text(lbl, UI_ROLE_ERROR);
-        lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
-        return cont;
-    }
-
-    lv_obj_t *widget = anim_create_widget(cont);
-    if (widget) {
-        anim_spawn_load_task(widget, LOTTIE_FILE_PATH);
-    } else {
-        lv_obj_t *lbl = lv_label_create(cont);
-        lv_label_set_text(lbl, "Animation unavailable\n(insufficient PSRAM for render task)");
-        ui_bind_text(lbl, UI_ROLE_ERROR);
-        lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
-    }
+    lv_obj_t *widget = free_heap >= 500000 ? anim_create_widget(cont) : nullptr;
+    if (widget) anim_spawn_load_task(widget, LOTTIE_FILE_PATH);
+    else problem = free_heap < 500000 ? "Not enough memory (needs 500 KB free)"
+                                      : "Animation unavailable (no PSRAM for its render task)";
 #else
-    lv_obj_t *lbl = lv_label_create(cont);
-    lv_label_set_text(lbl, "Lottie not enabled\nCONFIG_LV_USE_LOTTIE is not set");
-    ui_bind_text(lbl, UI_ROLE_WARN);
-    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
+    problem = "Lottie is not enabled (CONFIG_LV_USE_LOTTIE)";
 #endif
-
+    if (problem) {
+        lv_obj_t *lbl = settings_text(cont, problem, &lv_font_montserrat_20, UI_ROLE_WARN);
+        lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
+    }
     return cont;
 }
 
 // ============================================================================
-// About screen
+// The clock's settings backend
 // ============================================================================
 
 /**
- * @brief Build the About sub-screen showing version, platform, MAC, IP and heap statistics.
- * v2: colours from the theme roles (ui_theme), no literals.
- * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
- * @version 3
- * @req REQ-UI-001
- * @req REQ-OTA-003
- * @return The sub-screen container.
+ * @brief settings_update mutator: the brightness in @p ctx (int).
+ * v2: an int (the backend's percentage), not a uint8_t.
+ * @version 2
+ * @utility
+ * @return true (always save).
  */
-static lv_obj_t *create_sub_about(lv_obj_t *parent)
+static bool brightness_mutator(clock_settings_t *cfg, void *ctx)
 {
-    lv_obj_t *cont = make_sub_container(parent, "About");
+    cfg->brightness = (uint8_t)*(const int *)ctx;
+    return true;
+}
 
-    // Gather system info
-    size_t free_heap = esp_get_free_heap_size();
-    size_t min_heap = esp_get_minimum_free_heap_size();
+/**
+ * @brief settings_update mutator: the background LVGL path in @p ctx.
+ * v2: the whole LVGL path (was a file name prefixed with "A:").
+ * @version 2
+ * @utility
+ * @return true (always save).
+ */
+static bool background_mutator(clock_settings_t *cfg, void *ctx)
+{
+    strlcpy(cfg->background_image, (const char *)ctx, sizeof(cfg->background_image));
+    return true;
+}
+
+/**
+ * @brief The global settings.
+ * @version 1
+ * @callback
+ */
+static void be_get(settings_values_t *out)
+{
+    clock_settings_t cfg;
+    memset(out, 0, sizeof(*out));
+    out->brightness = settings_load(&cfg) == ESP_OK ? cfg.brightness : 50;
+    strlcpy(out->background, cfg.background_image, sizeof(out->background));
+    theme_pref_get(out->theme);
+    strlcpy(out->anim, clock_anim_name(clock_anim_pref_get()), sizeof(out->anim));
+}
+
+/**
+ * @brief Whether @p name is a background picture file (.png or .gif).
+ * @version 1
+ * @utility
+ * @return The extension's start, or NULL.
+ */
+static const char *picture_ext(const char *name)
+{
+    const char *ext = strrchr(name, '.');
+    bool ok = ext && (strcasecmp(ext, ".png") == 0 || strcasecmp(ext, ".gif") == 0);
+    return ok ? ext : nullptr;
+}
+
+/**
+ * @brief The pictures in /sdcard/backgrounds as choices ("A:/backgrounds/x.png", "x").
+ * @version 1
+ * @utility
+ * @return How many.
+ */
+static int list_backgrounds(settings_choice_t *out, int max)
+{
+    DIR *dir = sdcard_is_mounted() ? opendir(BG_DIR) : nullptr;
+    int n = 0;
+    struct dirent *e;
+    while (dir && (e = readdir(dir)) != nullptr && n < max) {
+        const char *ext = e->d_type == DT_DIR ? nullptr : picture_ext(e->d_name);
+        if (!ext) continue;
+        snprintf(out[n].value, sizeof(out[n].value), "A:/backgrounds/%s", e->d_name);
+        snprintf(out[n].label, sizeof(out[n].label), "%.*s", (int)(ext - e->d_name), e->d_name);
+        n++;
+    }
+    if (dir) closedir(dir);
+    else ESP_LOGW(TAG, "%s: not readable", BG_DIR);
+    return n;
+}
+
+/**
+ * @brief A list to choose from: backgrounds (SD), themes (the cache), clock animations.
+ * @version 1
+ * @callback
+ * @return How many.
+ */
+static int be_list(settings_list_t which, settings_choice_t *out, int max)
+{
+    int n = 0;
+    if (which == SETTINGS_LIST_BACKGROUNDS) {
+        lvgl_port_unlock();   // SD listing off the LVGL lock
+        n = list_backgrounds(out, max);
+        lvgl_port_lock(0);
+    } else if (which == SETTINGS_LIST_THEMES) {
+        for (; n < theme_store_count() && n < max; n++) {
+            strlcpy(out[n].value, theme_store_entry(n)->stem, sizeof(out[n].value));
+            strlcpy(out[n].label, theme_store_entry(n)->name, sizeof(out[n].label));
+        }
+    } else {
+        for (; n < CLOCK_ANIM_COUNT && n < max; n++) {
+            strlcpy(out[n].value, clock_anim_name(CLOCK_ANIM_MENU_ORDER[n]), sizeof(out[n].value));
+            strlcpy(out[n].label, out[n].value, sizeof(out[n].label));
+        }
+    }
+    return n;
+}
+
+/**
+ * @brief Apply and keep the brightness (NVS off the LVGL lock).
+ * @version 1
+ * @callback
+ */
+static void be_set_brightness(int pct)
+{
+    bsp_display_brightness_set(pct);
+    lvgl_port_unlock();
+    esp_err_t err = settings_update(brightness_mutator, &pct);
+    lvgl_port_lock(0);
+    ESP_LOGI(TAG, "brightness %d%%: %s", pct, esp_err_to_name(err));
+}
+
+/**
+ * @brief Keep the background and show it.
+ * @version 1
+ * @callback
+ */
+static void be_set_background(const char *path)
+{
+    lvgl_port_unlock();
+    esp_err_t err = settings_update(background_mutator, (void *)path);
+    lvgl_port_lock(0);
+    ESP_LOGI(TAG, "background %s: %s", path, esp_err_to_name(err));
+    if (err == ESP_OK) display_fsm_refresh_background();
+}
+
+/**
+ * @brief Keep the global theme and apply it.
+ * @version 1
+ * @callback
+ */
+static void be_set_theme(const char *stem)
+{
+    lvgl_port_unlock();
+    esp_err_t err = theme_pref_set(stem);
+    lvgl_port_lock(0);
+    ESP_LOGI(TAG, "theme %s: %s", stem, esp_err_to_name(err));
+    if (err == ESP_OK) display_fsm_refresh_theme();
+}
+
+/**
+ * @brief Keep the clock animation and select it.
+ * @version 1
+ * @callback
+ */
+static void be_set_anim(const char *name)
+{
+    clock_anim_t anim = clock_anim_from_name(name);
+    if (anim == CLOCK_ANIM_COUNT) return;
+    lvgl_port_unlock();
+    esp_err_t err = clock_anim_pref_set(anim);
+    lvgl_port_lock(0);
+    ESP_LOGI(TAG, "clock animation %s: %s", name, esp_err_to_name(err));
+    if (err == ESP_OK) clock_animation_select(anim);
+}
+
+/**
+ * @brief The schedule.
+ * @version 1
+ * @callback
+ * @return How many profiles.
+ */
+static int be_schedule_get(sched_rule_t *out, int max)
+{
+    return sched_store_get(out, max);
+}
+
+/**
+ * @brief Save the schedule (SD write and the year's overlap check off the LVGL lock), then
+ *        re-apply the showing profile.
+ * @version 1
+ * @callback
+ */
+static void be_schedule_set(const sched_rule_t *r, int n, settings_done_cb_t done, void *ctx)
+{
+    char why[128] = "";
+    lvgl_port_unlock();
+    esp_err_t err = sched_store_set(r, n, why, sizeof(why));
+    lvgl_port_lock(0);
+    if (err == ESP_OK) display_fsm_refresh_background();
+    done(err == ESP_OK, why, ctx);
+}
+
+/**
+ * @brief The device's sun.
+ * @version 1
+ * @callback
+ * @return It.
+ */
+static const sched_sun_src_t *be_sun(void)
+{
+    return sched_store_sun();
+}
+
+/**
+ * @brief Now, as a local date and minute.
+ * @version 1
+ * @callback
+ */
+static void be_now(sched_date_t *day, int *min)
+{
+    time_t now = time(nullptr);
+    struct tm t;
+    localtime_r(&now, &t);
+    *day = { (uint16_t)(t.tm_year + 1900), (uint8_t)(t.tm_mon + 1), (uint8_t)t.tm_mday };
+    *min = t.tm_hour * 60 + t.tm_min;
+}
+
+/**
+ * @brief Keep the edited theme as custom.json and make it the global theme.
+ * @version 1
+ * @callback
+ */
+static void be_save_theme(const ui_theme_t *t, settings_done_cb_t done, void *ctx)
+{
+    ui_theme_t copy = *t;
+    lvgl_port_unlock();
+    bool ok = theme_store_save(CUSTOM_THEME_STEM, &copy) && theme_pref_set(CUSTOM_THEME_STEM) == ESP_OK;
+    if (ok) theme_store_rescan();
+    lvgl_port_lock(0);
+    ESP_LOGI(TAG, "theme editor: %s", ok ? "saved as custom" : "save FAILED");
+    if (ok) display_fsm_refresh_theme();
+    done(ok, ok ? "" : "Could not write the theme to the SD card", ctx);
+}
+
+/**
+ * @brief Version, platform, MAC, IP and heap.
+ * @version 1
+ * @callback
+ */
+static void be_about(char *out, size_t n)
+{
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
-
     char ip_str[16] = "N/A";
     esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     esp_netif_ip_info_t ip_info;
     if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
         snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_info.ip));
     }
+    snprintf(out, n,
+             "Greenwood Clock\nVersion: 1.0.0\n\nPlatform: ESP32-P4\nBoard: Function EV Board\n\n"
+             "MAC: %02X:%02X:%02X:%02X:%02X:%02X\nIP: %s\n\nFree Heap: %lu KB\nMin Heap: %lu KB",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], ip_str,
+             (unsigned long)(esp_get_free_heap_size() / 1024),
+             (unsigned long)(esp_get_minimum_free_heap_size() / 1024));
+}
 
-    char info[512];
-    snprintf(info, sizeof(info),
-        "Greenwood Clock\n"
-        "Version: 1.0.0\n\n"
-        "Platform: ESP32-P4\n"
-        "Board: Function EV Board\n\n"
-        "MAC: %02X:%02X:%02X:%02X:%02X:%02X\n"
-        "IP: %s\n\n"
-        "Free Heap: %lu KB\n"
-        "Min Heap: %lu KB\n",
-        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
-        ip_str,
-        (unsigned long)(free_heap / 1024),
-        (unsigned long)(min_heap / 1024));
+/**
+ * @brief Reboot: release the LVGL lock, wait 500 ms, restart.
+ * @version 1
+ * @callback
+ */
+static void be_reboot(void)
+{
+    ESP_LOGI(TAG, "Reboot from settings");
+    lvgl_port_unlock();
+    vTaskDelay(pdMS_TO_TICKS(500));
+    esp_restart();
+}
 
-    lv_obj_t *lbl = lv_label_create(cont);
-    lv_label_set_text(lbl, info);
-    ui_bind_text(lbl, UI_ROLE_TEXT);
-    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 20);
+/**
+ * @brief Back from the menu: leave the settings.
+ * @version 1
+ * @callback
+ */
+static void be_leave(void)
+{
+    display_event_t evt = {};
+    evt.type = DISPLAY_EVT_SETTINGS_BACK;
+    display_fsm_send_event(&evt);
+}
 
-    return cont;
+/**
+ * @brief The clock's backend.
+ * @version 1
+ * @utility
+ * @return It (static).
+ */
+static const settings_backend_t *clock_backend(void)
+{
+    static settings_backend_t be;
+    be.get = be_get;
+    be.list = be_list;
+    be.set_brightness = be_set_brightness;
+    be.set_background = be_set_background;
+    be.set_theme = be_set_theme;
+    be.set_anim = be_set_anim;
+    be.schedule_get = be_schedule_get;
+    be.schedule_set = be_schedule_set;
+    be.sun = be_sun;
+    be.now = be_now;
+    be.save_theme = be_save_theme;
+    be.about = be_about;
+    be.wifi_create = wifi_screen;
+    be.phone_create = nullptr;
+    be.preview_create = preview_screen;
+    be.reboot = be_reboot;
+    be.leave = be_leave;
+    return &be;
 }
 
 // ============================================================================
 // Settings FSM state
 // ============================================================================
 
-// ============================================================================
-// Settings FSM state — out-of-line method implementations
-// ============================================================================
-
 /**
- * @brief FSM entry: pause the scheduler, create the settings root container, reset navigation and show the menu.
- * @version 1
+ * @brief FSM entry: pause the scheduler and open the settings (settings_app) at the menu,
+ *        under the top-bar clock.
+ * v2: the screens are settings_app over the clock's backend.
+ * @version 2
  * @req REQ-UI-001
  * @req REQ-DISP-002
  */
@@ -1176,7 +719,6 @@ void Settings::entry()
     topbar_clock();
     display_scheduler_get()->pause();
 
-    // Create root container (invisible, just a parent for sub-screens)
     s_settings_root = lv_obj_create(s_screen);
     lv_obj_set_size(s_settings_root, LV_PCT(100), LV_PCT(100));
     lv_obj_set_style_bg_opa(s_settings_root, LV_OPA_TRANSP, 0);
@@ -1184,41 +726,32 @@ void Settings::entry()
     lv_obj_set_style_pad_all(s_settings_root, 0, 0);
     lv_obj_clear_flag(s_settings_root, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Reset sub-screen state
-    memset(s_sub_containers, 0, sizeof(s_sub_containers));
-    s_sub_top = -1;
-
-    // Show the menu
-    show_sub(SUB_MENU);
-
+    settings_frame_set_y(SETTINGS_FRAME_Y);   // under the top-bar clock
+    settings_app_open(s_settings_root, clock_backend());
     fade_in(s_settings_root);
-
     ESP_LOGI(TAG, "Settings: entry");
 }
 
 /**
- * @brief FSM exit: clear WiFi widget globals, destroy all sub-screens and the root, then resume the scheduler.
- * @version 1
+ * @brief FSM exit: forget the WiFi widgets, close the settings, resume the scheduler.
+ * v2: settings_app_close.
+ * @version 2
  * @req REQ-UI-001
  * @req REQ-DISP-002
  */
 void Settings::exit()
 {
-    // Clear wifi globals
     s_wifi_keyboard = nullptr;
     s_password_textarea = nullptr;
     s_wifi_list = nullptr;
     s_wifi_status_label = nullptr;
     s_selected_ssid[0] = '\0';
 
-    // Destroy all sub-screens
-    destroy_all_subs();
-
+    settings_app_close();
     if (s_settings_root) {
         lv_obj_delete(s_settings_root);
         s_settings_root = nullptr;
     }
-
     display_scheduler_get()->resume();
     ESP_LOGI(TAG, "Settings: exit");
 }

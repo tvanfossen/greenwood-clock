@@ -41,7 +41,10 @@ idf_component_register(
         "src/sched_engine.c"
         "src/sched_json.c"
         "src/sched_store.c"
-        "src/sched_view.c"
+        "src/sched_ui.c"
+        "src/settings_app.c"
+        "src/settings_sched.c"
+        "src/settings_pickers.c"
         "src/upload_view.c"
         "src/image_rotator.c"
         "src/json_layout.c"
@@ -53,7 +56,6 @@ idf_component_register(
         "src/state_ambient.cpp"
         "src/state_surprise.cpp"
         "src/state_settings.cpp"
-        "src/settings_schedule.cpp"
     INCLUDE_DIRS
         "include"
     REQUIRES

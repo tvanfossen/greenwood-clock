@@ -747,8 +747,14 @@ THEME_PREVIEW_SRCS = (
     "components/display_fsm/src/sky_panel.c",
     "components/display_fsm/src/sky_dial.c",
     "components/display_fsm/src/sched_rule.c",
-    "components/display_fsm/src/sched_view.c",
     "components/display_fsm/src/upload_view.c",
+    "components/display_fsm/src/settings_app.c",
+    "components/display_fsm/src/settings_sched.c",
+    "components/display_fsm/src/settings_pickers.c",
+    "components/display_fsm/src/sched_engine.c",
+    "components/display_fsm/src/sched_json.c",
+    "components/display_fsm/src/sched_ui.c",
+    "tools/panel/settings_mock.c",
     "components/display_fsm/src/astro_calc.c",
     "components/display_fsm/src/settings_frame.c",
     "components/display_fsm/src/clock_widget.c",
@@ -829,6 +835,7 @@ EMCC = Path.home() / "emsdk" / "upstream" / "emscripten" / "emcc"
 EMAR = Path.home() / "emsdk" / "upstream" / "emscripten" / "emar"
 PANEL_LVGL_DIR = TMP / "lvgl_wasm"
 PANEL_FLAGS = "-sUSE_SDL=2 -DCONFIG_LV_USE_SDL=1"
+PANEL_INCLUDES = (REPO / "tools" / "panel",)
 PANEL_SRCS = (
     "components/display_fsm/src/ui_theme.c",
     "components/display_fsm/src/ui_theme_json.c",
@@ -836,11 +843,21 @@ PANEL_SRCS = (
     "components/display_fsm/src/ui_theme_bind.c",
     "components/display_fsm/src/ui_contrast.c",
     "components/display_fsm/src/settings_frame.c",
+    "components/display_fsm/src/settings_app.c",
+    "components/display_fsm/src/settings_sched.c",
+    "components/display_fsm/src/settings_pickers.c",
+    "components/display_fsm/src/theme_editor.c",
+    "components/display_fsm/src/theme_editor_tracks.c",
+    "components/display_fsm/src/theme_editor_preview.c",
     "components/display_fsm/src/sched_rule.c",
-    "components/display_fsm/src/sched_view.c",
+    "components/display_fsm/src/sched_engine.c",
+    "components/display_fsm/src/sched_json.c",
+    "components/display_fsm/src/sched_ui.c",
     "components/display_fsm/src/sky_data.c",
     "components/display_fsm/src/astro_calc.c",
     "components/cjson/cjson/cJSON.c",
+    "components/fonts/c_array/nunito_48.c",
+    "tools/panel/settings_mock.c",
     "tools/panel/panel_main.c",
 )
 PANEL_OUT = REPO / "sdcard" / "www" / "panel"
@@ -848,15 +865,16 @@ PANEL_OUT = REPO / "sdcard" / "www" / "panel"
 
 ## @brief Build the phone panel: the clock's LVGL settings screens compiled to WebAssembly
 ## (Emscripten, SDL2 canvas) into sdcard/www/panel/ (index.html, panel.js, panel.wasm).
+## v2: the settings app over the sample backend; tools/panel headers.
 ## @req REQ-UI-002
-## @version 1
+## @version 2
 @task
 def panel_build(c):
     if not EMCC.exists():
         raise SystemExit(f"{EMCC} missing: install emsdk in ~/emsdk")
     lib = _lvgl_host_lib(c, PANEL_LVGL_DIR, cc=EMCC, ar=EMAR, flags=PANEL_FLAGS)
     PANEL_OUT.mkdir(parents=True, exist_ok=True)
-    incs = " ".join(f"-I{d}" for d in LVGL_HOST_INCLUDES)
+    incs = " ".join(f"-I{d}" for d in LVGL_HOST_INCLUDES + PANEL_INCLUDES)
     srcs = " ".join(str(REPO / s) for s in PANEL_SRCS)
     compat = REPO / "tools" / "lvgl_host" / "stubs" / "host_compat.h"
     c.run(
@@ -888,9 +906,10 @@ def panel_shots(c, steps=None):
 ## LVGL (host build), as PNGs in .claude/tmp/theme_preview/ — review before any OTA.
 ## v2: --decisions renders the open clock-text options.
 ## v3: --decisions removed (all decided).
+## v4: links the settings app and the sample backend (tools/panel headers).
 ## @req REQ-TOOL-004
 ## @req REQ-UI-003
-## @version 3
+## @version 4
 @task(
     help={
         "background": "LVGL path of the background behind the weather scene ('-': none)",
@@ -904,7 +923,7 @@ def theme_preview(c, background="A:/backgrounds/winter_afternoon.png", themes=No
     out = TMP / "theme_preview"
     out.mkdir(parents=True, exist_ok=True)
     exe = out / "theme_preview"
-    incs = " ".join(f"-I{d}" for d in LVGL_HOST_INCLUDES)
+    incs = " ".join(f"-I{d}" for d in LVGL_HOST_INCLUDES + (REPO / "tools" / "panel",))
     srcs = " ".join(str(REPO / s) for s in THEME_PREVIEW_SRCS)
     compat = REPO / "tools" / "lvgl_host" / "stubs" / "host_compat.h"
     c.run(

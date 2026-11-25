@@ -2,11 +2,12 @@
 ## @brief Screenshot the phone panel (sdcard/www/panel) in a real browser: serve it locally,
 ## open it in headless Firefox (Playwright) at a desktop and a phone-landscape size, tap
 ## through the given steps and save one PNG per step; browser console errors are printed.
-## @version 1
+## @version 2
 """Usage: shots.py <panel dir> <out dir> <steps.json>
 
-steps.json: [{"name": "menu", "taps": [[x, y], ...]}, ...] with taps in clock pixels
-(1024 x 600); each step's taps run after the previous step's, then a screenshot is taken.
+steps.json: [{"name": "menu", "taps": [[x, y], ...], "drags": [[x, y, dx, dy], ...]}, ...]
+in clock pixels (1024 x 600); each step's drags then taps run after the previous step's,
+then a screenshot is taken.
 """
 
 import functools
@@ -47,9 +48,27 @@ def tap(page, x, y):
     page.wait_for_timeout(400)
 
 
-## @brief Run every step at one view size, saving <out>/<view>_<step>.png.
+## @brief Drag from clock pixel (@p x, @p y) by (@p dx, @p dy) (scrolls a list).
 ## @utility
 ## @version 1
+def drag(page, x, y, dx, dy):
+    box = page.locator("canvas").bounding_box()
+    sx, sy = box["width"] / CLOCK_W, box["height"] / CLOCK_H
+    page.mouse.move(box["x"] + x * sx, box["y"] + y * sy)
+    page.mouse.down()
+    for i in range(1, 11):
+        page.mouse.move(
+            box["x"] + (x + dx * i / 10) * sx, box["y"] + (y + dy * i / 10) * sy
+        )
+        page.wait_for_timeout(16)
+    page.mouse.up()
+    page.wait_for_timeout(700)
+
+
+## @brief Run every step at one view size, saving <out>/<view>_<step>.png.
+## v2: drags before taps.
+## @utility
+## @version 2
 def run_view(browser, url, out, view, steps):
     w, h, scale = VIEWS[view]
     page = browser.new_page(
@@ -63,6 +82,8 @@ def run_view(browser, url, out, view, steps):
     page.wait_for_function("window.panelReady === true", timeout=20000)
     page.wait_for_timeout(600)
     for step in steps:
+        for x, y, dx, dy in step.get("drags", []):
+            drag(page, x, y, dx, dy)
         for x, y in step.get("taps", []):
             tap(page, x, y)
         path = out / f"{view}_{step['name']}.png"

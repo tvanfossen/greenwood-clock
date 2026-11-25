@@ -6,7 +6,9 @@
  * v5: --decisions: the open clock-text choices rendered as options side by side.
  * v6: the upload screen (waiting with the QR code; a phone connected).
  * v7: the --decisions mode is gone (all decided).
- * @version 7
+ * v8: the settings scene is the real settings app (sample backend); the schedule scenes are
+ *     gone (inv panel-shots clicks through them with the same code).
+ * @version 8
  * @brief Host theme preview: renders the firmware's own widgets with the real LVGL fork (built
  *        from the device sdkconfig) and the real theme code, one PNG-ready frame per theme and
  *        scene, so a theme can be judged before anything goes to the device.
@@ -14,7 +16,6 @@
  * Usage: theme_preview <out_dir> <background LVGL path, e.g. A:/backgrounds/x.png | -> <theme.json>...
  * Writes <out_dir>/<theme-stem>_<scene>.ppm (RGB888) for each theme and scene:
  *   clock    — the home screen: the full-size clock over the background
- *   sched_list / sched_edit_day / sched_edit_conflict — the schedule prototype
  *   upload_wait / upload_connected — the QR upload screen
  *   weather  — the weather screen: card, forecast strip and a Severe alert over the background
  *   gallery  — every role: surfaces and text tiers, stock widgets, the alert severities, the
@@ -36,7 +37,8 @@
 #include "display_fsm.h"   // lottie_load_job_t (the seam stubbed below)
 #include "info_panel.h"
 #include "theme_editor.h"
-#include "sched_view.h"
+#include "settings_app.h"
+#include "settings_mock.h"
 #include "upload_view.h"
 #include "alert_card.h"
 #include "settings_frame.h"
@@ -490,108 +492,6 @@ static void scene_clock(void)
 static void noop_cb(lv_event_t *e);
 
 /**
- * @brief A sample profile: every day from @p from to @p to (clock or sun edges).
- * v2: no priority.
- * @version 2
- * @utility
- * @return The profile.
- */
-static sched_rule_t daily(const char *name, sched_time_t from, sched_time_t to,
-                          const char *image, int brightness)
-{
-    sched_rule_t r = { .repeat = SCHED_EVERY_DAY, .start = from, .end = to,
-                       .brightness = (int8_t)brightness };
-    snprintf(r.name, sizeof(r.name), "%s", name);
-    snprintf(r.image, sizeof(r.image), "%s", image);
-    snprintf(r.theme, sizeof(r.theme), "default");
-    return r;
-}
-
-/**
- * @brief A sample profile: every year from @p m1 / @p d1 to @p m2 / @p d2, all day.
- * v2: no priority.
- * @version 2
- * @utility
- * @return The profile.
- */
-static sched_rule_t yearly(const char *name, int m1, int d1, int m2, int d2,
-                           const char *image, const char *anim)
-{
-    sched_rule_t r = { .repeat = SCHED_YEARLY, .from = { 0, (uint8_t)m1, (uint8_t)d1 },
-                       .to = { 0, (uint8_t)m2, (uint8_t)d2 }, .all_day = true,
-                       .brightness = SCHED_INHERIT };
-    snprintf(r.name, sizeof(r.name), "%s", name);
-    snprintf(r.image, sizeof(r.image), "%s", image);
-    snprintf(r.anim, sizeof(r.anim), "%s", anim);
-    return r;
-}
-
-#define AT(h, m)      ((sched_time_t){ SCHED_AT_CLOCK, (int16_t)((h) * 60 + (m)) })
-#define SUNSET(off)   ((sched_time_t){ SCHED_AT_SUNSET, (int16_t)(off) })
-#define SCHED_SAMPLES 8
-
-/**
- * @brief The sample schedule: four daily profiles (two edges on the sun) and four events.
- * v2: no priorities; events don't overlap; each event notes how far off it is.
- * @version 2
- * @utility
- */
-static void sample_schedule(sched_rule_t r[SCHED_SAMPLES], sched_row_state_t st[SCHED_SAMPLES])
-{
-    r[0] = daily("Morning", AT(7, 0), AT(12, 0), "A:/backgrounds/winter_morning.png", SCHED_INHERIT);
-    r[1] = daily("Afternoon", AT(12, 0), SUNSET(0), "A:/backgrounds/winter_afternoon.png",
-                 SCHED_INHERIT);
-    r[2] = daily("Evening", SUNSET(0), AT(22, 0), "", SCHED_INHERIT);
-    r[3] = daily("Night", AT(22, 0), AT(7, 0), "A:/backgrounds/night_winter.png", 12);
-    r[4] = yearly("Christmas", 12, 24, 12, 25, "A:/backgrounds/christmas_village.gif",
-                  "Santa & reindeer");
-    r[5] = yearly("Winter break", 12, 27, 1, 2, "A:/backgrounds/snowfall.gif", "Snowfall");
-    r[6] = yearly("Valentine's Day", 2, 14, 2, 14, "", "Hearts");
-    r[7] = yearly("Birthday", 6, 3, 6, 3, "", "Happy birthday");
-    memset(st, 0, sizeof(sched_row_state_t) * SCHED_SAMPLES);
-    st[1].active = true;
-    snprintf(st[4].note, sizeof(st[4].note), "in 30 days");
-    snprintf(st[5].note, sizeof(st[5].note), "in 33 days");
-    snprintf(st[6].note, sizeof(st[6].note), "in 82 days");
-    snprintf(st[7].note, sizeof(st[7].note), "in 190 days");
-}
-
-/**
- * @brief The schedule list over the background, under the top-bar clock; scrolled to the
- *        end when @p scrolled.
- * @version 1
- * @utility
- */
-static void scene_sched_list(bool scrolled)
-{
-    sched_rule_t r[SCHED_SAMPLES];
-    sched_row_state_t st[SCHED_SAMPLES];
-    sample_schedule(r, st);
-    lv_obj_t *scr = fresh_screen(true);
-    clock_in(CLOCK_MODE_TOPBAR);
-    lv_obj_t *frame = sched_list_create(scr, r, st, SCHED_SAMPLES, noop_cb);
-    if (scrolled) lv_obj_scroll_to_y(lv_obj_get_child(frame, -1), LV_COORD_MAX, LV_ANIM_OFF);
-}
-
-/**
- * @brief Sample profile @p i in the editor, with @p problem (NULL: none); when @p from_day
- *        > 0 its first day moved to Dec @p from_day (to show an overlap).
- * v2: no priority; the overlap is made by moving the dates.
- * @version 2
- * @utility
- */
-static void scene_sched_edit(int i, int from_day, const char *problem)
-{
-    sched_rule_t r[SCHED_SAMPLES];
-    sched_row_state_t st[SCHED_SAMPLES];
-    sample_schedule(r, st);
-    if (from_day > 0) r[i].from = (sched_date_t){ 0, 12, (uint8_t)from_day };
-    lv_obj_t *scr = fresh_screen(true);
-    clock_in(CLOCK_MODE_TOPBAR);
-    sched_edit_create(scr, &r[i], problem, noop_cb);
-}
-
-/**
  * @brief The upload screen under the top-bar clock: waiting for a phone (@p connected false)
  *        or a phone paired with three files received.
  * @version 1
@@ -642,22 +542,16 @@ static void noop_cb(lv_event_t *e)
 
 /**
  * @brief The settings menu (the device's frame and grid) under the top-bar clock.
- * @version 1
+ * v2: the real settings app over the sample backend.
+ * @version 2
  * @utility
  */
 static void scene_settings(void)
 {
     lv_obj_t *scr = fresh_screen(true);
     clock_in(CLOCK_MODE_TOPBAR);
-    lv_obj_t *frame = settings_frame_create(scr, "Settings", noop_cb);
-    static const settings_menu_item_t ITEMS[] = {
-        { LV_SYMBOL_WIFI, "WiFi", noop_cb, NULL },          { LV_SYMBOL_IMAGE, "Brightness", noop_cb, NULL },
-        { LV_SYMBOL_IMAGE, "Background", noop_cb, NULL },   { LV_SYMBOL_LIST, "Schedule", noop_cb, NULL },
-        { LV_SYMBOL_EDIT, "Theme", noop_cb, NULL },         { LV_SYMBOL_LOOP, "Clock Animation", noop_cb, NULL },
-        { LV_SYMBOL_PLAY, "Animation", noop_cb, NULL },     { LV_SYMBOL_SETTINGS, "About", noop_cb, NULL },
-        { LV_SYMBOL_POWER, "Reboot", noop_cb, NULL },
-    };
-    settings_menu_grid(frame, ITEMS, 9);
+    settings_frame_set_y(SETTINGS_FRAME_Y);
+    settings_app_open(scr, settings_mock_backend());
 }
 
 /**
@@ -833,7 +727,8 @@ static void render_edit_demo(const char *out_dir, const char *path)
  * v7: the home clock.
  * v8: the schedule prototype.
  * v9: the upload screen.
- * @version 9
+ * v10: the schedule scenes are gone (the panel shots cover them).
+ * @version 10
  * @utility
  * @return Whether the theme parsed.
  */
@@ -845,19 +740,6 @@ static bool render_theme(const char *out_dir, const char *path)
     stem_of(path, stem, sizeof(stem));
     scene_clock();
     snprintf(file, sizeof(file), "%s/%s_clock.ppm", out_dir, stem);
-    write_frame(file);
-    scene_sched_list(false);
-    snprintf(file, sizeof(file), "%s/%s_sched_list.ppm", out_dir, stem);
-    write_frame(file);
-    scene_sched_list(true);
-    snprintf(file, sizeof(file), "%s/%s_sched_list_end.ppm", out_dir, stem);
-    write_frame(file);
-    scene_sched_edit(3, 0, NULL);
-    snprintf(file, sizeof(file), "%s/%s_sched_edit_day.ppm", out_dir, stem);
-    write_frame(file);
-    scene_sched_edit(5, 20, "Overlaps Christmas on Dec 24 - Dec 25. Events can't overlap: "
-                            "change the dates to save.");
-    snprintf(file, sizeof(file), "%s/%s_sched_edit_conflict.ppm", out_dir, stem);
     write_frame(file);
     scene_upload(false);
     snprintf(file, sizeof(file), "%s/%s_upload_wait.ppm", out_dir, stem);

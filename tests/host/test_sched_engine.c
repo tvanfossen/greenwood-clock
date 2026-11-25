@@ -1,6 +1,7 @@
 /**
  * @file test_sched_engine.c
- * @version 1
+ * v2: days until a profile next runs.
+ * @version 2
  * @brief Host tests for the schedule engine: which profile is showing at a local date and
  *        minute (an event over the daily profile, windows past midnight, year wrap, once vs
  *        yearly, gaps), and the overlap check that refuses a save (events by dates, daily
@@ -216,8 +217,34 @@ static void test_overlaps(void)
 }
 
 /**
- * @brief Run every check and report the tally.
+ * @brief Days until a profile next runs: today is 0; a yearly event counts to its next
+ *        start, across the new year; a one-off in the past never runs again.
  * @version 1
+ * @utility
+ */
+static void test_days_until(void)
+{
+    sched_date_t nov24 = { 2026, 11, 24 };
+    sched_rule_t xmas = event("Christmas", 12, 24, 12, 25);
+    CHECK(sched_days_until(&xmas, nov24) == 30, "Christmas in 30 days: %d",
+          sched_days_until(&xmas, nov24));
+    CHECK(sched_days_until(&xmas, (sched_date_t){ 2026, 12, 25 }) == 0, "running today");
+    sched_rule_t brk = event("Winter break", 12, 27, 1, 2);
+    CHECK(sched_days_until(&brk, (sched_date_t){ 2027, 1, 1 }) == 0, "across the new year");
+    sched_rule_t morning = daily("Morning", AT(7, 0), AT(12, 0));
+    CHECK(sched_days_until(&morning, nov24) == 0, "daily: today");
+    sched_rule_t once = event("Birthday", 6, 3, 6, 3);
+    once.repeat = SCHED_ONCE;
+    once.from.year = once.to.year = 2026;
+    CHECK(sched_days_until(&once, nov24) == -1, "a past one-off never");
+    once.from.year = once.to.year = 2027;
+    CHECK(sched_days_until(&once, nov24) == 191, "next June: %d", sched_days_until(&once, nov24));
+}
+
+/**
+ * @brief Run every check and report the tally.
+ * v2: days until.
+ * @version 2
  * @utility
  * @return 0 when every check passed.
  */
@@ -226,6 +253,7 @@ int main(void)
     test_daily();
     test_events();
     test_overlaps();
+    test_days_until();
     printf("sched_engine: %d/%d checks passed\n", s_checks - s_failures, s_checks);
     return s_failures;
 }
