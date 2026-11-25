@@ -3,7 +3,8 @@
  * v2: slots (which role fills each themed place) — defaults, file overrides, refusals.
  * v3: JSON round trip (ui_theme_to_json).
  * v4: one shipped base theme (default.json); the greenwood day/night variants are gone.
- * @version 4
+ * v5: the alert core (fourth core): base alerts unchanged, they follow the core, JSON.
+ * @version 5
  * @brief Host tests for the OKLCH theme: the base theme reproduces the clock's original
  *        colours; every shipped theme's text roles meet their contrast targets; text over
  *        any backdrop keeps its hue and meets its target; theme files parse (and the base
@@ -53,6 +54,17 @@ static bool near_hex(lv_color_t a, uint32_t hex)
     lv_color_t b = lv_color_hex(hex);
     return abs(a.red - b.red) <= CHANNEL_SLACK && abs(a.green - b.green) <= CHANNEL_SLACK &&
            abs(a.blue - b.blue) <= CHANNEL_SLACK;
+}
+
+/**
+ * @brief True if every channel of @p a and @p b differs by at most one step.
+ * @version 1
+ * @utility
+ * @return Whether the colours match.
+ */
+static bool same_color(lv_color_t a, lv_color_t b)
+{
+    return abs(a.red - b.red) <= 1 && abs(a.green - b.green) <= 1 && abs(a.blue - b.blue) <= 1;
 }
 
 /**
@@ -215,7 +227,8 @@ static void test_polarity(void)
  * @brief The base theme file equals the compiled fallback (one look, two copies).
  * v2: slots compared too.
  * v3: the base file is default.json.
- * @version 3
+ * v4: the alert core compared too.
+ * @version 4
  * @utility
  */
 static void test_base_file_matches(void)
@@ -226,6 +239,7 @@ static void test_base_file_matches(void)
     CHECK(memcmp(&t.ink, &UI_THEME_BASE.ink, sizeof(t.ink)) == 0, "ink");
     CHECK(memcmp(&t.surface, &UI_THEME_BASE.surface, sizeof(t.surface)) == 0, "surface");
     CHECK(memcmp(&t.accent, &UI_THEME_BASE.accent, sizeof(t.accent)) == 0, "accent");
+    CHECK(memcmp(&t.alert, &UI_THEME_BASE.alert, sizeof(t.alert)) == 0, "alert");
     CHECK(memcmp(t.slots, UI_THEME_BASE.slots, sizeof(t.slots)) == 0, "slots");
     CHECK(t.contrast == UI_THEME_BASE.contrast, "contrast");
 }
@@ -331,10 +345,52 @@ static void test_json_round_trip(void)
 }
 
 /**
+ * @brief The alert core: the base theme's alert roles are the original red, deep red and
+ *        amber; turning the core's hue turns all three; a file without "alert" gets the
+ *        base core, one with it keeps it through a round trip.
+ * @version 1
+ * @utility
+ */
+static void test_alert_core(void)
+{
+    lv_color_t r[UI_ROLE_COUNT];
+    ui_theme_derive(&UI_THEME_BASE, r);
+    CHECK(same_color(r[UI_ROLE_ERROR], ui_oklch_to_color((ui_oklch_t){ 0.70f, 0.17f, 27.0f })),
+          "error = original coral");
+    CHECK(same_color(r[UI_ROLE_ERROR_STRONG],
+                     ui_oklch_to_color((ui_oklch_t){ 0.53f, 0.21f, 29.0f })),
+          "error_strong = original red");
+    CHECK(same_color(r[UI_ROLE_WARN], ui_oklch_to_color((ui_oklch_t){ 0.85f, 0.13f, 80.0f })),
+          "warn = original amber");
+
+    ui_theme_t t = UI_THEME_BASE;
+    t.alert.h += 180.0f;
+    ui_theme_derive(&t, r);
+    static const ui_role_t ALERTS[] = { UI_ROLE_ERROR, UI_ROLE_ERROR_STRONG, UI_ROLE_WARN };
+    static const float BASE_H[] = { 27.0f, 29.0f, 80.0f };
+    for (size_t i = 0; i < 3; i++) {
+        ui_oklch_t o = ui_color_to_oklch(r[ALERTS[i]]);
+        CHECK(hue_gap(o.h, BASE_H[i] + 180.0f) <= 25.0f, "%s follows the core: hue %.1f",
+              ui_theme_role_name(ALERTS[i]), (double)o.h);
+    }
+
+    ui_theme_t f;
+    CHECK(load_theme("sdcard/themes/sassafras.json", &f), "sassafras parses");
+    CHECK(memcmp(&f.alert, &UI_THEME_BASE.alert, sizeof(f.alert)) == 0, "no alert: base core");
+    f.alert = (ui_oklch_t){ 0.6f, 0.18f, 340.0f };
+    char buf[1024];
+    ui_theme_t back;
+    CHECK(ui_theme_to_json(&f, buf, sizeof(buf)) && ui_theme_parse(buf, &back), "round trip");
+    CHECK(fabsf(back.alert.h - 340.0f) < 0.01f && fabsf(back.alert.c - 0.18f) < 1e-3f,
+          "alert core kept: %s", buf);
+}
+
+/**
  * @brief Run the ui_theme tests; exit status is the failure count.
  * v2: slots.
  * v3: JSON round trip.
- * @version 3
+ * v4: the alert core.
+ * @version 4
  * @utility
  * @return 0 when every check passed.
  */
@@ -350,6 +406,7 @@ int main(void)
     test_role_names();
     test_slots();
     test_json_round_trip();
+    test_alert_core();
     printf("ui_theme: %d/%d checks passed\n", s_checks - s_failures, s_checks);
     return s_failures;
 }

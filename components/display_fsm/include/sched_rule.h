@@ -1,13 +1,15 @@
 /**
  * @file sched_rule.h
- * @version 1
- * @brief Schedule profiles (prototype notation): one list where every entry is the same kind
- *        of thing — WHEN it repeats (every day, every year on a date or range, or once), the
- *        time window (all day, or from/to at a clock time or sunrise/sunset with an offset),
- *        its priority, and WHAT it shows (background, theme, clock animation, brightness;
- *        empty = the global setting). The morning/day/evening/night entries are profiles
- *        that repeat every day forever; Valentine's or a birthday repeats yearly. Pure C:
- *        the text the editor shows for a profile, no LVGL.
+ * v2: no priority: daily profiles (the clock's default state) may not overlap each other,
+ *     events may not overlap each other, and an event always replaces the daily profile.
+ * @version 2
+ * @brief Schedule profiles (prototype notation). Two kinds, one type: DAILY profiles repeat
+ *        every day forever and are the clock's default state (morning, afternoon, evening,
+ *        night); EVENTS repeat every year on a date or range, or happen once (Valentine's,
+ *        Christmas, a birthday) and replace the daily profile while they run. Each has a
+ *        time window (all day, or from/to at a clock time or sunrise/sunset with an offset)
+ *        and WHAT it shows (background, theme, clock animation, brightness; empty = the
+ *        global setting). Pure C: the text the editor shows for a profile, no LVGL.
  */
 #pragma once
 
@@ -21,9 +23,9 @@ extern "C" {
 
 /** How a profile repeats. */
 typedef enum {
-    SCHED_EVERY_DAY = 0,   /**< Every day, forever. */
-    SCHED_YEARLY,          /**< Every year, on a date or a date range. */
-    SCHED_ONCE,            /**< One date or range, in one year. */
+    SCHED_EVERY_DAY = 0,   /**< Daily: every day, forever (the default state). */
+    SCHED_YEARLY,          /**< Event: every year, on a date or a date range. */
+    SCHED_ONCE,            /**< Event: one date or range, in one year. */
 } sched_repeat_t;
 
 /** What a window edge is measured from. */
@@ -59,7 +61,6 @@ typedef struct {
     sched_date_t   from, to;       /**< Yearly / once: the first and last day (equal: one day). */
     bool           all_day;
     sched_time_t   start, end;     /**< When not all day; end before start runs past midnight. */
-    uint8_t        priority;       /**< Higher wins; equal priorities may not overlap. */
     char           image[SCHED_IMAGE_LEN];   /**< LVGL path; "" = global. */
     char           theme[SCHED_THEME_LEN];   /**< Theme stem; "" = global. */
     char           anim[SCHED_ANIM_LEN];     /**< Clock animation name; "" = global. */
@@ -74,9 +75,10 @@ typedef struct {
 void sched_fmt_time(const sched_time_t *t, char *out, size_t n);
 
 /**
- * @brief When @p r runs, as one line: "Every day, 7:00 AM - 12:00 PM",
+ * @brief When @p r runs, as one line: "7:00 AM - 12:00 PM" (daily: the window only),
  *        "Every year, Dec 24 - Dec 25, all day", "Once, Jun 3, 2027, all day".
- * @version 1
+ * v2: a daily profile is just its window (the list's Daily section says the rest).
+ * @version 2
  * @req REQ-BG-004
  */
 void sched_fmt_when(const sched_rule_t *r, char *out, size_t n);

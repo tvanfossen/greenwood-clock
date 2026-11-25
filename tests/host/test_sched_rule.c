@@ -1,6 +1,7 @@
 /**
  * @file test_sched_rule.c
- * @version 1
+ * v2: a daily profile's when-line is its window only.
+ * @version 2
  * @brief Host tests for the schedule profile text: window edges (clock and sun-anchored),
  *        the "when" line for every repeat kind, and the "look" line.
  */
@@ -64,7 +65,8 @@ static void test_times(void)
 
 /**
  * @brief The "when" line for each repeat kind.
- * @version 1
+ * v2: daily is the window only.
+ * @version 2
  * @utility
  */
 static void test_when(void)
@@ -75,7 +77,7 @@ static void test_when(void)
     r.start = (sched_time_t){ SCHED_AT_CLOCK, 7 * 60 };
     r.end = (sched_time_t){ SCHED_AT_CLOCK, 12 * 60 };
     sched_fmt_when(&r, s, sizeof(s));
-    CHECK_STR(s, "Every day, 7:00 AM - 12:00 PM");
+    CHECK_STR(s, "7:00 AM - 12:00 PM");
 
     r = blank();
     r.repeat = SCHED_YEARLY;

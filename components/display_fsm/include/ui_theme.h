@@ -1,8 +1,9 @@
 /**
  * @file ui_theme.h
  * v2: slots — the themed places (cards, strips, alerts, ...) and which fill role each takes.
- * @version 2
- * @brief The UI colour theme: three OKLCH core colours (ink, surface, accent) and a
+ * v3: a fourth core, alert: the alert severities step from it.
+ * @version 3
+ * @brief The UI colour theme: four OKLCH core colours (ink, surface, accent, alert) and a
  *        contrast target, mapped to the named roles every widget draws with.
  *
  * ui_theme.c is the only place colour values are written down. Everything else asks for
@@ -70,6 +71,8 @@ typedef struct {
     ui_oklch_t ink;        /**< Text hue (and lightness, where it is legible as is). */
     ui_oklch_t surface;    /**< Panel hue and lightness; its polarity orders the tints. */
     ui_oklch_t accent;     /**< Highlights, focus, progress, the decorative palettes. */
+    ui_oklch_t alert;      /**< The strongest alert colour (Extreme); Severe and the amber
+                                Moderate step from it. Optional in files (base when absent). */
     float      contrast;   /**< WCAG ratio primary text reaches (e.g. 7.0). */
     uint8_t    slots[UI_SLOT_COUNT];   /**< ui_role_t filling each slot. */
 } ui_theme_t;

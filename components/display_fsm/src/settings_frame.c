@@ -1,6 +1,7 @@
 /**
  * @file settings_frame.c
- * @version 1
+ * v2: settings_text.
+ * @version 2
  * @brief Settings screen layout: the sub-screen frame and the menu grid (see settings_frame.h).
  */
 
@@ -45,6 +46,21 @@ lv_obj_t *settings_frame_create(lv_obj_t *parent, const char *title, lv_event_cb
     lv_label_set_text(btn_lbl, LV_SYMBOL_LEFT " Back");
     lv_obj_center(btn_lbl);
     return cont;
+}
+
+/**
+ * @brief A themed label.
+ * @version 1
+ * @req REQ-UI-001
+ * @return The label.
+ */
+lv_obj_t *settings_text(lv_obj_t *parent, const char *s, const lv_font_t *font, ui_role_t role)
+{
+    lv_obj_t *l = lv_label_create(parent);
+    lv_label_set_text(l, s);
+    lv_obj_set_style_text_font(l, font, 0);
+    ui_bind_text(l, role);
+    return l;
 }
 
 /**

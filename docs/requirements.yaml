@@ -526,6 +526,21 @@ requirements:
       dragging; tapping a slot cell changes that place's fill everywhere it appears; Back
       leaves the theme as it was; after Save and a reboot the clock still shows the edited
       theme.
+  REQ-UI-005:
+    name: Upload from a phone by QR code
+    subsystem: UI
+    description: >-
+      Settings > Upload shows a QR code holding the clock's upload address and a one-time
+      pairing code (expires in 10 minutes). The phone that scans it gets an upload-only
+      session (30 minutes, ended when the screen is closed): it can send a background
+      (cropped to 1024x600 on the phone), an album photo, or a clock animation (Lottie or
+      GIF, positioned afterwards on the clock), and nothing else. The clock lists what
+      arrived.
+    acceptance_criteria: >-
+      Scanning the code on a phone opens the upload page; a picture sent as a background
+      appears in the clock's background list and as an album photo in the slideshow; a second
+      phone using the same code after the first one paired is refused; after the session
+      ends or the screen is closed the page can no longer upload.
 
   # ---------------------------------------------------------------- TOOL
   REQ-TOOL-001:

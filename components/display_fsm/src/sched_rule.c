@@ -75,7 +75,8 @@ void sched_fmt_dates(const sched_rule_t *r, char *out, size_t n)
 
 /**
  * @brief When a profile runs, as one line.
- * @version 1
+ * v2: a daily profile is just its window.
+ * @version 2
  * @req REQ-BG-004
  */
 void sched_fmt_when(const sched_rule_t *r, char *out, size_t n)
@@ -90,7 +91,8 @@ void sched_fmt_when(const sched_rule_t *r, char *out, size_t n)
         sched_fmt_time(&r->end, b, sizeof(b));
         snprintf(window, sizeof(window), "%s - %s", a, b);
     }
-    snprintf(out, n, "%s%s%s, %s", REPEAT[r->repeat], dates[0] ? ", " : "", dates, window);
+    if (r->repeat == SCHED_EVERY_DAY) snprintf(out, n, "%s", window);
+    else snprintf(out, n, "%s, %s, %s", REPEAT[r->repeat], dates, window);
 }
 
 /**

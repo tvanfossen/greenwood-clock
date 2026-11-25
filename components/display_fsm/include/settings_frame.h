@@ -1,6 +1,7 @@
 /**
  * @file settings_frame.h
- * @version 1
+ * v2: settings_text, the themed label every settings screen uses.
+ * @version 2
  * @brief Settings screen layout, kept free of the settings behaviour (and its ESP-IDF
  *        dependencies) so the host preview renders it too: the sub-screen frame (a centred
  *        dialog panel with a title and Back) and the menu grid. Caller holds the LVGL lock.
@@ -8,6 +9,7 @@
 #pragma once
 
 #include "lvgl.h"
+#include "ui_theme.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -34,6 +36,15 @@ typedef struct {
  * @return The frame (its content starts below the title row).
  */
 lv_obj_t *settings_frame_create(lv_obj_t *parent, const char *title, lv_event_cb_t back_cb);
+
+/**
+ * @brief A label on @p parent showing @p s in @p font, its colour bound to text role @p role
+ *        (legible over whatever it sits on).
+ * @version 1
+ * @req REQ-UI-001
+ * @return The label.
+ */
+lv_obj_t *settings_text(lv_obj_t *parent, const char *s, const lv_font_t *font, ui_role_t role);
 
 /**
  * @brief Lay @p n menu entries out in two columns below the frame's title row, every entry

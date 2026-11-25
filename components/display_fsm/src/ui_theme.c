@@ -3,7 +3,8 @@
  * v2: slots (which role fills each themed place).
  * v3: the base theme is named "Default" (was "Greenwood").
  * v4: text straight on the picture (the clock) by APCA, its side from the picture.
- * @version 4
+ * v5: the alert core: error, error_strong and warn step from it (were fixed hues).
+ * @version 5
  * @brief The UI colour theme: three OKLCH cores derived into named roles. The only file
  *        that writes colour values down (see ui_theme.h).
  *
@@ -13,7 +14,8 @@
  *   - Text roles start from the ink (muted and faint blend toward the surface first) and are
  *     then made legible at their contrast target, keeping the ink's hue.
  *   - The accents and the decorative palettes rotate the accent's hue.
- *   - Error and warn keep fixed semantic hues; their lightness follows the theme's polarity.
+ *   - Error, error_strong and warn step from the alert core (lightness by the theme's
+ *     polarity, chroma scaled, warn's hue turned toward amber).
  * The steps are fitted so UI_THEME_BASE reproduces the clock's original hand-picked
  * colours (navy panels, gold accent, violet aurora, coral/red alerts).
  */
@@ -45,6 +47,7 @@ const ui_theme_t UI_THEME_BASE = {
     .ink      = { 1.000f, 0.000f, 0.0f },      // white
     .surface  = { 0.158f, 0.042f, 280.6f },    // navy panel
     .accent   = { 0.834f, 0.117f, 87.4f },     // gold
+    .alert    = { 0.530f, 0.210f, 29.0f },     // deep red (extreme)
     .contrast = 7.0f,
     .slots    = UI_SLOTS_DEFAULT,
 };
@@ -61,8 +64,15 @@ const ui_theme_t UI_THEME_BASE = {
 #define ALT_HUE       215.0f  // second accent: hue rotation
 #define ALT_L         0.83f   // second accent: lightness, x the accent's
 #define ALT_C         0.65f   // second accent: chroma, x the accent's
-#define HUE_ERROR     27.0f   // semantic hues (degrees)
-#define HUE_WARN      80.0f
+// Alert roles from the alert core (fitted so the base core gives the original colours).
+#define ERR_DL_DARK    0.17f   // error: lightness step from the core on a dark theme
+#define ERR_DL_LIGHT  -0.04f   //        and on a light one
+#define ERR_C          0.81f   //        chroma, x the core's
+#define ERR_DH        -2.0f    //        hue turn
+#define WARN_DL_DARK   0.32f   // warn (amber): lightness step, dark theme
+#define WARN_DL_LIGHT  0.22f   //               light theme
+#define WARN_C         0.62f   //               chroma, x the core's
+#define WARN_DH       51.0f    //               hue turn toward amber
 #define SWATCH_L      0.48f   // profile swatches
 #define SWATCH_C      0.10f
 #define SWATCH_STEP   45.0f
@@ -209,19 +219,23 @@ static void derive_surfaces(const ui_theme_t *t, lv_color_t out[UI_ROLE_COUNT])
 }
 
 /**
- * @brief Derive the accent and semantic roles.
- * @version 1
+ * @brief Derive the accent and alert roles.
+ * v2: the alert roles step from the alert core (were fixed hues).
+ * @version 2
  * @utility
  */
 static void derive_accents(const ui_theme_t *t, lv_color_t out[UI_ROLE_COUNT])
 {
     bool dark = polarity(t) > 0.0f;
+    const ui_oklch_t *a = &t->alert;
     out[UI_ROLE_ACCENT]       = ui_oklch_to_color(t->accent);
     out[UI_ROLE_ACCENT_ALT]   = lch(t->accent.l * ALT_L, t->accent.c * ALT_C,
                                     t->accent.h + ALT_HUE);
-    out[UI_ROLE_ERROR]        = lch(dark ? 0.70f : 0.49f, 0.17f, HUE_ERROR);
-    out[UI_ROLE_ERROR_STRONG] = lch(0.53f, 0.21f, HUE_ERROR + 2.0f);
-    out[UI_ROLE_WARN]         = lch(dark ? 0.85f : 0.75f, 0.13f, HUE_WARN);
+    out[UI_ROLE_ERROR]        = lch(a->l + (dark ? ERR_DL_DARK : ERR_DL_LIGHT), a->c * ERR_C,
+                                    a->h + ERR_DH);
+    out[UI_ROLE_ERROR_STRONG] = ui_oklch_to_color(*a);
+    out[UI_ROLE_WARN]         = lch(a->l + (dark ? WARN_DL_DARK : WARN_DL_LIGHT), a->c * WARN_C,
+                                    a->h + WARN_DH);
 }
 
 /**
