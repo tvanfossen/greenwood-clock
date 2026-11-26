@@ -1017,6 +1017,36 @@ static void morph_midpoint_cb(lv_anim_t *a)
 }
 
 /**
+ * @brief @p w at @p mode's layout and colour at once (no morph).
+ * @version 1
+ * @utility
+ */
+static void snap_layout(clock_widget_t *w, clock_mode_t mode)
+{
+    snap_to(w, mode);
+    apply_layout_for_mode(w, mode);
+    apply_effective_color(w);
+    shadows_sync(w);
+}
+
+/**
+ * @brief Switch to @p mode at once, without the morph (a still picture of the clock).
+ * @version 1
+ * @req REQ-CLOCK-002
+ */
+void clock_widget_snap_mode(clock_widget_t *w, clock_mode_t mode)
+{
+    if (!w) return;
+    finalize_morph(false);
+    kill_fade();
+    if (mode == CLOCK_MODE_MINIMIZED) w->min_color = w->min_base;
+    w->mode = mode;
+    lv_obj_remove_flag(w->lbl_ampm, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(w->lbl_date, LV_OBJ_FLAG_HIDDEN);
+    snap_layout(w, mode);
+}
+
+/**
  * @brief Switch clock mode; animates a 500 ms snapshot morph (time and its shadow scaled, then crossfaded to the real clock; AM/PM and date crossfaded), or snaps instantly if the snapshot cannot be taken.
  * v2: keeps the drop shadows out of the morph snapshot and in sync around it.
  * v3: reuses the cached time snapshot (morph_snapshot_get) instead of re-rendering it every morph.
@@ -1030,7 +1060,8 @@ static void morph_midpoint_cb(lv_anim_t *a)
  *     until the time landed, then appeared: a two-step look).
  * v10: finishes a time roll first (labels at rest for the snapshot).
  * v11: morph source colour per mode (top bar included).
- * @version 11
+ * v12: the instant fallback is snap_layout (shared with clock_widget_snap_mode).
+ * @version 12
  * @req REQ-CLOCK-002
  * @req REQ-DISP-004
  */
@@ -1069,10 +1100,7 @@ void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode)
     w->mode = mode;
     if (!s_morph_snap) {
         // Snapshot failed (OOM) — fall back to an instant snap, no animation.
-        snap_to(w, mode);
-        apply_layout_for_mode(w, mode);
-        apply_effective_color(w);
-        shadows_sync(w);
+        snap_layout(w, mode);
         ESP_LOGW(TAG, "morph: snapshot failed, snapping to mode %d", mode);
         return;
     }

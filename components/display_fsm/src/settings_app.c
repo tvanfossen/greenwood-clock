@@ -321,13 +321,19 @@ void settings_app_enter_text(const char *title, const char *initial, settings_pi
 }
 
 /**
- * @brief Push a text entry taking up to @p max characters.
- * @version 1
+ * @brief Push a text entry taking up to @p max characters (or hand it to the backend's own
+ *        keyboard).
+ * v2: the backend's edit_text when it has one.
+ * @version 2
  * @req REQ-UI-001
  */
 void settings_app_enter_text_max(const char *title, const char *initial, int max,
                                  settings_pick_cb_t cb, void *ctx)
 {
+    if (s_be->edit_text) {   // the device's own keyboard (the phone's)
+        s_be->edit_text(title, initial ? initial : "", max, cb, ctx);
+        return;
+    }
     s_text.title = title;
     s_text.max = max < SETTINGS_ITEM_LEN ? max : SETTINGS_ITEM_LEN - 1;
     snprintf(s_text.initial, sizeof(s_text.initial), "%s", initial ? initial : "");

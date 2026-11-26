@@ -15,6 +15,7 @@
 #include "settings_frame.h"
 #include "settings_mock.h"
 #include "settings_http.h"
+#include "panel_native.h"
 #include "ui_theme.h"
 #include "ui_theme_lvgl.h"
 #include "ui_theme_bind.h"
@@ -39,7 +40,8 @@ static lv_display_t *s_disp;
 /**
  * @brief Paint the page around the canvas with the theme's screen colour (no colour is
  *        written in the page itself).
- * @version 1
+ * v2: the theme's roles as CSS variables too.
+ * @version 2
  * @utility
  */
 static void page_background(void)
@@ -47,12 +49,14 @@ static void page_background(void)
     lv_color_t c = ui_theme_color(UI_ROLE_SCREEN);
     EM_ASM({ document.body.style.background = 'rgb(' + $0 + ',' + $1 + ',' + $2 + ')'; },
            c.red, c.green, c.blue);
+    panel_native_theme_css();   // the page's overlays (text, crop) draw in the theme
 }
 
 /**
  * @brief The backend: the clock's, from the state the loader fetched, or the sample one.
  * v2: without leave: the phone's menu has nothing to go back to, so it shows no Back.
- * @version 2
+ * v3: the phone's own keyboard for text.
+ * @version 3
  * @utility
  * @return It (static).
  */
@@ -65,6 +69,7 @@ static const settings_backend_t *pick_backend(void)
     free(token);
     be = *(src ? src : settings_mock_backend());
     be.leave = NULL;
+    be.edit_text = panel_native_edit_text;   // the phone's own keyboard
     return &be;
 }
 

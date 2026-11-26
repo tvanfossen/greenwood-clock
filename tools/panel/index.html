@@ -11,11 +11,31 @@
      touch maps 1:1 and the settings lay out for this phone, upright or sideways. */
   canvas { display: block; touch-action: none; }
   #note { display: none; max-width: 28em; padding: 1em; text-align: center; }
+  /* The native overlays (panel_ui.js), in the theme's colours (the panel sets them). */
+  .ov { position: fixed; inset: 0; display: grid; place-items: center; z-index: 10;
+        background: color-mix(in srgb, var(--screen) 85%, transparent); }
+  .ov-box, .ov-crop { background: var(--raised); color: var(--text); border: 1px solid var(--border);
+        border-radius: 14px; padding: 16px; box-sizing: border-box; }
+  .ov-box { width: min(92vw, 520px); }
+  .ov-crop { max-width: 98vw; max-height: 98vh; display: flex; flex-direction: column; }
+  .ov-title { font-size: 1.2em; margin-bottom: 12px; }
+  .ov-hint { color: var(--faint); font-size: 0.8em; margin: 8px 0; }
+  .ov-input { width: 100%; box-sizing: border-box; font: inherit; font-size: 1.1em; padding: 10px;
+        border-radius: 8px; border: 1px solid var(--border); background: var(--inset); color: var(--text); }
+  .ov-row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 12px; flex-wrap: wrap; }
+  .ov-btn { font: inherit; padding: 10px 18px; border-radius: 10px; border: 0;
+        background: var(--inset); color: var(--text); }
+  .ov-go { background: var(--accent); color: var(--screen); }
+  /* As big as fits: the width, or the height left over by the title, hint and buttons. */
+  .crop-view { width: min(calc(98vw - 34px), calc((96vh - 150px) * 1024 / 600)); aspect-ratio: 1024 / 600;
+        touch-action: none; border-radius: 8px; display: block; background: var(--screen); }
+  .ov-crop .ov-title { margin-bottom: 8px; }
 </style>
 </head>
 <body>
 <canvas id="canvas"></canvas>
 <p id="note"></p>
+<script src="panel_ui.js"></script>
 <script>
   // Pairing: the clock's QR code opens this page with a one-time code after '#'. It is traded
   // for a session token (kept in this tab only) and removed from the address bar; then the
@@ -70,49 +90,6 @@
     s.src = 'panel.js';
     document.body.appendChild(s);
   }
-  // Upload (called from the settings UI): pick a picture, make it 1024x600 (a background is
-  // cropped to fill; a photo is fitted whole over a blurred copy of itself), send it as PNG.
-  const KINDS = ['background', 'photo'];
-  function safeName(file) {
-    const base = file.name.replace(/\.[^.]*$/, '').replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 40);
-    return (base || 'picture') + '.png';
-  }
-  function draw(ctx, img, cover, blur) {
-    const W = 1024, H = 600;
-    const s = (cover ? Math.max : Math.min)(W / img.width, H / img.height);
-    const w = img.width * s, h = img.height * s;
-    ctx.filter = blur ? 'blur(24px)' : 'none';
-    ctx.drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
-  }
-  async function toPng(file, kind) {
-    const img = await createImageBitmap(file);
-    const c = document.createElement('canvas');
-    c.width = 1024; c.height = 600;
-    const ctx = c.getContext('2d');
-    draw(ctx, img, true, kind === 1);   // fill (blurred behind a photo)
-    if (kind === 1) draw(ctx, img, false, false);
-    return new Promise(res => c.toBlob(res, 'image/png'));
-  }
-  async function sendPicture(file, kind, token) {
-    const name = safeName(file);
-    const png = await toPng(file, kind);
-    const r = await fetch('/api/upload?kind=' + KINDS[kind] + '&name=' + encodeURIComponent(name),
-                          { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: png });
-    const ok = r.ok;
-    const msg = ok ? 'Sent: ' + name : (r.status === 401 ? 'Session ended: scan the code on the clock again'
-                                                       : 'The clock refused it (' + r.status + ')');
-    Module.ccall('panel_upload_done', null, ['number', 'string', 'string'], [ok ? 1 : 0, name, msg]);
-  }
-  window.panelUpload = function (kind, token) {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.onchange = () => {
-      if (input.files.length) sendPicture(input.files[0], kind, token).catch(e =>
-        Module.ccall('panel_upload_done', null, ['number', 'string', 'string'], [0, '', String(e)]));
-    };
-    input.click();
-  };
   start();
 </script>
 </body>

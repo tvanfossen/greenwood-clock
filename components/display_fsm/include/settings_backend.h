@@ -6,7 +6,8 @@
  *     a named theme.
  * v5: no animation preview entry.
  * v6: the clock's place and timezone (optional: Settings > Location).
- * @version 6
+ * v7: optional native text entry (the phone's own keyboard).
+ * @version 7
  * @brief What the settings screens (settings_app) need from the device they run for: read and
  *        change the settings, the lists to choose from, the schedule, the sun, and the few
  *        device-only screens. Two implementations: the clock's own (state_settings.cpp:
@@ -75,6 +76,9 @@ typedef struct {
     lv_obj_t *(*phone_create)(lv_obj_t *parent);     /**< Optional: pair a phone (QR). */
     void (*upload)(settings_upload_t kind, settings_done_cb_t done, void *ctx);   /**< Optional: pick and send a picture. */
     void (*location_get)(settings_location_t *out);   /**< Optional: Settings > Location. */
+    /** Optional: type a line with the device's own keyboard (the phone's); @p done gets the
+     *  text, or nothing when cancelled. Without it the settings show their own keyboard. */
+    void (*edit_text)(const char *title, const char *initial, int max, void (*done)(const char *text, void *ctx), void *ctx);
     /** Look @p address up (once; the address is not kept); @p done hears the place found. */
     void (*location_lookup)(const char *address, settings_lookup_cb_t done, void *ctx);
     /** Keep @p loc (coordinates, label, zone) and apply it. */

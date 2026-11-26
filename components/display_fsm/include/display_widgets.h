@@ -86,6 +86,14 @@ void clock_widget_release(clock_widget_t *w, uint32_t delay_ms);
 void clock_widget_set_mode(clock_widget_t *w, clock_mode_t mode);
 
 /**
+ * @brief Switch @p w to @p mode at once, without the morph (a still picture of the clock: the
+ *        phone panel's crop guide).
+ * @version 1
+ * @req REQ-CLOCK-002
+ */
+void clock_widget_snap_mode(clock_widget_t *w, clock_mode_t mode);
+
+/**
  * @brief Run @p cb once the clock is at rest: immediately if no morph is running, else when
  *        the running morph finishes. A later mode change drops it.
  * Caller must hold LVGL lock.

@@ -12,7 +12,8 @@
 steps.json: [{"name": "menu", "reload": false, "taps": ["Theme", {"find": "slider",
               "fx": 0.9}, {"find": "Add", "nth": 0}, ...], "drags": [[fx, fy, dx, dy]]}, ...]
 A tap names text its control shows (any part of it), or "slider"; fx / fy place it in
-the control (default its centre), nth picks among several (default -1, the last drawn). A
+the control (default its centre), nth picks among several (default -1, the last drawn);
+{"dom": "#text-done"} clicks a page element (the native overlays). A
 drag starts at a fraction of the canvas and moves by pixels. Each step (after an optional
 reload) drags then taps, after the previous step's; then a screenshot is taken.
 """
@@ -51,10 +52,15 @@ def serve(root):
 ## @brief Tap the control @p item names (see the usage); one canvas pixel is one CSS pixel.
 ## @utility
 ## v2: by the text the control shows (panel_find), not by clock pixel.
-## @version 2
+## v3: or a page element ({"dom": selector}: the native text and crop overlays).
+## @version 3
 ## @return Whether the control was found.
 def tap(page, item):
     item = {"find": item} if isinstance(item, str) else item
+    if "dom" in item:  # a page element (the native overlays)
+        page.click(item["dom"])
+        page.wait_for_timeout(300)
+        return True
     found = page.evaluate(
         "([t, n]) => Module.ccall('panel_find', 'number', ['string', 'number'], [t, n])",
         [item["find"], item.get("nth", -1)],

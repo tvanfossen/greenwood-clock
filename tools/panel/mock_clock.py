@@ -9,7 +9,8 @@
 ## v4: no global settings: the showing profile is edited from the menu (a customized theme
 ## kept by name, a brightness), and the clock gets both.
 ## v5: Settings > Location: an address looked up by the clock and the place it matched kept.
-## @version 5
+## v6: typing through the native input (the phone's keyboard); the upload through the crop.
+## @version 6
 """Usage: mock_clock.py <sdcard/www dir> <out dir for screenshots>"""
 
 import functools
@@ -266,15 +267,15 @@ def profile_fails(posts):
 ## @brief Edit the showing profile from the menu: customize a theme, name it "ro", raise the
 ## brightness, save.
 ## @utility
-## @version 1
+## v2: text through the native input; the upload through the crop.
+## @version 2
 def edit_now(page):
     tap(page, 320, 176)  # Now: Afternoon
     tap(page, 395, 330)  # Theme
     tap(page, 400, 170)  # Customize...
     tap(page, 927, 561)  # the editor's Save
-    tap(page, 412, 294)  # r
-    tap(page, 703, 294)  # o
-    tap(page, 832, 106)  # Done: kept as "ro"
+    page.fill("#text-input", "ro")  # the phone's own keyboard (a native input)
+    page.click("#text-done")  # kept as "ro"
     page.wait_for_timeout(600)
     tap(page, 378, 438)  # Brightness
     tap(page, 700, 168)  # the slider, near the top
@@ -286,13 +287,14 @@ def edit_now(page):
 
 ## @brief Settings > Location: type an address, the clock looks it up, the place is kept.
 ## @utility
-## @version 1
+## v2: text through the native input; the upload through the crop.
+## @version 2
 ## @return The failures.
 def set_location(page, clock):
     tap(page, 704, 248)  # Location
     tap(page, 450, 168)  # Place: Chicago, IL
-    tap(page, 417, 418)  # c
-    tap(page, 832, 106)  # Done: looked up
+    page.fill("#text-input", "c")  # the phone's own keyboard
+    page.click("#text-done")  # looked up
     page.wait_for_timeout(800)
     page.screenshot(path=str(Path(serve.out) / "e2e_location_found.png"))
     tap(page, 832, 106)  # Use
@@ -318,7 +320,8 @@ def set_location(page, clock):
 ## v5: the showing profile edited from the menu (theme kept by name, brightness); the new menu.
 ## v6: the location.
 ## @utility
-## @version 6
+## v7: text through the native input; the upload through the crop.
+## @version 7
 ## @return The failed checks' descriptions.
 def run(base, out):
     clock, fails = serve.clock, []
@@ -352,6 +355,12 @@ def run(base, out):
         with page.expect_file_chooser() as chooser:
             tap(page, 450, 200)  # Background: choose a picture
         chooser.value.set_files(str(PICTURE))
+        page.wait_for_selector(
+            "#crop-send", timeout=5000
+        )  # cropped in the clock's frame
+        page.wait_for_timeout(900)  # the real clock drawn over it
+        page.screenshot(path=str(out / "e2e_crop.png"))
+        page.click("#crop-send")
         page.wait_for_timeout(2500)
         page.screenshot(path=str(out / "e2e_uploaded.png"))
         if not any(

@@ -896,6 +896,15 @@ PANEL_SRCS = (
     "tools/panel/settings_http.c",
     "tools/panel/panel_main.c",
     "tools/panel/panel_find.c",
+    "tools/panel/panel_native.c",
+    "components/fonts/c_array/nunito_128.c",
+    "components/fonts/c_array/nunito_256.c",
+    "components/display_fsm/src/clock_widget.c",
+    "components/display_fsm/src/text_roll.c",
+    "components/display_fsm/src/refresh_probe.c",
+    "components/fonts/c_array/nunito_clock_256.c",
+    "components/fonts/c_array/nunito_clock_128.c",
+    "components/fonts/c_array/nunito_clock_48.c",
 )
 PANEL_OUT = REPO / "sdcard" / "www" / "panel"
 
@@ -937,8 +946,9 @@ def tz_table(c):
 ## v4: exports panel_upload_done and ccall (the upload's answer).
 ## v5: gzipped twins of panel.js and panel.wasm (the clock sends them to browsers that take gzip).
 ## v6: exports panel_resize (the viewport changed) and panel_find (tap by label in tests).
+## v7: panel_ui.js (the native text and crop overlays); the clock widget (the crop guide).
 ## @req REQ-UI-002
-## @version 6
+## @version 7
 @task
 def panel_build(c):
     if not EMCC.exists():
@@ -951,12 +961,11 @@ def panel_build(c):
     c.run(
         f"{EMCC} -std=gnu11 -O2 -w -include {compat} {LVGL_HOST_DEFINE} {PANEL_FLAGS} {incs} "
         f"{srcs} {lib} -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=33554432 -sFETCH=1 "
-        f"-sEXPORTED_FUNCTIONS=_main,_panel_upload_done,_panel_resize,_panel_find -sEXPORTED_RUNTIME_METHODS=ccall "
+        f"-sEXPORTED_FUNCTIONS=_main,_panel_upload_done,_panel_resize,_panel_find,_panel_text_done,_panel_crop_picture,_panel_crop_overlay -sEXPORTED_RUNTIME_METHODS=ccall,HEAPU8 "
         f"-o {PANEL_OUT / 'panel.js'}"
     )
-    (PANEL_OUT / "index.html").write_text(
-        (REPO / "tools" / "panel" / "index.html").read_text()
-    )
+    for page in ("index.html", "panel_ui.js"):
+        (PANEL_OUT / page).write_text((REPO / "tools" / "panel" / page).read_text())
     for name in ("panel.js", "panel.wasm"):
         raw = (PANEL_OUT / name).read_bytes()
         (PANEL_OUT / f"{name}.gz").write_bytes(gzip.compress(raw, 9, mtime=0))
