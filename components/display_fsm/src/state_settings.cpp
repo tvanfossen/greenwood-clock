@@ -39,6 +39,7 @@ extern "C" {
 #include "auth.h"
 #include "settings_lists.h"
 #include "location.h"
+#include "library_backend.h"
 }
 
 #include <cstring>
@@ -610,7 +611,8 @@ static void be_location_set(const settings_location_t *in, settings_done_cb_t do
  * v3: no global setters (profiles set everything).
  * v4: no animation preview.
  * v5: Location.
- * @version 5
+ * v6: the Library.
+ * @version 6
  * @utility
  * @return It (static).
  */
@@ -631,6 +633,7 @@ static const settings_backend_t *clock_backend(void)
     be.phone_create = phone_screen;
     be.reboot = be_reboot;
     be.leave = be_leave;
+    library_backend_fill(&be);
     return &be;
 }
 

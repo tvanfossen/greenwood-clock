@@ -4,7 +4,8 @@
  * v3: the sun alone.
  * v4: no global settings; every sample field set.
  * v5: a sample location (Chicago).
- * @version 5
+ * v6: the sample Library (settings_mock_library.c).
+ * @version 6
  * @brief An in-memory settings backend with sample data, for rendering and clicking through
  *        the settings screens off the device (host preview, the panel before it talks to a
  *        clock). The sun is the real calculation for a public sample place (Chicago); "now" is
@@ -268,7 +269,8 @@ static void sample_schedule(void)
  * v2: a pretend upload.
  * v3: no global setters.
  * v4: the sample location.
- * @version 4
+ * v5: the sample Library.
+ * @version 5
  * @utility
  * @return It (static).
  */
@@ -284,6 +286,7 @@ const settings_backend_t *settings_mock_backend(void)
             .leave = mock_leave, .location_get = mock_location_get,
             .location_lookup = mock_location_lookup, .location_set = mock_location_set,
         };
+        settings_mock_library_fill(&be);
     }
     return &be;
 }

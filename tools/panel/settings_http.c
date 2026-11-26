@@ -4,7 +4,8 @@
  *     through panel_upload_done.
  * v3: no global settings; a named theme is kept (POST /api/theme/save).
  * v4: the clock's place and timezone.
- * @version 4
+ * v5: settings_http_request (any request, raw answer) for the Library.
+ * @version 5
  * @brief The phone panel's settings backend (WebAssembly): the state GET /api/panel returned
  *        at start is the cache every getter reads; every change updates the cache and is
  *        POSTed to the clock with the session token (emscripten fetch, asynchronous). The
@@ -83,86 +84,135 @@ static sched_date_t add_days(sched_date_t d, int n)
 // Talking to the clock
 // ---------------------------------------------------------------------------
 
+/** A request in flight: whom to tell, and its own copy of the body (emscripten_fetch keeps
+ *  only the pointer and reads it later, so it lives until the answer). */
+typedef struct {
+    settings_http_raw_cb_t cb;
+    void                  *ctx;
+    char                  *body;
+} raw_t;
+
+/**
+ * @brief A request finished: hand its status and answer to whoever asked.
+ * @version 1
+ * @callback
+ */
+static void raw_done(emscripten_fetch_t *f)
+{
+    raw_t *r = (raw_t *)f->userData;
+    r->cb(f->status, f->data, (size_t)f->numBytes, r->ctx);
+    free(r->body);
+    free(r);
+    emscripten_fetch_close(f);
+}
+
+/**
+ * @brief Send @p method @p path (with JSON @p body, or none) and the session token; @p cb
+ *        gets the status and the raw answer.
+ * @version 1
+ * @req REQ-UI-005
+ */
+void settings_http_request(const char *method, const char *path, const char *body,
+                           settings_http_raw_cb_t cb, void *ctx)
+{
+    static char auth[96];
+    snprintf(auth, sizeof(auth), "Bearer %s", s_token);
+    const char *headers[] = { "Authorization", auth, "Content-Type", "application/json", NULL };
+    raw_t *r = calloc(1, sizeof(*r));
+    char *copy = r && body ? strdup(body) : NULL;
+    if (!r || (body && !copy)) {
+        free(r);
+        cb(0, NULL, 0, ctx);
+        return;
+    }
+    *r = (raw_t){ cb, ctx, copy };
+    emscripten_fetch_attr_t attr;
+    emscripten_fetch_attr_init(&attr);
+    snprintf(attr.requestMethod, sizeof(attr.requestMethod), "%s", method);
+    attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
+    attr.requestHeaders = headers;   // copied by emscripten_fetch
+    attr.requestData = copy;
+    attr.requestDataSize = copy ? strlen(copy) : 0;
+    attr.onsuccess = raw_done;
+    attr.onerror = raw_done;
+    attr.userData = r;
+    emscripten_fetch(&attr, path);
+}
+
+/**
+ * @brief Why a request failed, for a person: the clock's "error" text, or the status.
+ * v2: from the status and answer (any request).
+ * @version 2
+ * @req REQ-UI-005
+ */
+void settings_http_failure(int status, const char *data, size_t len, char *out, size_t n)
+{
+    cJSON *o = data && len ? cJSON_ParseWithLength(data, len) : NULL;
+    const cJSON *e = cJSON_GetObjectItemCaseSensitive(o, "error");
+    if (status == 401) snprintf(out, n, "Session ended: scan the code on the clock again");
+    else if (cJSON_IsString(e)) snprintf(out, n, "%s", e->valuestring);
+    else snprintf(out, n, "The clock did not answer (%d)", status);
+    cJSON_Delete(o);
+}
+
 typedef struct {
     settings_done_cb_t done;
     void              *ctx;
-    char              *body;   /**< The request's own copy: emscripten_fetch keeps only the
-                                    pointer and reads it later, so it lives until the answer. */
 } pending_t;
 
 static char s_reply[512];   // the last request's answer, read by its callback
 
 /**
- * @brief Why a request failed, for a person: the clock's "error" text, or the status.
- * @version 1
- * @utility
- */
-static void failure_text(emscripten_fetch_t *f, char *out, size_t n)
-{
-    cJSON *o = f->numBytes ? cJSON_ParseWithLength(f->data, (size_t)f->numBytes) : NULL;
-    const cJSON *e = cJSON_GetObjectItemCaseSensitive(o, "error");
-    if (f->status == 401) snprintf(out, n, "Session ended: scan the code on the clock again");
-    else if (cJSON_IsString(e)) snprintf(out, n, "%s", e->valuestring);
-    else snprintf(out, n, "The clock did not answer (%d)", f->status);
-    cJSON_Delete(o);
-}
-
-/**
- * @brief A request finished: tell whoever asked (or show a failure).
+ * @brief A POST finished: tell whoever asked (or show a failure).
  * v2: frees the request's body copy.
  * v3: keeps the reply (s_reply) for the callback.
- * @version 3
+ * v4: over settings_http_request.
+ * @version 4
  * @callback
  */
-static void fetch_done(emscripten_fetch_t *f)
+static void post_done(int status, const char *data, size_t len, void *ctx)
 {
-    pending_t *p = (pending_t *)f->userData;
+    pending_t *p = ctx;
     char why[160] = "";
-    bool ok = f->status == 200;
-    size_t n = f->numBytes < sizeof(s_reply) - 1 ? (size_t)f->numBytes : sizeof(s_reply) - 1;
-    memcpy(s_reply, f->data ? f->data : "", f->data ? n : 0);   // the answer, for its caller
-    s_reply[f->data ? n : 0] = '\0';
-    if (!ok) failure_text(f, why, sizeof(why));
+    bool ok = status == 200;
+    size_t n = len < sizeof(s_reply) - 1 ? len : sizeof(s_reply) - 1;
+    memcpy(s_reply, data ? data : "", data ? n : 0);   // the answer, for its caller
+    s_reply[data ? n : 0] = '\0';
+    if (!ok) settings_http_failure(status, data, len, why, sizeof(why));
     if (p && p->done) p->done(ok, why, p->ctx);
     else if (!ok) settings_app_toast(why, false);
-    if (p) free(p->body);
     free(p);
-    emscripten_fetch_close(f);
 }
 
 /**
  * @brief POST @p body (JSON) to @p path with the session token; @p done (may be NULL)
  *        hears how it went. The body is copied: the caller may free its own at once.
- * v2: the request keeps its own copy of the body until it finishes (emscripten_fetch keeps
- *     only the pointer; a caller freeing it right away sent freed memory, which the clock
- *     refused as invalid JSON).
- * @version 2
+ * v2: the request keeps its own copy of the body until it finishes.
+ * v3: over settings_http_request.
+ * @version 3
  * @utility
  */
 static void post(const char *path, const char *body, settings_done_cb_t done, void *ctx)
 {
-    static char auth[96];
-    snprintf(auth, sizeof(auth), "Bearer %s", s_token);
-    const char *headers[] = { "Authorization", auth, "Content-Type", "application/json", NULL };
     pending_t *p = calloc(1, sizeof(*p));
-    char *copy = p ? strdup(body) : NULL;
-    if (!copy) {
-        free(p);
+    if (!p) {
         if (done) done(false, "Out of memory", ctx);
         return;
     }
-    *p = (pending_t){ done, ctx, copy };
-    emscripten_fetch_attr_t attr;
-    emscripten_fetch_attr_init(&attr);
-    strcpy(attr.requestMethod, "POST");
-    attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
-    attr.requestHeaders = headers;   // copied by emscripten_fetch
-    attr.requestData = copy;
-    attr.requestDataSize = strlen(copy);
-    attr.onsuccess = fetch_done;
-    attr.onerror = fetch_done;
-    attr.userData = p;
-    emscripten_fetch(&attr, path);
+    *p = (pending_t){ done, ctx };
+    settings_http_request("POST", path, body, post_done, p);
+}
+
+/**
+ * @brief The cached schedule, for the Library's rename to follow.
+ * @version 1
+ * @req REQ-LIB-001
+ * @return It; its length in @p n.
+ */
+sched_rule_t *settings_http_rules(int *n)
+{
+    *n = s_n;
+    return s_rules;
 }
 
 // ---------------------------------------------------------------------------
@@ -572,19 +622,21 @@ static bool read_state(const char *json)
  * v3: no leave (the phone's menu has no Back).
  * v4: no global setters; save_theme keeps a named theme.
  * v5: the location.
- * @version 5
+ * v6: the Library (settings_http_library.c).
+ * @version 6
  * @req REQ-UI-005
  * @return It, or NULL when the state is not usable.
  */
 const settings_backend_t *settings_http_backend(const char *state_json, const char *token)
 {
-    static const settings_backend_t BE = {
+    static settings_backend_t BE = {
         .list = http_list, .schedule_get = http_schedule_get,
         .schedule_set = http_schedule_set, .sun = http_sun, .now = http_now,
         .save_theme = http_save_theme, .about = http_about, .upload = http_upload,
         .location_get = http_location_get, .location_lookup = http_location_lookup,
         .location_set = http_location_set,
     };
+    settings_http_library_fill(&BE);
     snprintf(s_token, sizeof(s_token), "%s", token ? token : "");
     return state_json && read_state(state_json) ? &BE : NULL;
 }

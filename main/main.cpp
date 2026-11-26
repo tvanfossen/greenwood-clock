@@ -35,6 +35,7 @@
 #include "debug_log.h"
 #include "log_async.h"
 #include "display_fsm.h"
+#include "library_store.h"
 #include "nws.h"
 #include "mdns.h"
 #include "lvgl.h"
@@ -1165,7 +1166,8 @@ static void boot_health_loop(void)
  * v2: installs non-blocking logging (log_async) right after the SD log mirror.
  * @callback
  * v3: tells the HTTP API when the launch window is over (http_api_set_launched).
- * @version 3
+ * v4: starts the Library's thumbnail maker after the display.
+ * @version 4
  * @req REQ-BOOT-001
  * @req REQ-LOG-005
  */
@@ -1245,6 +1247,7 @@ extern "C" void app_main()
     set_boot_stage("fsm_init");
     ESP_LOGI(TAG, "[BOOT] display_fsm_init...");
     display_fsm_init();
+    library_store_start();   // thumbnails for the Library (after the launch window)
     ESP_LOGI(TAG, "[BOOT] display_fsm_init done — entering health loop");
     set_boot_stage("health_loop");
     boot_health_loop();         // never returns

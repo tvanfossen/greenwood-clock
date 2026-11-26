@@ -4,7 +4,8 @@
  * v3: no global settings: the menu opens the showing profile ("Now: ..."); brightness,
  *     background, theme and animation are a profile's (settings_sched.c); Customize is in
  *     the theme picker (settings_theme.c).
- * @version 3
+ * v4: the Library (settings_library.c).
+ * @version 4
  * @brief The settings UI's screen stack, menu and generic screens (see settings_app.h): the
  *        choice list, text entry, toast, about and upload. The schedule and profile screens
  *        are settings_sched.c; theme customizing is settings_theme.c.
@@ -14,6 +15,7 @@
 #include "settings_sched.h"
 #include "settings_theme.h"
 #include "settings_location.h"
+#include "settings_library.h"
 #include "ui_theme_bind.h"
 
 #include <stdio.h>
@@ -483,12 +485,14 @@ static void reboot_cb(lv_event_t *e)
  * v2: Upload.
  * v3: no Animation (preview) entry.
  * v4: Location.
- * @version 4
+ * v5: the Library.
+ * @version 5
  * @utility
  * @return The new count.
  */
 static int optional_items(settings_menu_item_t *items, int n)
 {
+    if (s_be->library_list) items[n++] = (settings_menu_item_t){ LV_SYMBOL_DIRECTORY, "Library", menu_cb, (void *)settings_library_screen };
     if (s_be->location_get) items[n++] = (settings_menu_item_t){ LV_SYMBOL_GPS, "Location", menu_cb, (void *)settings_location_screen };
     if (s_be->wifi_create) items[n++] = (settings_menu_item_t){ LV_SYMBOL_WIFI, "WiFi", device_cb, (void *)s_be->wifi_create };
     if (s_be->phone_create) items[n++] = (settings_menu_item_t){ LV_SYMBOL_CALL, "Phone", device_cb, (void *)s_be->phone_create };

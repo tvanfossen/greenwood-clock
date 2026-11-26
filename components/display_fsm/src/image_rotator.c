@@ -2,7 +2,8 @@
  * @file image_rotator.c
  * v2: the first photo fades in over 1.5 s, eased, with the next decode held until it ends
  *     (the decode competing with a 600 ms linear fade made it choppy).
- * @version 2
+ * v3: the album holds 200 (LIB_ALBUM_MAX), its paths in PSRAM.
+ * @version 3
  * @brief ImageRotator: cycles PNGs from a directory with off-lock RGB565 decode, .r565 file cache, RAM cache and next-image prefetch.
  */
 // Layer 1: ImageRotator — cycles through PNG images from a directory.
@@ -16,9 +17,11 @@
 
 #include "display_widgets.h"
 #include "image_decode.h"
+#include "library.h"
 #include "ui_theme_bind.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
@@ -29,7 +32,7 @@
 
 static const char *TAG = "image_rotator";
 
-#define MAX_IMAGES 50
+#define MAX_IMAGES LIB_ALBUM_MAX   // the album's cap (the Library shows and enforces it)
 #define FADE_IN_MS 1500   // the first photo's fade from the screen colour
 #define MAX_PATH_LEN 128
 
@@ -55,7 +58,7 @@ static int             s_persist_index = -1;
 struct image_rotator_t {
     lv_obj_t       *container;
     lv_obj_t       *img_current;
-    char            paths[MAX_IMAGES][MAX_PATH_LEN];
+    char          (*paths)[MAX_PATH_LEN];   // MAX_IMAGES of them, in PSRAM
     int             count;
     int             current_index;
     lv_image_dsc_t *shown_dsc;     // descriptor currently set on img_current
@@ -166,7 +169,8 @@ static void scan_png_dir(image_rotator_t *r, const char *dir_path)
 
 /**
  * @brief Create a rotator on @p parent over the PNGs in @p dir_path, starting at @p start_index (wrapped) or at the RAM-cached photo; does not decode.
- * @version 1
+ * v2: the path list in PSRAM, LIB_ALBUM_MAX (200) of them.
+ * @version 2
  * @req REQ-PHOTO-001
  * @return New rotator (possibly with zero images), or NULL if allocation fails.
  */
@@ -181,6 +185,12 @@ image_rotator_t *image_rotator_create(lv_obj_t *parent, const char *dir_path,
     memset(r, 0, sizeof(*r));
     r->pending_index = -1;
     r->shown_index   = -1;
+    r->paths = heap_caps_calloc(MAX_IMAGES, MAX_PATH_LEN, MALLOC_CAP_SPIRAM);
+    if (!r->paths) {
+        ESP_LOGE(TAG, "Failed to allocate the album's %d paths", MAX_IMAGES);
+        lv_free(r);
+        return NULL;
+    }
 
     r->container = make_container(parent);
     r->img_current = lv_image_create(r->container);
@@ -209,7 +219,8 @@ image_rotator_t *image_rotator_create(lv_obj_t *parent, const char *dir_path,
 
 /**
  * @brief Delete the rotator's objects, keep its shown photo as the RAM cache for the next visit, discard the prefetched one and free it.
- * @version 1
+ * v2: frees the path list.
+ * @version 2
  * @req REQ-PHOTO-001
  */
 void image_rotator_destroy(image_rotator_t *r)
@@ -231,6 +242,7 @@ void image_rotator_destroy(image_rotator_t *r)
         s_persist_index = r->shown_index;
     }
     if (r->pending_dsc) image_decode_free(r->pending_dsc);
+    heap_caps_free(r->paths);
     lv_free(r);
     ESP_LOGI(TAG, "ImageRotator destroyed (persisted [%d])", s_persist_index);
 }

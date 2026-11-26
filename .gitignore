@@ -11,7 +11,7 @@ components/secrets/secrets.h
 # Lottie prototype (its own standalone repo) + generated screenshots
 /tools/lottie_gen/glyph_animator/
 /tools/lottie_gen/*.png
-tools/__pycache__/
+__pycache__/
 
 # Python dev venv (invoke, pre-commit)
 /.venv/

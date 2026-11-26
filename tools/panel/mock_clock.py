@@ -10,16 +10,22 @@
 ## kept by name, a brightness), and the clock gets both.
 ## v5: Settings > Location: an address looked up by the clock and the place it matched kept.
 ## v6: typing through the native input (the phone's keyboard); the upload through the crop.
-## @version 6
+## v7: the Library: thumbnails from the clock, a used background's delete refused, a rename and
+## a delete reaching the clock, a theme duplicated under a new name.
+## @version 7
 """Usage: mock_clock.py <sdcard/www dir> <out dir for screenshots>"""
 
 import functools
 import http.server
+import io
 import json
 import struct
 import sys
 import threading
+import urllib.parse
 from pathlib import Path
+
+from PIL import Image
 
 from playwright.sync_api import sync_playwright
 
@@ -31,9 +37,9 @@ LOOKUP_MATCH = {
     "lat": 41.883,
     "lon": -87.632,
 }  # Chicago City Hall
-PICTURE = (
-    Path(__file__).resolve().parents[2] / "sdcard" / "backgrounds" / "spring-flower.png"
-)
+SDCARD = Path(__file__).resolve().parents[2] / "sdcard"
+PICTURE = SDCARD / "backgrounds" / "spring-flower.png"
+THUMB = (170, 100)  # LIB_THUMB_W x LIB_THUMB_H
 
 
 ## @brief The stand-in clock's state and what it received.
@@ -45,7 +51,8 @@ class Clock:
     ## @utility
     ## v2: uploads recorded.
     ## v3: gzipped files served recorded.
-    ## @version 3
+    ## v4: the Library (Christmas uses winter_morning).
+    ## @version 4
     def __init__(self):
         self.code_used = False
         self.gzipped = []
@@ -84,9 +91,84 @@ class Clock:
                     "repeat": "yearly",
                     "from": "12-24",
                     "to": "12-25",
+                    "image": "A:/backgrounds/winter_morning.png",
                 },
             ],
         }
+        self.thumbs = []
+        self.renamed = {}  # new name -> the sample file
+        self.library = {
+            "backgrounds": [
+                "campfire",
+                "night_winter",
+                "winter_afternoon",
+                "winter_morning",
+            ],
+            "album": ["spring-flower"],
+            "themes": ["default", "sassafras"],
+            "anims": ["Snowfall", "None"],
+        }
+
+    ## @brief GET /api/library's body for @p kind.
+    ## @utility
+    ## @version 1
+    ## @return The JSON text.
+    def library_list(self, kind):
+        items = [
+            {
+                "name": n,
+                "label": n.capitalize() if kind == "themes" else n,
+                "size": 900000,
+                "mtime": 1795000000,
+                "thumb": kind in ("backgrounds", "album"),
+            }
+            for n in self.library.get(kind, [])
+        ]
+        return json.dumps({"items": items, "total_mb": 30436, "free_mb": 27911})
+
+    ## @brief A picture's thumbnail, made from the sample file as the clock makes it.
+    ## @utility
+    ## @version 1
+    ## @return PNG bytes, or None.
+    def thumb(self, name):
+        src = SDCARD / "backgrounds" / f"{self.renamed.get(name, name)}.png"
+        if not src.is_file():
+            return None
+        self.thumbs.append(name)
+        out = io.BytesIO()
+        Image.open(src).convert("RGB").resize(THUMB, Image.BOX).save(out, "PNG")
+        return out.getvalue()
+
+    ## @brief Who uses background @p name ("" when none).
+    ## @utility
+    ## @version 1
+    ## @return The first profile's name.
+    def used_by(self, kind, name):
+        ref = f"A:/backgrounds/{name}.png" if kind == "backgrounds" else name
+        key = {"backgrounds": "image", "themes": "theme", "anims": "anim"}.get(kind)
+        users = [
+            p["name"] for p in self.schedule["profiles"] if key and p.get(key) == ref
+        ]
+        return users[0] if users else ""
+
+    ## @brief POST /api/library/delete or /rename: change the lists as the clock does.
+    ## @utility
+    ## @version 1
+    ## @return (status, body).
+    def library_change(self, path, req):
+        kind, items = req.get("kind"), self.library.get(req.get("kind"), [])
+        name = req.get("from") if path.endswith("rename") else req.get("name")
+        who = self.used_by(kind, name) if path.endswith("delete") else ""
+        if name not in items or who:
+            return 409, json.dumps(
+                {"error": f"Used by {who}" if who else "No such item"}
+            )
+        if path.endswith("rename"):
+            items[items.index(name)] = req.get("to")
+            self.renamed[req.get("to")] = self.renamed.get(name, name)
+        else:
+            items.remove(name)
+        return 200, '{"status":"ok"}'
 
     ## @brief GET /api/panel's body.
     ## @utility
@@ -150,8 +232,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     ## @brief GET: the panel state (token needed) or a static file under /www.
     ## @utility
     ## v2: a file's gzipped twin when the browser takes gzip (as the clock does).
-    ## @version 2
+    ## v3: the Library.
+    ## @version 3
     def do_GET(self):
+        if self.path.startswith("/api/library"):
+            return self._library_get()
         if self.path.startswith("/api/panel"):
             ok = self._authed()
             return self._send(
@@ -163,6 +248,30 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if "gzip" in self.headers.get("Accept-Encoding", "") and twin.is_file():
             return self._send_gzipped(twin)
         return super().do_GET()
+
+    ## @brief GET /api/library, /thumb, /theme (token needed).
+    ## @utility
+    ## @version 1
+    def _library_get(self):
+        if not self._authed():
+            return self._send(401, '{"error":"scan"}')
+        url = urllib.parse.urlparse(self.path)
+        q = dict(urllib.parse.parse_qsl(url.query))
+        if url.path == "/api/library":
+            return self._send(200, self.clock.library_list(q.get("kind")))
+        if url.path == "/api/library/theme":
+            f = SDCARD / "themes" / f"{q.get('stem')}.json"
+            return self._send(
+                200 if f.is_file() else 404, f.read_text() if f.is_file() else "{}"
+            )
+        png = self.clock.thumb(q.get("name", ""))
+        if png is None:
+            return self._send(404, '{"error":"No thumbnail yet"}')
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(png)))
+        self.end_headers()
+        self.wfile.write(png)
 
     ## @brief Send @p twin (a .gz file) as its original file, gzip-encoded.
     ## @utility
@@ -181,7 +290,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     ## @utility
     ## v2: uploads go to _upload.
     ## v3: an address lookup answers the sample match (a public building).
-    ## @version 3
+    ## v4: the Library's delete and rename.
+    ## @version 4
     def do_POST(self):
         raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         if self.path.startswith("/api/upload"):
@@ -200,6 +310,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send(200, json.dumps(LOOKUP_MATCH))
         if self.path == "/api/schedule":
             self.clock.schedule = json.loads(body)
+        if self.path.startswith("/api/library/"):
+            return self._send(*self.clock.library_change(self.path, json.loads(body)))
         return self._send(200, '{"status":"ok"}')
 
     ## @brief POST /api/upload: record the query and the PNG's size (token needed).
@@ -288,11 +400,12 @@ def edit_now(page):
 ## @brief Settings > Location: type an address, the clock looks it up, the place is kept.
 ## @utility
 ## v2: text through the native input; the upload through the crop.
-## @version 2
+## v3: taps by label (the menu grows).
+## @version 3
 ## @return The failures.
 def set_location(page, clock):
-    tap(page, 704, 248)  # Location
-    tap(page, 450, 168)  # Place: Chicago, IL
+    tap_label(page, "Location")
+    tap_label(page, "Chicago, IL")  # the place
     page.fill("#text-input", "c")  # the phone's own keyboard
     page.click("#text-done")  # looked up
     page.wait_for_timeout(800)
@@ -321,7 +434,8 @@ def set_location(page, clock):
 ## v6: the location.
 ## @utility
 ## v7: text through the native input; the upload through the crop.
-## @version 7
+## v8: the Library.
+## @version 8
 ## @return The failed checks' descriptions.
 def run(base, out):
     clock, fails = serve.clock, []
@@ -350,7 +464,7 @@ def run(base, out):
         tap(page, 190, 106)  # Back to the menu
         fails += set_location(page, clock)
         tap(page, 190, 106)  # Back to the menu
-        tap(page, 320, 320)  # Upload
+        tap_label(page, "Upload")
         page.screenshot(path=str(out / "e2e_upload.png"))
         with page.expect_file_chooser() as chooser:
             tap(page, 450, 200)  # Background: choose a picture
@@ -367,12 +481,73 @@ def run(base, out):
             "kind=background" in q and dims == (1024, 600) for q, dims in clock.uploads
         ):
             fails.append(f"no 1024x600 background arrived: {clock.uploads}")
+        fails += library_check(page, clock, out)
         other = browser.new_page()
         other.goto(f"{base}/www/panel/index.html#{CODE}")
         other.wait_for_timeout(1500)
         if "Scan the QR code" not in other.inner_text("#note"):
             fails.append("a second phone with the used code was not refused")
         browser.close()
+    return fails
+
+
+## @brief Tap the control showing @p label (shots.tap: by what it shows, not by pixel).
+## @utility
+## @version 1
+## @return Whether one was found.
+def tap_label(page, label):
+    from shots import tap as shots_tap
+
+    return shots_tap(page, label)
+
+
+## @brief The Library: thumbnails from the clock; a used background cannot be deleted; a rename
+## and a delete reach the clock; a theme is duplicated under a new name.
+## @utility
+## @version 1
+## @return The failed checks' descriptions.
+def library_check(page, clock, out):
+    fails = []
+    for label in ("\uf053", "Library", "Backgrounds"):
+        tap_label(page, label)
+    page.wait_for_timeout(1500)  # the thumbnails, one by one
+    page.screenshot(path=str(out / "e2e_library.png"))
+    if len(set(clock.thumbs)) < 4:
+        fails.append(f"the grid did not fetch every thumbnail: {clock.thumbs}")
+    for label in ("winter_morning", "Delete", "Tap again"):
+        tap_label(page, label)
+    page.screenshot(path=str(out / "e2e_used.png"))
+    if any(p == "/api/library/delete" for p, _ in clock.posts):
+        fails.append("a background a profile uses was sent for deletion")
+    for label in ("\uf053", "campfire", "Rename"):
+        tap_label(page, label)
+    page.fill("#text-input", "campfire_2")
+    page.click("#text-done")
+    page.wait_for_timeout(800)
+    for label in ("campfire_2", "Delete", "Tap again"):
+        tap_label(page, label)
+    page.wait_for_timeout(800)
+    page.screenshot(path=str(out / "e2e_deleted.png"))
+    sent = [(p, json.loads(b)) for p, b in clock.posts if p.startswith("/api/library/")]
+    want = [
+        (
+            "/api/library/rename",
+            {"kind": "backgrounds", "from": "campfire", "to": "campfire_2"},
+        ),
+        ("/api/library/delete", {"kind": "backgrounds", "name": "campfire_2"}),
+    ]
+    if sent != want:
+        fails.append(f"rename then delete did not reach the clock: {sent}")
+    for label in ("\uf053", "Themes", "Sassafras", "Duplicate"):
+        tap_label(page, label)
+    page.wait_for_timeout(500)
+    page.screenshot(path=str(out / "e2e_duplicate.png"))
+    page.wait_for_selector("#text-input", timeout=3000)
+    page.fill("#text-input", "Rose")
+    page.click("#text-done")
+    page.wait_for_timeout(800)
+    if not any(p == "/api/theme/save?stem=rose" for p, _ in clock.posts):
+        fails.append("the duplicated theme was not kept as rose")
     return fails
 
 

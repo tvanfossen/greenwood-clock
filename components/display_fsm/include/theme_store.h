@@ -16,7 +16,7 @@ extern "C" {
 #endif
 
 #define THEME_STORE_DIR "/sdcard/themes"
-#define THEME_STORE_MAX 12
+#define THEME_STORE_MAX 24   // installed and made in the editor
 
 /** One installed theme: its file stem and the name inside it. */
 typedef struct {

@@ -8,6 +8,8 @@
 #include "http_auth.h"
 #include "http_schedule.h"
 #include "http_panel.h"
+#include "library_store.h"
+#include "http_library.h"
 #include "http_theme.h"
 #include "http_frame_capture.h"
 #include "frame_capture.h"
@@ -1115,7 +1117,8 @@ static void http_api_register_display_handlers(httpd_handle_t srv)
  * v5: the daily/events schedule endpoints (/api/schedule replaces /api/bg_schedule).
  * v6: the gate on every handler; POST /api/pair.
  * v7: the panel endpoints.
- * @version 7
+ * v8: the Library endpoints.
+ * @version 8
  * @req REQ-API-001
  */
 static void http_api_register_handlers(httpd_handle_t srv)
@@ -1123,6 +1126,7 @@ static void http_api_register_handlers(httpd_handle_t srv)
     http_frame_capture_register(srv);
     http_auth_register_pairing(srv);   // the one public /api endpoint
     http_panel_register(srv);
+    http_library_register(srv);
     http_schedule_register(srv);   // before the display handlers' www catch-all
     http_theme_register(srv);
     http_api_register_file_handlers(srv);
@@ -2404,10 +2408,26 @@ static esp_err_t panel_receive_png(httpd_req_t *req, const char *tmp, const char
 }
 
 /**
+ * @brief Whether a NEW album photo (@p final not already there) would pass the album's cap.
+ * @version 1
+ * @utility
+ * @return Whether it is full.
+ */
+static bool album_full(const char *kind, const char *final)
+{
+    struct stat st;
+    bool full = strcmp(kind, "photo") == 0 && stat(final, &st) != 0 &&
+                library_store_count(LIB_ALBUM) >= LIB_ALBUM_MAX;
+    if (full) ESP_LOGW(TAG, "panel upload refused: the album holds %d", LIB_ALBUM_MAX);
+    return full;
+}
+
+/**
  * @brief POST /api/upload?kind=background|photo&name=x.png: a PNG (cropped to 1024x600 on the
  *        phone) into /sdcard/backgrounds or /sdcard/photos. Anything else is refused.
  * v2: a photo makes the slideshow rescan the album (it is shown without a reboot).
- * @version 2
+ * v3: refused past the album's 200; the thumbnail maker is told.
+ * @version 3
  * @callback
  * @req REQ-UI-005
  * @return ESP_OK on success; ESP_FAIL after an error response.
@@ -2430,12 +2450,17 @@ static esp_err_t panel_upload_handler(httpd_req_t *req)
     char tmp[96], final[96];
     snprintf(tmp, sizeof(tmp), "%s/.upload.tmp", dir);
     snprintf(final, sizeof(final), "%s/%s", dir, name);
+    if (album_full(kind, final)) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "The album is full (200 photos): delete some first");
+        return ESP_FAIL;
+    }
     ESP_LOGI(TAG, "panel upload: %s (%d bytes)", final, req->content_len);
     esp_err_t err = panel_receive_png(req, tmp, final);
     if (err == ESP_OK && strcmp(kind, "photo") == 0) {
         display_event_t evt = {.type = DISPLAY_EVT_PHOTOS_CHANGED};
         if (!display_fsm_send_event(&evt)) ESP_LOGW(TAG, "panel upload: album rescan not queued");
     }
+    if (err == ESP_OK) library_store_changed();   // its thumbnail
     return err;
 }
 

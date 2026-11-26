@@ -488,6 +488,22 @@ requirements:
       clock's time follows the chosen zone without a reboot, the forecast and the sky dial are
       for the new place, and an unmatched address is refused with a reason.
 
+  # ---------------------------------------------------------------- LIB
+  REQ-LIB-001:
+    name: The Library (the app's content on the SD card)
+    subsystem: LIB
+    description: >-
+      Settings > Library, on the clock and the phone panel, shows what the clock has by kind:
+      backgrounds, the album (up to 200 photos), themes and clock animations, with thumbnails
+      (made once by the clock, in the background), each item's size, date and the profiles
+      that use it, and the card's free space. An item can be viewed, used in a profile,
+      renamed (the profiles that use it follow) or deleted (refused while a profile uses it,
+      naming them); a theme can also be edited and duplicated.
+    acceptance_criteria: >-
+      After an upload its thumbnail appears in the Library without a reboot; deleting an item
+      a profile uses is refused with that profile's name; renaming a background keeps every
+      profile that used it showing it; the album refuses a photo past 200.
+
   # ---------------------------------------------------------------- SURP
   REQ-SURP-001:
     name: Surprise messages

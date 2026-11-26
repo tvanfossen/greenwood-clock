@@ -16,10 +16,21 @@
   {"name": "15_edit_event", "taps": ["Christmas"]},
   {"name": "16_event_window", "taps": ["Time window"]},
   {"name": "17_dates", "taps": ["Dec 24"]},
-  {"name": "18_new_daily_conflict", "reload": true, "taps": ["Schedule", {"find": "\uf067", "nth": 0}]},
+  {"name": "18_new_daily_conflict", "reload": true, "taps": ["Schedule", {"find": "", "nth": 0}]},
   {"name": "19_about", "reload": true, "taps": ["About"]},
   {"name": "20_upload", "reload": true, "taps": ["Upload"]},
   {"name": "21_location", "reload": true, "taps": ["Location"]},
   {"name": "22_address", "taps": ["Chicago, IL"]},
-  {"name": "23_timezone", "reload": true, "taps": ["Location", "America/Chicago"]}
+  {"name": "23_timezone", "reload": true, "taps": ["Location", "America/Chicago"]},
+  {"name": "24_library", "reload": true, "taps": ["Library"]},
+  {"name": "25_backgrounds", "taps": ["Backgrounds"], "wait": 800},
+  {"name": "26_background_used", "taps": ["winter_morning"], "wait": 400},
+  {"name": "27_background_free", "taps": ["", "campfire"], "wait": 400},
+  {"name": "29_album", "reload": true, "taps": ["Library", "Album"], "wait": 800},
+  {"name": "30_album_page2", "taps": [""], "wait": 800},
+  {"name": "31_themes", "reload": true, "taps": ["Library", "Themes"]},
+  {"name": "32_theme_detail", "taps": ["Sassafras"]},
+  {"name": "32b_delete_confirm", "taps": ["Delete"]},
+  {"name": "33_use_in_profile", "taps": ["Library", "Themes", "Sassafras", "Use in a profile"], "reload": true},
+  {"name": "34_animations", "reload": true, "taps": ["Library", "Animations"]}
 ]

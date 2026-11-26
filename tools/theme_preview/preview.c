@@ -608,6 +608,59 @@ static void scene_settings(void)
 }
 
 /**
+ * @brief The first clickable object under @p obj showing a label that contains @p text.
+ * @version 1
+ * @utility
+ * @return It, or NULL.
+ */
+static lv_obj_t *find_clickable(lv_obj_t *obj, const char *text)
+{
+    lv_obj_t *hit = NULL;
+    bool shown = !lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    if (shown && lv_obj_check_type(obj, &lv_label_class) && strstr(lv_label_get_text(obj), text)) {
+        hit = obj;
+        while (hit && !lv_obj_has_flag(hit, LV_OBJ_FLAG_CLICKABLE)) hit = lv_obj_get_parent(hit);
+    }
+    for (uint32_t i = 0; shown && !hit && i < lv_obj_get_child_count(obj); i++) {
+        hit = find_clickable(lv_obj_get_child(obj, (int32_t)i), text);
+    }
+    return hit;
+}
+
+/**
+ * @brief Click the control showing @p text (as a tap would), then let @p ms pass.
+ * @version 1
+ * @utility
+ */
+static void click(const char *text, uint32_t ms)
+{
+    lv_obj_t *b = find_clickable(lv_screen_active(), text);
+    if (b) lv_obj_send_event(b, LV_EVENT_CLICKED, NULL);
+    else fprintf(stderr, "preview: nothing shows '%s'\n", text);
+    settle(ms);
+}
+
+/**
+ * @brief The Library on the clock: the backgrounds' grid, then an item a profile uses.
+ * @version 1
+ * @utility
+ */
+static void scene_library(const char *out_dir, const char *stem)
+{
+    char file[512];
+    scene_settings();
+    settle(50);
+    click("Library", 50);
+    click("Backgrounds", 900);   // the list, then the thumbnails one by one
+    snprintf(file, sizeof(file), "%s/%s_library.ppm", out_dir, stem);
+    write_frame(file);
+    click("winter_morning", 200);
+    snprintf(file, sizeof(file), "%s/%s_library_item.ppm", out_dir, stem);
+    write_frame(file);
+    settings_app_close();
+}
+
+/**
  * @brief Fill s_alerts with three alerts of different severities and lengths.
  * v2: generic place names (no real region).
  * @version 2
@@ -769,7 +822,8 @@ static void render_edit_demo(const char *out_dir, const char *path)
  * v12: the editor's Alert tab.
  * v13: sky dial moments (the real moon, by day and night).
  * v14: no sky screen (it is gone: the forecast's dial shows the sky).
- * @version 14
+ * v15: the Library (its grid and an item).
+ * @version 15
  * @utility
  * @return Whether the theme parsed.
  */
@@ -807,6 +861,8 @@ static bool render_theme(const char *out_dir, const char *path)
     scene_settings();
     snprintf(file, sizeof(file), "%s/%s_settings.ppm", out_dir, stem);
     write_frame(file);
+    settings_app_close();
+    scene_library(out_dir, stem);
     scene_alert();
     snprintf(file, sizeof(file), "%s/%s_alert.ppm", out_dir, stem);
     write_frame(file);

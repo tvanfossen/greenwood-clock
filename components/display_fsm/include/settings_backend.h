@@ -7,7 +7,8 @@
  * v5: no animation preview entry.
  * v6: the clock's place and timezone (optional: Settings > Location).
  * v7: optional native text entry (the phone's own keyboard).
- * @version 7
+ * v8: optional Library: list, thumbnail, delete, rename; load a theme to edit or duplicate.
+ * @version 8
  * @brief What the settings screens (settings_app) need from the device they run for: read and
  *        change the settings, the lists to choose from, the schedule, the sun, and the few
  *        device-only screens. Two implementations: the clock's own (state_settings.cpp:
@@ -20,6 +21,7 @@
 #include "lvgl.h"
 #include "sched_engine.h"
 #include "ui_theme.h"
+#include "library.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -62,6 +64,16 @@ typedef struct {
 typedef void (*settings_lookup_cb_t)(bool ok, const char *why, const settings_location_t *found,
                                      void *ctx);
 
+/** What a Library kind holds (@p ok false: @p why), and the card's size and free space. */
+typedef void (*settings_library_cb_t)(bool ok, const char *why, const lib_item_t *items, int n,
+                                      uint32_t total_mb, uint32_t free_mb, void *ctx);
+
+/** A thumbnail (library_thumb_decode; the receiver frees it, library_thumb_free), or NULL. */
+typedef void (*settings_thumb_cb_t)(lv_image_dsc_t *thumb, void *ctx);
+
+/** A theme file read (@p t valid while the call lasts), or not. */
+typedef void (*settings_theme_cb_t)(bool ok, const ui_theme_t *t, void *ctx);
+
 /** A device's settings. Optional members may be NULL: their menu entry is left out. */
 typedef struct {
     int  (*list)(settings_list_t which, settings_choice_t *out, int max);
@@ -83,6 +95,17 @@ typedef struct {
     void (*location_lookup)(const char *address, settings_lookup_cb_t done, void *ctx);
     /** Keep @p loc (coordinates, label, zone) and apply it. */
     void (*location_set)(const settings_location_t *loc, settings_done_cb_t done, void *ctx);
+    /** Optional (with the four below): Settings > Library. What @p kind holds. */
+    void (*library_list)(lib_kind_t kind, settings_library_cb_t done, void *ctx);
+    /** A picture's thumbnail (backgrounds, the album). */
+    void (*library_thumb)(lib_kind_t kind, const char *name, settings_thumb_cb_t done, void *ctx);
+    /** Delete an item (refused while a profile uses it; @p done says who). */
+    void (*library_delete)(lib_kind_t kind, const char *name, settings_done_cb_t done, void *ctx);
+    /** Rename an item; the profiles that use it follow (the backend's schedule too). */
+    void (*library_rename)(lib_kind_t kind, const char *from, const char *to,
+                           settings_done_cb_t done, void *ctx);
+    /** Read the theme file @p stem (to edit or duplicate it). */
+    void (*theme_load)(const char *stem, settings_theme_cb_t done, void *ctx);
     void (*reboot)(void);                            /**< Optional. */
     void (*leave)(void);                             /**< Optional: Back from the menu (none: no Back). */
 } settings_backend_t;

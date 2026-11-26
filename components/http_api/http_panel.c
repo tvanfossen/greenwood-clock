@@ -5,6 +5,7 @@
  * @brief The phone panel's API (see http_panel.h).
  */
 #include "http_panel.h"
+#include "http_json.h"
 #include "http_auth.h"
 
 #include <stdio.h>
@@ -144,32 +145,10 @@ static esp_err_t panel_get_handler(httpd_req_t *req)
 }
 
 /**
- * @brief The request's whole body (NUL-terminated; free it), or NULL when larger than @p max
- *        or cut short.
- * @version 1
- * @utility
- * @return The body.
- */
-static char *read_body(httpd_req_t *req, size_t max)
-{
-    char *body = req->content_len < max ? calloc(1, req->content_len + 1) : NULL;
-    size_t got = 0;
-    while (body && got < req->content_len) {
-        int r = httpd_req_recv(req, body + got, req->content_len - got);
-        if (r <= 0) break;
-        got += (size_t)r;
-    }
-    if (body && got != req->content_len) {
-        free(body);
-        body = NULL;
-    }
-    return body;
-}
-
-/**
  * @brief POST /api/theme/save?stem=<stem>: keep the theme (the body, ui_theme JSON) as the
  *        theme file <stem>; a profile points at it through the schedule. Re-applies the theme.
- * @version 1
+ * v2: the shared JSON helpers (http_json).
+ * @version 2
  * @callback
  * @req REQ-UI-004
  * @return ESP_OK (the error, if any, is in the response).
@@ -179,7 +158,7 @@ static esp_err_t theme_save_post_handler(httpd_req_t *req)
     char query[64] = "", stem[BG_THEME_LEN] = "";
     httpd_req_get_url_query_str(req, query, sizeof(query));
     httpd_query_key_value(query, "stem", stem, sizeof(stem));
-    char *body = bg_theme_name_valid(stem) ? read_body(req, THEME_BODY_MAX) : NULL;
+    char *body = bg_theme_name_valid(stem) ? http_json_body(req, THEME_BODY_MAX) : NULL;
     ui_theme_t t;
     bool ok = body && ui_theme_parse(body, &t) && theme_store_save(stem, &t);
     free(body);
@@ -193,45 +172,18 @@ static esp_err_t theme_save_post_handler(httpd_req_t *req)
 }
 
 /**
- * @brief Send @p status with JSON @p body (a cJSON object; deleted).
- * @version 1
- * @utility
- */
-static void send_json(httpd_req_t *req, const char *status, cJSON *body)
-{
-    char *json = cJSON_PrintUnformatted(body);
-    cJSON_Delete(body);
-    httpd_resp_set_status(req, status);
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, json ? json : "{}", HTTPD_RESP_USE_STRLEN);
-    free(json);
-}
-
-/**
- * @brief {"error": @p why}.
- * @version 1
- * @utility
- * @return The object.
- */
-static cJSON *error_json(const char *why)
-{
-    cJSON *o = cJSON_CreateObject();
-    cJSON_AddStringToObject(o, "error", why);
-    return o;
-}
-
-/**
  * @brief POST /api/location/lookup {"address": "..."}: the place it matches ({label, lat,
  *        lon}; 404 none; 502 the geocoder did not answer; 503 during the launch window, when
  *        outside data must not be processed). The address is not kept or logged.
- * @version 1
+ * v2: the shared JSON helpers (http_json).
+ * @version 2
  * @callback
  * @req REQ-LOC-001
  * @return ESP_OK.
  */
 static esp_err_t location_lookup_handler(httpd_req_t *req)
 {
-    char *body = read_body(req, 512);
+    char *body = http_json_body(req, 512);
     cJSON *in = body ? cJSON_Parse(body) : NULL;
     free(body);
     const cJSON *addr = cJSON_GetObjectItemCaseSensitive(in, "address");
@@ -241,7 +193,7 @@ static esp_err_t location_lookup_handler(httpd_req_t *req)
     if (!http_api_launched()) snprintf(why, sizeof(why), "The clock is still starting");
     else if (cJSON_IsString(addr)) err = location_lookup(addr->valuestring, &p, why, sizeof(why));
     cJSON_Delete(in);
-    cJSON *out = err == ESP_OK ? cJSON_CreateObject() : error_json(why);
+    cJSON *out = err == ESP_OK ? cJSON_CreateObject() : http_json_error(why);
     if (err == ESP_OK) {
         cJSON_AddStringToObject(out, "label", p.label);
         cJSON_AddNumberToObject(out, "lat", p.lat);
@@ -250,7 +202,7 @@ static esp_err_t location_lookup_handler(httpd_req_t *req)
     const char *status = err == ESP_OK ? "200 OK" : err == ESP_ERR_NOT_FOUND ? "404 Not Found"
                          : !http_api_launched() ? "503 Service Unavailable"
                          : err == ESP_ERR_INVALID_ARG ? "400 Bad Request" : "502 Bad Gateway";
-    send_json(req, status, out);
+    http_json_send(req, status, out);
     return ESP_OK;
 }
 
@@ -279,14 +231,15 @@ static bool read_location(const cJSON *in, location_t *out)
 /**
  * @brief POST /api/location {label, lat, lon, tz}: keep the place and zone; the weather, the
  *        sky and the schedule follow.
- * @version 1
+ * v2: the shared JSON helpers (http_json).
+ * @version 2
  * @callback
  * @req REQ-LOC-001
  * @return ESP_OK.
  */
 static esp_err_t location_post_handler(httpd_req_t *req)
 {
-    char *body = read_body(req, 512);
+    char *body = http_json_body(req, 512);
     cJSON *in = body ? cJSON_Parse(body) : NULL;
     free(body);
     location_t loc;
@@ -294,9 +247,9 @@ static esp_err_t location_post_handler(httpd_req_t *req)
     bool ok = read_location(in, &loc) && location_save(&loc) == ESP_OK;
     cJSON_Delete(in);
     if (ok) display_fsm_location_changed();
-    cJSON *out = ok ? cJSON_CreateObject() : error_json("Not a place or zone the clock knows");
+    cJSON *out = ok ? cJSON_CreateObject() : http_json_error("Not a place or zone the clock knows");
     if (ok) cJSON_AddStringToObject(out, "status", "ok");
-    send_json(req, ok ? "200 OK" : "400 Bad Request", out);
+    http_json_send(req, ok ? "200 OK" : "400 Bad Request", out);
     return ESP_OK;
 }
 

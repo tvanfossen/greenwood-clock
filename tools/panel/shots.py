@@ -111,7 +111,8 @@ def load(page, url):
 ## v3: optional reload per step.
 ## v4: counts the taps whose control was not found.
 ## @utility
-## @version 4
+## v5: a step may wait (ms) before its shot.
+## @version 5
 ## @return How many taps missed.
 def run_view(browser, url, out, view, steps):
     w, h, scale = VIEWS[view]
@@ -133,6 +134,7 @@ def run_view(browser, url, out, view, steps):
             if not tap(page, item):
                 missed += 1
                 print(f"[{view}] {step['name']}: no control shows {item!r}")
+        page.wait_for_timeout(step.get("wait", 0))  # e.g. thumbnails arriving
         path = out / f"{view}_{step['name']}.png"
         page.screenshot(path=str(path))
         print(path)
