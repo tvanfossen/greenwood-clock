@@ -435,7 +435,8 @@ def set_location(page, clock):
 ## @utility
 ## v7: text through the native input; the upload through the crop.
 ## v8: the Library.
-## @version 8
+## v9: the upload from the Library's Add (no Upload menu).
+## @version 9
 ## @return The failed checks' descriptions.
 def run(base, out):
     clock, fails = serve.clock, []
@@ -464,10 +465,11 @@ def run(base, out):
         tap(page, 190, 106)  # Back to the menu
         fails += set_location(page, clock)
         tap(page, 190, 106)  # Back to the menu
-        tap_label(page, "Upload")
+        tap_label(page, "Library")
+        tap_label(page, "Backgrounds")
         page.screenshot(path=str(out / "e2e_upload.png"))
         with page.expect_file_chooser() as chooser:
-            tap(page, 450, 200)  # Background: choose a picture
+            tap_label(page, "Add")  # a background: choose a picture
         chooser.value.set_files(str(PICTURE))
         page.wait_for_selector(
             "#crop-send", timeout=5000
@@ -504,11 +506,12 @@ def tap_label(page, label):
 ## @brief The Library: thumbnails from the clock; a used background cannot be deleted; a rename
 ## and a delete reach the clock; a theme is duplicated under a new name.
 ## @utility
-## @version 1
+## v2: starts at the Backgrounds the upload left.
+## @version 2
 ## @return The failed checks' descriptions.
 def library_check(page, clock, out):
     fails = []
-    for label in ("\uf053", "Library", "Backgrounds"):
+    for label in ("\uf053", "Backgrounds"):  # from the upload: the list afresh
         tap_label(page, label)
     page.wait_for_timeout(1500)  # the thumbnails, one by one
     page.screenshot(path=str(out / "e2e_library.png"))

@@ -5,9 +5,10 @@
  *     background, theme and animation are a profile's (settings_sched.c); Customize is in
  *     the theme picker (settings_theme.c).
  * v4: the Library (settings_library.c).
- * @version 4
+ * v5: no Upload screen: pictures are added in the Library.
+ * @version 5
  * @brief The settings UI's screen stack, menu and generic screens (see settings_app.h): the
- *        choice list, text entry, toast, about and upload. The schedule and profile screens
+ *        choice list, text entry, toast and about. The schedule and profile screens
  *        are settings_sched.c; theme customizing is settings_theme.c.
  */
 #include "settings_app.h"
@@ -345,7 +346,7 @@ void settings_app_enter_text_max(const char *title, const char *initial, int max
 }
 
 // ---------------------------------------------------------------------------
-// Menu entries, about, upload
+// Menu entries and about
 // ---------------------------------------------------------------------------
 
 /**
@@ -389,65 +390,6 @@ static lv_obj_t *about_screen(lv_obj_t *parent, void *ctx)
 }
 
 /**
- * @brief An upload finished.
- * @version 1
- * @callback
- */
-static void uploaded_cb(bool ok, const char *why, void *ctx)
-{
-    LV_UNUSED(ctx);
-    settings_app_toast(ok ? why : (why && why[0] ? why : "Upload failed"), false);
-}
-
-/**
- * @brief Upload button: pick a picture on the phone and send it (the user data: the kind).
- * @version 1
- * @callback
- */
-static void upload_cb(lv_event_t *e)
-{
-    settings_upload_t kind = (settings_upload_t)(uintptr_t)lv_event_get_user_data(e);
-    s_be->upload(kind, uploaded_cb, NULL);
-}
-
-/**
- * @brief A paragraph in a column: wraps to its width.
- * @version 1
- * @utility
- */
-static void wrapped(lv_obj_t *col, const char *s, const lv_font_t *font, ui_role_t role)
-{
-    lv_obj_t *l = settings_text(col, s, font, role);
-    lv_obj_set_width(l, settings_content_w() - 12);
-    lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_WRAP);
-}
-
-/**
- * @brief The Upload screen: send a background picture or an album photo from the phone.
- * v2: its text wraps (narrow screens).
- * @version 2
- * @utility
- * @return The frame.
- */
-static lv_obj_t *upload_screen(lv_obj_t *parent, void *ctx)
-{
-    LV_UNUSED(ctx);
-    lv_obj_t *frame = settings_frame_create(parent, "Upload", settings_app_back_cb);
-    lv_obj_t *col = settings_column(frame);
-    wrapped(col, "Send a picture from this phone to the clock.", &lv_font_montserrat_20,
-            UI_ROLE_TEXT);
-    settings_button(settings_field(col, "Background"), LV_SYMBOL_IMAGE "  Choose a picture",
-                    upload_cb, (void *)(uintptr_t)SETTINGS_UPLOAD_BACKGROUND);
-    wrapped(col, "Cropped to fill the screen; it joins the backgrounds.", &lv_font_montserrat_16,
-            UI_ROLE_TEXT_FAINT);
-    settings_button(settings_field(col, "Album photo"), LV_SYMBOL_IMAGE "  Choose a photo",
-                    upload_cb, (void *)(uintptr_t)SETTINGS_UPLOAD_PHOTO);
-    wrapped(col, "Fitted whole; it joins the photo slideshow.", &lv_font_montserrat_16,
-            UI_ROLE_TEXT_FAINT);
-    return frame;
-}
-
-/**
  * @brief A device-only screen the backend builds (its creator is the user data).
  * @version 1
  * @utility
@@ -486,7 +428,8 @@ static void reboot_cb(lv_event_t *e)
  * v3: no Animation (preview) entry.
  * v4: Location.
  * v5: the Library.
- * @version 5
+ * v6: no Upload (the Library's Add).
+ * @version 6
  * @utility
  * @return The new count.
  */
@@ -496,7 +439,6 @@ static int optional_items(settings_menu_item_t *items, int n)
     if (s_be->location_get) items[n++] = (settings_menu_item_t){ LV_SYMBOL_GPS, "Location", menu_cb, (void *)settings_location_screen };
     if (s_be->wifi_create) items[n++] = (settings_menu_item_t){ LV_SYMBOL_WIFI, "WiFi", device_cb, (void *)s_be->wifi_create };
     if (s_be->phone_create) items[n++] = (settings_menu_item_t){ LV_SYMBOL_CALL, "Phone", device_cb, (void *)s_be->phone_create };
-    if (s_be->upload) items[n++] = (settings_menu_item_t){ LV_SYMBOL_UPLOAD, "Upload", menu_cb, (void *)upload_screen };
     if (s_be->reboot) items[n++] = (settings_menu_item_t){ LV_SYMBOL_POWER, "Reboot", reboot_cb, NULL };
     return n;
 }

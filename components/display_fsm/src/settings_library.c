@@ -395,13 +395,15 @@ static void summary(lv_obj_t *col)
 
 /**
  * @brief An upload finished: show the kind again (its thumbnail comes as the clock makes it).
- * @version 1
+ * v2: says how it went ("Sent: x.png"), now that the Library is the only way to add.
+ * @version 2
  * @callback
  */
 static void uploaded_cb(bool ok, const char *why, void *ctx)
 {
     LV_UNUSED(ctx);
-    if (!ok && why && why[0] && strcmp(why, "Cancelled") != 0) settings_app_toast(why, false);
+    bool say = why && why[0] && strcmp(why, "Cancelled") != 0;
+    if (say) settings_app_toast(why, false);   // "Sent: x.png", or why not
     if (ok) reload(0);
 }
 

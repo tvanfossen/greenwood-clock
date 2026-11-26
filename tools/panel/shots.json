@@ -18,7 +18,6 @@
   {"name": "17_dates", "taps": ["Dec 24"]},
   {"name": "18_new_daily_conflict", "reload": true, "taps": ["Schedule", {"find": "", "nth": 0}]},
   {"name": "19_about", "reload": true, "taps": ["About"]},
-  {"name": "20_upload", "reload": true, "taps": ["Upload"]},
   {"name": "21_location", "reload": true, "taps": ["Location"]},
   {"name": "22_address", "taps": ["Chicago, IL"]},
   {"name": "23_timezone", "reload": true, "taps": ["Location", "America/Chicago"]},
