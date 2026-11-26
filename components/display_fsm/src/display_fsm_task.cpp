@@ -567,6 +567,7 @@ static void apply_clock_user_color(void)
  * MUST run in fsm_task — load_background() decodes with a deep stack outside the LVGL lock.
  *
  * @utility
+ * @return Whether the picture wanted is showing (or none was wanted).
  * v2: clock text uses the user's exact colour (legibility via label shadows), no bg sampling.
  * v3: takes the (effective) settings to apply instead of loading them.
  * v4: swaps after decoding the new image (it deleted the old one first: ~1.3 s of black
@@ -574,14 +575,15 @@ static void apply_clock_user_color(void)
  * v5: themes replace the text colour (theme names, theme roles, theme events).
  * v6: bound text is re-judged against the new picture.
  * v7: no picture configured (a gap) removes the one showing; only a failed load keeps it.
- * @version 7
+ * v8: says whether the new picture is showing (the caller retries when not).
+ * @version 8
  */
-static void reload_background(const clock_settings_t *cfg)
+static bool reload_background(const clock_settings_t *cfg)
 {
     lv_obj_t *scr = DisplayFsm::get_screen();
     if (!scr) {
         ESP_LOGW(TAG, "reload_bg: screen not initialized");
-        return;
+        return false;
     }
     // Take ownership of the current background so load_background() neither frees its
     // descriptor nor reports it as the result.
@@ -593,7 +595,8 @@ static void reload_background(const clock_settings_t *cfg)
     load_background(scr, cfg);   // new image behind the old one (move_background)
 
     bool none = !cfg->background_image[0];   // no picture wanted: the screen colour shows
-    if (!s_bg_img && !none) {   // failed: keep what was showing
+    bool loaded = s_bg_img || none;
+    if (!loaded) {   // failed: keep what was showing
         s_bg_img = old_img;
         s_bg_dsc = old_dsc;
         ESP_LOGW(TAG, "reload_bg: new background not loaded, keeping the current one");
@@ -608,9 +611,11 @@ static void reload_background(const clock_settings_t *cfg)
         if (old_dsc) image_decode_free(old_dsc);   // its object is gone
     }
     apply_clock_user_color();
+    return loaded;
 }
 
 static int          s_bg_profile = -2;   // schedule profile last applied (-1: none, -2: not yet)
+static bool         s_bg_pending;        // its picture did not load: retried at each minute tick
 static clock_anim_t s_bg_anim = CLOCK_ANIM_COUNT;   // animation last applied by a profile
 
 /**
@@ -689,7 +694,8 @@ static void apply_theme(const sched_rule_t *p, bool force)
  *        theme, background, brightness and clock animation. fsm_task only (decodes).
  * v2: the profile's theme (was its text colour).
  * v3: profiles from the daily/events schedule.
- * @version 3
+ * v4: a picture that failed to load is retried at each minute tick (it stayed on the old one until the next profile).
+ * @version 4
  * @req REQ-BG-004
  */
 static void apply_bg_profile(bool force)
@@ -697,13 +703,19 @@ static void apply_bg_profile(bool force)
     clock_settings_t cfg;
     sched_rule_t p;
     int idx = effective_settings(&cfg, &p);
-    if (!force && idx == s_bg_profile) return;
+    if (!force && idx == s_bg_profile) {
+        if (s_bg_pending) {   // the picture failed to load (out of memory): try again
+            ESP_LOGW(TAG, "bg: retrying '%s' for profile '%s'", cfg.background_image, p.name);
+            s_bg_pending = !reload_background(&cfg);
+        }
+        return;
+    }
     ESP_LOGI(TAG, "bg profile %d -> %d '%s' (image '%s', brightness %u%%, theme '%s')",
              s_bg_profile, idx, idx >= 0 ? p.name : "(global)", cfg.background_image, cfg.brightness,
              p.theme[0] ? p.theme : "global");
     s_bg_profile = idx;
     apply_theme(&p, force);
-    reload_background(&cfg);
+    s_bg_pending = !reload_background(&cfg);
     display_fsm_refresh_brightness(cfg.brightness);
     apply_profile_anim(&p);
 }

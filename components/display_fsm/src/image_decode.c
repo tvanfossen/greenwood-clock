@@ -12,6 +12,8 @@
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_cache.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,6 +25,8 @@
 #define STBI_NO_LINEAR
 #include "stb_image.h"
 
+static SemaphoreHandle_t s_decode_mutex;   // decode_lock
+
 static const char *TAG = "image_decode";
 
 // Reject absurd dimensions — also bounds the w*h*4 size math well under UINT32.
@@ -32,9 +36,37 @@ static const char *TAG = "image_decode";
 // Decode a PNG buffer to RGBA via stb_image (lodepng produces corrupt output on
 // RISC-V/ESP32-P4). Validates dimensions. Returns raw pixels or NULL.
 /**
+ * @brief Take the decode lock: one full-picture decode at a time across tasks (a background,
+ *        the album, a thumbnail each need several MB of contiguous PSRAM at the peak).
+ *        Recursive: the file decoders call the buffer one.
+ * @version 1
+ * @utility
+ */
+static void decode_lock(void)
+{
+    static StaticSemaphore_t s_buf;
+    static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
+    portENTER_CRITICAL(&s_mux);
+    if (!s_decode_mutex) s_decode_mutex = xSemaphoreCreateRecursiveMutexStatic(&s_buf);
+    portEXIT_CRITICAL(&s_mux);
+    xSemaphoreTakeRecursive(s_decode_mutex, portMAX_DELAY);
+}
+
+/**
+ * @brief Give the decode lock back.
+ * @version 1
+ * @utility
+ */
+static void decode_unlock(void)
+{
+    xSemaphoreGiveRecursive(s_decode_mutex);
+}
+
+/**
  * @brief Decode a PNG buffer to top-down RGBA with stb_image and reject dimensions outside 1..2048 x 1..1200.
  * v2: pin stb's thread-local flip-on-load flag to 0 before decoding (top-down rows always).
- * @version 2
+ * v3: a failure logs PSRAM's free size and largest block (fragmentation or not).
+ * @version 3
  * @req REQ-BG-001
  * @return stb-allocated RGBA pixels (free with stbi_image_free), or NULL on decode failure or bad size.
  */
@@ -48,7 +80,10 @@ static unsigned char *decode_rgba(const uint8_t *png, size_t len, int *w, int *h
     stbi_set_flip_vertically_on_load_thread(0);
     unsigned char *raw = stbi_load_from_memory(png, (int)len, w, h, &channels, 4);
     if (!raw) {
-        ESP_LOGE(TAG, "stb decode failed: %s (len=%zu)", stbi_failure_reason(), len);
+        ESP_LOGE(TAG, "stb decode failed: %s (len=%zu; SPIRAM free=%u largest block=%u)",
+                 stbi_failure_reason(), len,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
         return NULL;
     }
     if (*w <= 0 || *h <= 0 || *w > IMG_MAX_W || *h > IMG_MAX_H) {
@@ -186,13 +221,12 @@ static lv_image_dsc_t *build_dsc_rgb565(const unsigned char *raw, int w, int h)
 }
 
 /**
- * @brief Decode an in-memory PNG into a persistent SPIRAM ARGB8888 descriptor.
+ * @brief image_decode_png_buf without the decode lock.
  * @version 1
- * @req REQ-RADAR-001
- * @req REQ-BG-001
- * @return New descriptor (free with image_decode_free), or NULL on bad input or failure.
+ * @utility
+ * @return The descriptor, or NULL.
  */
-lv_image_dsc_t *image_decode_png_buf(const uint8_t *png, size_t len)
+static lv_image_dsc_t *image_decode_png_buf_unlocked(const uint8_t *png, size_t len)
 {
     if (!png || len == 0) return NULL;
 
@@ -206,6 +240,22 @@ lv_image_dsc_t *image_decode_png_buf(const uint8_t *png, size_t len)
         ESP_LOGI(TAG, "Decoded %dx%d (%lu B) from %zu-byte PNG", w, h,
                  (unsigned long)dsc->data_size, len);
     }
+    return dsc;
+}
+
+/**
+ * @brief Decode an in-memory PNG into a persistent SPIRAM ARGB8888 descriptor.
+ * v2: one full decode at a time (decode_lock): two at once doubled the multi-MB peak.
+ * @version 2
+ * @req REQ-RADAR-001
+ * @req REQ-BG-001
+ * @return New descriptor (free with image_decode_free), or NULL on bad input or failure.
+ */
+lv_image_dsc_t *image_decode_png_buf(const uint8_t *png, size_t len)
+{
+    decode_lock();
+    lv_image_dsc_t *dsc = image_decode_png_buf_unlocked(png, len);
+    decode_unlock();
     return dsc;
 }
 
@@ -253,7 +303,8 @@ static uint8_t *read_file_spiram(const char *path, size_t *len_out)
 
 /**
  * @brief Read a PNG file and decode it into a persistent SPIRAM ARGB8888 descriptor.
- * @version 1
+ * v2: under the decode lock, the file read included.
+ * @version 2
  * @req REQ-BG-001
  * @return New descriptor, or NULL on failure.
  */
@@ -261,23 +312,22 @@ lv_image_dsc_t *image_decode_png_file(const char *path)
 {
     if (!path) return NULL;
 
+    decode_lock();   // the file buffer is part of the peak too
     size_t len = 0;
     uint8_t *png = read_file_spiram(path, &len);
-    if (!png) return NULL;
-
-    lv_image_dsc_t *dsc = image_decode_png_buf(png, len);
+    lv_image_dsc_t *dsc = png ? image_decode_png_buf_unlocked(png, len) : NULL;
     heap_caps_free(png);
+    decode_unlock();
     return dsc;
 }
 
 /**
- * @brief Read a PNG file and decode it into a persistent SPIRAM RGB565 descriptor (opaque, framebuffer format).
+ * @brief image_decode_png_file_rgb565 without the decode lock.
  * @version 1
- * @req REQ-BG-001
- * @req REQ-PHOTO-001
- * @return New descriptor, or NULL on failure.
+ * @utility
+ * @return The descriptor, or NULL.
  */
-lv_image_dsc_t *image_decode_png_file_rgb565(const char *path)
+static lv_image_dsc_t *image_decode_png_file_rgb565_unlocked(const char *path)
 {
     if (!path) return NULL;
 
@@ -296,6 +346,22 @@ lv_image_dsc_t *image_decode_png_file_rgb565(const char *path)
         ESP_LOGI(TAG, "Decoded %dx%d RGB565 (%lu B) from %s", w, h,
                  (unsigned long)dsc->data_size, path);
     }
+    return dsc;
+}
+
+/**
+ * @brief Read a PNG file and decode it into a persistent SPIRAM RGB565 descriptor (opaque, framebuffer format).
+ * v2: one full decode at a time (decode_lock): two at once doubled the multi-MB peak.
+ * @version 2
+ * @req REQ-BG-001
+ * @req REQ-PHOTO-001
+ * @return New descriptor, or NULL on failure.
+ */
+lv_image_dsc_t *image_decode_png_file_rgb565(const char *path)
+{
+    decode_lock();
+    lv_image_dsc_t *dsc = image_decode_png_file_rgb565_unlocked(path);
+    decode_unlock();
     return dsc;
 }
 
