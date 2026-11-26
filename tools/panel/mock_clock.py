@@ -8,7 +8,8 @@
 ## v3: serves the gzipped twins (*.gz) like the clock, and checks the panel loaded through them.
 ## v4: no global settings: the showing profile is edited from the menu (a customized theme
 ## kept by name, a brightness), and the clock gets both.
-## @version 4
+## v5: Settings > Location: an address looked up by the clock and the place it matched kept.
+## @version 5
 """Usage: mock_clock.py <sdcard/www dir> <out dir for screenshots>"""
 
 import functools
@@ -24,6 +25,11 @@ from playwright.sync_api import sync_playwright
 CODE = "0f3a9c1d2e4b5a6978c0d1e2f3a4b5c6"
 TOKEN = "5e55105e55105e55105e55105e55105e"
 CLOCK_W, CLOCK_H = 1024, 600
+LOOKUP_MATCH = {
+    "label": "Chicago, IL",
+    "lat": 41.883,
+    "lon": -87.632,
+}  # Chicago City Hall
 PICTURE = (
     Path(__file__).resolve().parents[2] / "sdcard" / "backgrounds" / "spring-flower.png"
 )
@@ -84,7 +90,8 @@ class Clock:
     ## @brief GET /api/panel's body.
     ## @utility
     ## v2: no global "values".
-    ## @version 2
+    ## v3: the location.
+    ## @version 3
     ## @return The state JSON text.
     def state(self):
         return json.dumps(
@@ -97,6 +104,12 @@ class Clock:
                 },
                 "schedule": self.schedule,
                 "now": {"date": "2026-11-24", "min": 13 * 60},
+                "location": {
+                    "label": "Chicago, IL",
+                    "lat": 41.88,
+                    "lon": -87.63,
+                    "tz": "America/Chicago",
+                },
                 "sun": [[7 * 60, 17 * 60]] * 366,
             }
         )
@@ -166,7 +179,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     ## @brief POST: pairing, or a change (token needed) that the clock records.
     ## @utility
     ## v2: uploads go to _upload.
-    ## @version 2
+    ## v3: an address lookup answers the sample match (a public building).
+    ## @version 3
     def do_POST(self):
         raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         if self.path.startswith("/api/upload"):
@@ -181,6 +195,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not self._authed():
             return self._send(401, '{"error":"scan"}')
         self.clock.posts.append((self.path, body))
+        if self.path == "/api/location/lookup":
+            return self._send(200, json.dumps(LOOKUP_MATCH))
         if self.path == "/api/schedule":
             self.clock.schedule = json.loads(body)
         return self._send(200, '{"status":"ok"}')
@@ -268,14 +284,41 @@ def edit_now(page):
     page.wait_for_timeout(800)
 
 
+## @brief Settings > Location: type an address, the clock looks it up, the place is kept.
+## @utility
+## @version 1
+## @return The failures.
+def set_location(page, clock):
+    tap(page, 704, 248)  # Location
+    tap(page, 450, 168)  # Place: Chicago, IL
+    tap(page, 417, 418)  # c
+    tap(page, 832, 106)  # Done: looked up
+    page.wait_for_timeout(800)
+    page.screenshot(path=str(Path(serve.out) / "e2e_location_found.png"))
+    tap(page, 832, 106)  # Use
+    page.wait_for_timeout(800)
+    kept = [json.loads(b) for p, b in clock.posts if p == "/api/location"]
+    looked = [json.loads(b) for p, b in clock.posts if p == "/api/location/lookup"]
+    fails = (
+        [] if looked and looked[0].get("address") == "c" else [f"no lookup: {looked}"]
+    )
+    ok = (
+        kept
+        and abs(kept[0]["lat"] - 41.883) < 0.001
+        and kept[0]["tz"] == "America/Chicago"
+    )
+    return fails + ([] if ok else [f"the place was not kept: {kept}"])
+
+
 ## @brief Pair, load, save a schedule profile, upload a background picture; then a second
 ## phone with the used code is refused.
 ## v2: the upload.
 ## v3: the panel loads through its gzipped twins.
 ## v4: a brightness change posts a valid body.
 ## v5: the showing profile edited from the menu (theme kept by name, brightness); the new menu.
+## v6: the location.
 ## @utility
-## @version 5
+## @version 6
 ## @return The failed checks' descriptions.
 def run(base, out):
     clock, fails = serve.clock, []
@@ -302,7 +345,9 @@ def run(base, out):
         if not any(path == "/api/schedule" for path, _ in clock.posts):
             fails.append("the schedule save did not reach the clock")
         tap(page, 190, 106)  # Back to the menu
-        tap(page, 704, 248)  # Upload
+        fails += set_location(page, clock)
+        tap(page, 190, 106)  # Back to the menu
+        tap(page, 320, 320)  # Upload
         page.screenshot(path=str(out / "e2e_upload.png"))
         with page.expect_file_chooser() as chooser:
             tap(page, 450, 200)  # Background: choose a picture

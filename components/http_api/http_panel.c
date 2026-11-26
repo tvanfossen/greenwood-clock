@@ -18,6 +18,8 @@
 #include "settings_lists.h"
 #include "sched_store.h"
 #include "display_fsm.h"
+#include "http_api.h"
+#include "location.h"
 
 static const char *TAG = "http_panel";
 
@@ -102,9 +104,26 @@ static void add_now_and_sun(cJSON *root)
 }
 
 /**
+ * @brief "location": where the clock is (its label, coordinates and zone).
+ * @version 1
+ * @utility
+ */
+static void add_location(cJSON *root)
+{
+    location_t loc;
+    location_get(&loc);
+    cJSON *o = cJSON_AddObjectToObject(root, "location");
+    cJSON_AddStringToObject(o, "label", loc.place.label);
+    cJSON_AddNumberToObject(o, "lat", loc.place.lat);
+    cJSON_AddNumberToObject(o, "lon", loc.place.lon);
+    cJSON_AddStringToObject(o, "tz", loc.tz);
+}
+
+/**
  * @brief GET /api/panel.
  * v2: no "values" (the global settings are gone from the panel).
- * @version 2
+ * v3: "location".
+ * @version 3
  * @callback
  * @return ESP_OK.
  */
@@ -115,6 +134,7 @@ static esp_err_t panel_get_handler(httpd_req_t *req)
     add_lists(root);
     add_schedule(root);
     add_now_and_sun(root);
+    add_location(root);
     char *json = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     httpd_resp_set_type(req, "application/json");
@@ -173,13 +193,128 @@ static esp_err_t theme_save_post_handler(httpd_req_t *req)
 }
 
 /**
+ * @brief Send @p status with JSON @p body (a cJSON object; deleted).
+ * @version 1
+ * @utility
+ */
+static void send_json(httpd_req_t *req, const char *status, cJSON *body)
+{
+    char *json = cJSON_PrintUnformatted(body);
+    cJSON_Delete(body);
+    httpd_resp_set_status(req, status);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, json ? json : "{}", HTTPD_RESP_USE_STRLEN);
+    free(json);
+}
+
+/**
+ * @brief {"error": @p why}.
+ * @version 1
+ * @utility
+ * @return The object.
+ */
+static cJSON *error_json(const char *why)
+{
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "error", why);
+    return o;
+}
+
+/**
+ * @brief POST /api/location/lookup {"address": "..."}: the place it matches ({label, lat,
+ *        lon}; 404 none; 502 the geocoder did not answer; 503 during the launch window, when
+ *        outside data must not be processed). The address is not kept or logged.
+ * @version 1
+ * @callback
+ * @req REQ-LOC-001
+ * @return ESP_OK.
+ */
+static esp_err_t location_lookup_handler(httpd_req_t *req)
+{
+    char *body = read_body(req, 512);
+    cJSON *in = body ? cJSON_Parse(body) : NULL;
+    free(body);
+    const cJSON *addr = cJSON_GetObjectItemCaseSensitive(in, "address");
+    location_place_t p;
+    char why[64] = "Send an address";
+    esp_err_t err = ESP_ERR_INVALID_ARG;
+    if (!http_api_launched()) snprintf(why, sizeof(why), "The clock is still starting");
+    else if (cJSON_IsString(addr)) err = location_lookup(addr->valuestring, &p, why, sizeof(why));
+    cJSON_Delete(in);
+    cJSON *out = err == ESP_OK ? cJSON_CreateObject() : error_json(why);
+    if (err == ESP_OK) {
+        cJSON_AddStringToObject(out, "label", p.label);
+        cJSON_AddNumberToObject(out, "lat", p.lat);
+        cJSON_AddNumberToObject(out, "lon", p.lon);
+    }
+    const char *status = err == ESP_OK ? "200 OK" : err == ESP_ERR_NOT_FOUND ? "404 Not Found"
+                         : !http_api_launched() ? "503 Service Unavailable"
+                         : err == ESP_ERR_INVALID_ARG ? "400 Bad Request" : "502 Bad Gateway";
+    send_json(req, status, out);
+    return ESP_OK;
+}
+
+/**
+ * @brief Read {label, lat, lon, tz} into @p out.
+ * @version 1
+ * @utility
+ * @return Whether every field is there.
+ */
+static bool read_location(const cJSON *in, location_t *out)
+{
+    const cJSON *label = cJSON_GetObjectItemCaseSensitive(in, "label");
+    const cJSON *lat = cJSON_GetObjectItemCaseSensitive(in, "lat");
+    const cJSON *lon = cJSON_GetObjectItemCaseSensitive(in, "lon");
+    const cJSON *tz = cJSON_GetObjectItemCaseSensitive(in, "tz");
+    bool ok = cJSON_IsString(label) && cJSON_IsNumber(lat) && cJSON_IsNumber(lon) && cJSON_IsString(tz);
+    if (ok) {
+        snprintf(out->place.label, sizeof(out->place.label), "%s", label->valuestring);
+        out->place.lat = (float)lat->valuedouble;
+        out->place.lon = (float)lon->valuedouble;
+        snprintf(out->tz, sizeof(out->tz), "%s", tz->valuestring);
+    }
+    return ok;
+}
+
+/**
+ * @brief POST /api/location {label, lat, lon, tz}: keep the place and zone; the weather, the
+ *        sky and the schedule follow.
+ * @version 1
+ * @callback
+ * @req REQ-LOC-001
+ * @return ESP_OK.
+ */
+static esp_err_t location_post_handler(httpd_req_t *req)
+{
+    char *body = read_body(req, 512);
+    cJSON *in = body ? cJSON_Parse(body) : NULL;
+    free(body);
+    location_t loc;
+    memset(&loc, 0, sizeof(loc));
+    bool ok = read_location(in, &loc) && location_save(&loc) == ESP_OK;
+    cJSON_Delete(in);
+    if (ok) display_fsm_location_changed();
+    cJSON *out = ok ? cJSON_CreateObject() : error_json("Not a place or zone the clock knows");
+    if (ok) cJSON_AddStringToObject(out, "status", "ok");
+    send_json(req, ok ? "200 OK" : "400 Bad Request", out);
+    return ESP_OK;
+}
+
+/**
  * @brief Register the panel endpoints.
  * v2: POST /api/theme/save (was /api/theme/custom).
- * @version 2
+ * v3: POST /api/location/lookup and /api/location.
+ * @version 3
  * @req REQ-UI-005
  */
 void http_panel_register(httpd_handle_t srv)
 {
+    static const httpd_uri_t lookup = {
+        .uri = "/api/location/lookup", .method = HTTP_POST, .handler = location_lookup_handler};
+    static const httpd_uri_t place = {
+        .uri = "/api/location", .method = HTTP_POST, .handler = location_post_handler};
+    http_auth_register(srv, &lookup);
+    http_auth_register(srv, &place);
     static const httpd_uri_t get = {
         .uri = "/api/panel", .method = HTTP_GET, .handler = panel_get_handler};
     static const httpd_uri_t theme = {

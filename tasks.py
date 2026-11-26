@@ -77,6 +77,12 @@ HOST_TESTS = {
     "auth_core": ("auth/auth_core",),
     "astro_moon": ("astro_moon",),
     "sky_paint": ("sky_paint", "sky_moon_albedo"),
+    "location": (
+        "location/src/location_census",
+        "location/src/tz",
+        "location/src/tz_table",
+        "cjson/cjson/cJSON",
+    ),
 }
 
 #: Include directories for the host tests.
@@ -88,6 +94,7 @@ HOST_TEST_INCLUDES = (
     REPO / "components" / "display_events" / "include",
     REPO / "components" / "cjson" / "cjson",
     REPO / "components" / "auth" / "include",
+    REPO / "components" / "location" / "include",
     REPO / "tests" / "host" / "stubs",  # minimal lvgl.h for the pure display helpers
 )
 
@@ -768,6 +775,9 @@ THEME_PREVIEW_SRCS = (
     "components/display_fsm/src/settings_app.c",
     "components/display_fsm/src/settings_sched.c",
     "components/display_fsm/src/settings_theme.c",
+    "components/display_fsm/src/settings_location.c",
+    "components/location/src/tz.c",
+    "components/location/src/tz_table.c",
     "components/display_fsm/src/settings_pickers.c",
     "components/display_fsm/src/sched_engine.c",
     "components/display_fsm/src/sched_json.c",
@@ -791,6 +801,7 @@ THEME_PREVIEW_SRCS = (
 #: Include path for host builds against the real LVGL (stubs last, so real headers win).
 LVGL_HOST_INCLUDES = (
     LVGL_HOST_DIR,
+    REPO / "components" / "location" / "include",
     REPO / "components" / "lvgl",
     REPO / "components",  # "lvgl/lvgl.h", as the firmware build resolves it (fonts)
     REPO / "components" / "display_fsm" / "include",
@@ -865,6 +876,9 @@ PANEL_SRCS = (
     "components/display_fsm/src/settings_app.c",
     "components/display_fsm/src/settings_sched.c",
     "components/display_fsm/src/settings_theme.c",
+    "components/display_fsm/src/settings_location.c",
+    "components/location/src/tz.c",
+    "components/location/src/tz_table.c",
     "components/display_fsm/src/settings_pickers.c",
     "components/display_fsm/src/theme_editor.c",
     "components/display_fsm/src/theme_editor_tracks.c",
@@ -902,6 +916,18 @@ def moon_texture(c):
         f"{REPO / 'tools/sky_texture/gen_moon_albedo.c'} -lm -o {exe}"
     )
     c.run(f"{exe} {REPO / 'components/display_fsm/src/sky_moon_albedo.c'}")
+
+
+## @brief Generate the IANA timezone table (components/location/src/tz_table.c) from the
+## host's tzdata (/usr/share/zoneinfo): every canonical zone with its POSIX rule.
+## @req REQ-LOC-001
+## @version 1
+@task
+def tz_table(c):
+    c.run(
+        f"{sys.executable} {REPO / 'tools/tz/gen_tz_table.py'} /usr/share/zoneinfo "
+        f"{REPO / 'components/location/src/tz_table.c'}"
+    )
 
 
 ## @brief Build the phone panel: the clock's LVGL settings screens compiled to WebAssembly

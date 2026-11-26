@@ -5,7 +5,8 @@
  * v4: no global settings (profiles set everything): get / set_* are gone; save_theme keeps
  *     a named theme.
  * v5: no animation preview entry.
- * @version 5
+ * v6: the clock's place and timezone (optional: Settings > Location).
+ * @version 6
  * @brief What the settings screens (settings_app) need from the device they run for: read and
  *        change the settings, the lists to choose from, the schedule, the sun, and the few
  *        device-only screens. Two implementations: the clock's own (state_settings.cpp:
@@ -47,6 +48,19 @@ typedef enum {
 /** The answer to a change that takes a while: whether it worked, and why not. */
 typedef void (*settings_done_cb_t)(bool ok, const char *why, void *ctx);
 
+#define SETTINGS_PLACE_LEN 48
+
+/** Where the clock is: a short label, its coordinates, its IANA zone. */
+typedef struct {
+    char  label[SETTINGS_PLACE_LEN];   /**< "Chicago, IL"; "" when never set by address. */
+    float lat, lon;
+    char  tz[SETTINGS_PLACE_LEN];      /**< "America/Chicago"; "" when never chosen. */
+} settings_location_t;
+
+/** An address looked up: whether it matched (and why not), and the place found. */
+typedef void (*settings_lookup_cb_t)(bool ok, const char *why, const settings_location_t *found,
+                                     void *ctx);
+
 /** A device's settings. Optional members may be NULL: their menu entry is left out. */
 typedef struct {
     int  (*list)(settings_list_t which, settings_choice_t *out, int max);
@@ -60,6 +74,11 @@ typedef struct {
     lv_obj_t *(*wifi_create)(lv_obj_t *parent);      /**< Optional: the Wi-Fi screen. */
     lv_obj_t *(*phone_create)(lv_obj_t *parent);     /**< Optional: pair a phone (QR). */
     void (*upload)(settings_upload_t kind, settings_done_cb_t done, void *ctx);   /**< Optional: pick and send a picture. */
+    void (*location_get)(settings_location_t *out);   /**< Optional: Settings > Location. */
+    /** Look @p address up (once; the address is not kept); @p done hears the place found. */
+    void (*location_lookup)(const char *address, settings_lookup_cb_t done, void *ctx);
+    /** Keep @p loc (coordinates, label, zone) and apply it. */
+    void (*location_set)(const settings_location_t *loc, settings_done_cb_t done, void *ctx);
     void (*reboot)(void);                            /**< Optional. */
     void (*leave)(void);                             /**< Optional: Back from the menu (none: no Back). */
 } settings_backend_t;

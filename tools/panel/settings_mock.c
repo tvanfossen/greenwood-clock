@@ -3,7 +3,8 @@
  * v2: a pretend upload (it says what would happen).
  * v3: the sun alone.
  * v4: no global settings; every sample field set.
- * @version 4
+ * v5: a sample location (Chicago).
+ * @version 5
  * @brief An in-memory settings backend with sample data, for rendering and clicking through
  *        the settings screens off the device (host preview, the panel before it talks to a
  *        clock). The sun is the real calculation for a public sample place (Chicago); "now" is
@@ -168,6 +169,41 @@ static void mock_upload(settings_upload_t kind, settings_done_cb_t done, void *c
                                                   : "Sample: a photo would be sent", ctx);
 }
 
+static settings_location_t s_place = { "Chicago, IL", 41.880f, -87.630f, "America/Chicago" };
+
+/**
+ * @brief The sample place.
+ * @version 1
+ * @callback
+ */
+static void mock_location_get(settings_location_t *out)
+{
+    *out = s_place;
+}
+
+/**
+ * @brief Any address "matches" a public sample building (Chicago City Hall).
+ * @version 1
+ * @callback
+ */
+static void mock_location_lookup(const char *address, settings_lookup_cb_t done, void *ctx)
+{
+    settings_location_t found = { "Chicago, IL", 41.883f, -87.632f, "" };
+    if (address && address[0]) done(true, "", &found, ctx);
+    else done(false, "Enter a street address", NULL, ctx);
+}
+
+/**
+ * @brief Keep the sample place.
+ * @version 1
+ * @callback
+ */
+static void mock_location_set(const settings_location_t *loc, settings_done_cb_t done, void *ctx)
+{
+    s_place = *loc;
+    done(true, "", ctx);
+}
+
 /**
  * @brief Leaving: nothing to go back to.
  * @version 1
@@ -231,7 +267,8 @@ static void sample_schedule(void)
  * @brief The sample backend.
  * v2: a pretend upload.
  * v3: no global setters.
- * @version 3
+ * v4: the sample location.
+ * @version 4
  * @utility
  * @return It (static).
  */
@@ -244,7 +281,8 @@ const settings_backend_t *settings_mock_backend(void)
             .list = mock_list, .schedule_get = mock_schedule_get,
             .schedule_set = mock_schedule_set, .sun = mock_sun, .now = mock_now,
             .save_theme = mock_save_theme, .about = mock_about, .upload = mock_upload,
-            .leave = mock_leave,
+            .leave = mock_leave, .location_get = mock_location_get,
+            .location_lookup = mock_location_lookup, .location_set = mock_location_set,
         };
     }
     return &be;

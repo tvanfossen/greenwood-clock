@@ -1147,6 +1147,17 @@ extern "C" lv_obj_t *display_fsm_get_screen(void)
 }
 
 /**
+ * @brief The clock moved: the schedule's sun follows; the profile is applied again.
+ * @version 1
+ * @req REQ-LOC-001
+ */
+extern "C" void display_fsm_location_changed(void)
+{
+    sched_store_location_changed();
+    display_fsm_refresh_background();
+}
+
+/**
  * @brief Request a background reload by enqueueing DISPLAY_EVT_REFRESH_BG for fsm_task.
  *
  * @version 1

@@ -7,7 +7,8 @@
  *     times and trip the task watchdog).
  * v5: every profile field explicit: fields left to the global settings are filled from them
  *     once at load; a gap shows sched_rule_gap.
- * @version 5
+ * v6: sched_store_location_changed (Settings > Location).
+ * @version 6
  * @brief The device's schedule: file, RAM copy, overlap-checked saves, the active profile and
  *        the device's sun (see sched_store.h).
  */
@@ -421,4 +422,17 @@ void sched_store_sun_table(sched_date_t from, int days, sched_sun_t *out)
         mktime(&t);   // normalises the day after
         d = (sched_date_t){ (uint16_t)(t.tm_year + 1900), (uint8_t)(t.tm_mon + 1), (uint8_t)t.tm_mday };
     }
+}
+
+/**
+ * @brief The clock moved: the place again, the sun table emptied.
+ * @version 1
+ * @req REQ-LOC-001
+ */
+void sched_store_location_changed(void)
+{
+    if (!s_lock) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    read_location();   // a new place empties the sun table
+    xSemaphoreGive(s_lock);
 }

@@ -1164,7 +1164,8 @@ static void boot_health_loop(void)
  * @brief ESP-IDF entry point: snapshot RTC crash context, run the boot stages, then hand off to the display FSM and health loop.
  * v2: installs non-blocking logging (log_async) right after the SD log mirror.
  * @callback
- * @version 2
+ * v3: tells the HTTP API when the launch window is over (http_api_set_launched).
+ * @version 3
  * @req REQ-BOOT-001
  * @req REQ-LOG-005
  */
@@ -1216,6 +1217,7 @@ extern "C" void app_main()
     // This saved us from a wall-dismount once. Do not touch.
     // =================================================================
     boot_await_launch();
+    http_api_set_launched();   // outside data may be processed from here (an address lookup)
     // =================================================================
     // END OTA SAFETY WINDOW — features below here are crash-tolerant
     // (device is already proven bootable + HTTP-reachable)

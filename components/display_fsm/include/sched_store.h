@@ -58,6 +58,14 @@ esp_err_t sched_store_set(const sched_rule_t *r, int n, char *why, size_t why_n)
 int sched_store_active(const struct tm *now, sched_rule_t *out);
 
 /**
+ * @brief The clock moved (Settings > Location): read the place again and forget the sun times
+ *        found for the old one. Safe before init.
+ * @version 1
+ * @req REQ-LOC-001
+ */
+void sched_store_location_changed(void);
+
+/**
  * @brief The device's sun (sunrise and sunset at its location) for the engine.
  * @version 1
  * @req REQ-BG-004

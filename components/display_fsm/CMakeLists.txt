@@ -49,6 +49,7 @@ idf_component_register(
         "src/settings_app.c"
         "src/settings_sched.c"
         "src/settings_theme.c"
+        "src/settings_location.c"
         "src/settings_pickers.c"
         "src/settings_lists.c"
         "src/phone_view.c"
@@ -70,6 +71,7 @@ idf_component_register(
         settings
         fonts
         display_events
+        location
     PRIV_REQUIRES
         network
         sdcard

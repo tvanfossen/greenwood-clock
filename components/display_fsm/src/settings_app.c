@@ -13,6 +13,7 @@
 #include "settings_frame.h"
 #include "settings_sched.h"
 #include "settings_theme.h"
+#include "settings_location.h"
 #include "ui_theme_bind.h"
 
 #include <stdio.h>
@@ -255,6 +256,7 @@ void settings_app_choose(const char *title, settings_list_t which, const char *c
 
 typedef struct {
     const char        *title;
+    int                max;      /**< Characters it takes. */
     char               initial[SETTINGS_ITEM_LEN];
     settings_pick_cb_t cb;
     void              *ctx;
@@ -282,7 +284,8 @@ static void text_done_cb(lv_event_t *e)
 /**
  * @brief The text entry screen: a one-line text area over a keyboard.
  * v2: the keyboard fits short frames (a phone sideways).
- * @version 2
+ * v3: its length from the caller.
+ * @version 3
  * @utility
  * @return The frame.
  */
@@ -293,7 +296,7 @@ static lv_obj_t *text_screen(lv_obj_t *parent, void *ctx)
     settings_title_button(frame, LV_SYMBOL_OK " Done", text_done_cb, NULL);
     s_text.ta = lv_textarea_create(frame);
     lv_textarea_set_one_line(s_text.ta, true);
-    lv_textarea_set_max_length(s_text.ta, SCHED_NAME_LEN - 1);
+    lv_textarea_set_max_length(s_text.ta, (uint32_t)s_text.max);
     lv_textarea_set_text(s_text.ta, s_text.initial);
     lv_obj_set_width(s_text.ta, settings_content_w());
     lv_obj_align(s_text.ta, LV_ALIGN_TOP_MID, 0, 70);
@@ -307,13 +310,26 @@ static lv_obj_t *text_screen(lv_obj_t *parent, void *ctx)
 
 /**
  * @brief Push a text entry.
- * @version 1
+ * v2: through settings_app_enter_text_max.
+ * @version 2
  * @req REQ-UI-001
  */
 void settings_app_enter_text(const char *title, const char *initial, settings_pick_cb_t cb,
                              void *ctx)
 {
+    settings_app_enter_text_max(title, initial, SCHED_NAME_LEN - 1, cb, ctx);
+}
+
+/**
+ * @brief Push a text entry taking up to @p max characters.
+ * @version 1
+ * @req REQ-UI-001
+ */
+void settings_app_enter_text_max(const char *title, const char *initial, int max,
+                                 settings_pick_cb_t cb, void *ctx)
+{
     s_text.title = title;
+    s_text.max = max < SETTINGS_ITEM_LEN ? max : SETTINGS_ITEM_LEN - 1;
     snprintf(s_text.initial, sizeof(s_text.initial), "%s", initial ? initial : "");
     s_text.cb = cb;
     s_text.ctx = ctx;
@@ -460,12 +476,14 @@ static void reboot_cb(lv_event_t *e)
  * @brief Append the backend's optional entries to @p items from @p n.
  * v2: Upload.
  * v3: no Animation (preview) entry.
- * @version 3
+ * v4: Location.
+ * @version 4
  * @utility
  * @return The new count.
  */
 static int optional_items(settings_menu_item_t *items, int n)
 {
+    if (s_be->location_get) items[n++] = (settings_menu_item_t){ LV_SYMBOL_GPS, "Location", menu_cb, (void *)settings_location_screen };
     if (s_be->wifi_create) items[n++] = (settings_menu_item_t){ LV_SYMBOL_WIFI, "WiFi", device_cb, (void *)s_be->wifi_create };
     if (s_be->phone_create) items[n++] = (settings_menu_item_t){ LV_SYMBOL_CALL, "Phone", device_cb, (void *)s_be->phone_create };
     if (s_be->upload) items[n++] = (settings_menu_item_t){ LV_SYMBOL_UPLOAD, "Upload", menu_cb, (void *)upload_screen };

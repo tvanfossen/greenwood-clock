@@ -107,6 +107,15 @@ void settings_app_choose(const char *title, settings_list_t which, const char *c
 void settings_app_enter_text(const char *title, const char *initial, settings_pick_cb_t cb,
                              void *ctx);
 
+/**
+ * @brief settings_app_enter_text taking up to @p max characters (an address; the default is
+ *        a profile name's length).
+ * @version 1
+ * @req REQ-UI-001
+ */
+void settings_app_enter_text_max(const char *title, const char *initial, int max,
+                                 settings_pick_cb_t cb, void *ctx);
+
 #ifdef __cplusplus
 }
 #endif

@@ -100,6 +100,14 @@ lv_obj_t *display_fsm_get_screen(void);
 void display_fsm_refresh_background(void);
 
 /**
+ * @brief The clock moved (Settings > Location): the schedule's sun follows, and the showing
+ *        profile is applied again (its sun-anchored window may have moved). Any task.
+ * @version 1
+ * @req REQ-LOC-001
+ */
+void display_fsm_location_changed(void);
+
+/**
  * @brief Re-apply the theme (global preference or active profile's) and re-list the theme
  *        files, in fsm_task. Safe to call from LVGL callbacks and HTTP handlers.
  * @version 1

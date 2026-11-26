@@ -3,7 +3,8 @@
  * v2: upload: the loader page picks, crops and sends a picture; the result comes back
  *     through panel_upload_done.
  * v3: no global settings; a named theme is kept (POST /api/theme/save).
- * @version 3
+ * v4: the clock's place and timezone.
+ * @version 4
  * @brief The phone panel's settings backend (WebAssembly): the state GET /api/panel returned
  *        at start is the cache every getter reads; every change updates the cache and is
  *        POSTed to the clock with the session token (emscripten fetch, asynchronous). The
@@ -89,6 +90,8 @@ typedef struct {
                                     pointer and reads it later, so it lives until the answer. */
 } pending_t;
 
+static char s_reply[512];   // the last request's answer, read by its callback
+
 /**
  * @brief Why a request failed, for a person: the clock's "error" text, or the status.
  * @version 1
@@ -107,7 +110,8 @@ static void failure_text(emscripten_fetch_t *f, char *out, size_t n)
 /**
  * @brief A request finished: tell whoever asked (or show a failure).
  * v2: frees the request's body copy.
- * @version 2
+ * v3: keeps the reply (s_reply) for the callback.
+ * @version 3
  * @callback
  */
 static void fetch_done(emscripten_fetch_t *f)
@@ -115,6 +119,9 @@ static void fetch_done(emscripten_fetch_t *f)
     pending_t *p = (pending_t *)f->userData;
     char why[160] = "";
     bool ok = f->status == 200;
+    size_t n = f->numBytes < sizeof(s_reply) - 1 ? (size_t)f->numBytes : sizeof(s_reply) - 1;
+    memcpy(s_reply, f->data ? f->data : "", f->data ? n : 0);   // the answer, for its caller
+    s_reply[f->data ? n : 0] = '\0';
     if (!ok) failure_text(f, why, sizeof(why));
     if (p && p->done) p->done(ok, why, p->ctx);
     else if (!ok) settings_app_toast(why, false);
@@ -316,6 +323,107 @@ static void http_save_theme(const ui_theme_t *t, const char *stem, settings_done
     post(path, body, theme_saved_cb, NULL);
 }
 
+static void copy_str(const cJSON *o, const char *key, char *out, size_t n);
+
+static settings_location_t s_location;   // where the clock is (from the state)
+
+/**
+ * @brief Where the clock is.
+ * @version 1
+ * @callback
+ */
+static void http_location_get(settings_location_t *out)
+{
+    *out = s_location;
+}
+
+/** A lookup in flight: whom to tell. */
+static struct {
+    settings_lookup_cb_t done;
+    void                *ctx;
+} s_lookup;
+
+/**
+ * @brief The clock answered the lookup: the place in its reply, or why not.
+ * @version 1
+ * @callback
+ */
+static void lookup_done(bool ok, const char *why, void *ctx)
+{
+    LV_UNUSED(ctx);
+    settings_location_t found = s_location;
+    cJSON *o = ok ? cJSON_Parse(s_reply) : NULL;
+    const cJSON *lat = cJSON_GetObjectItemCaseSensitive(o, "lat");
+    const cJSON *lon = cJSON_GetObjectItemCaseSensitive(o, "lon");
+    ok = ok && cJSON_IsNumber(lat) && cJSON_IsNumber(lon);
+    if (ok) {
+        copy_str(o, "label", found.label, sizeof(found.label));
+        found.lat = (float)lat->valuedouble;
+        found.lon = (float)lon->valuedouble;
+    }
+    cJSON_Delete(o);
+    s_lookup.done(ok, why, ok ? &found : NULL, s_lookup.ctx);
+}
+
+/**
+ * @brief Ask the clock to look an address up (it asks the geocoder; the address is not kept).
+ * @version 1
+ * @callback
+ */
+static void http_location_lookup(const char *address, settings_lookup_cb_t done, void *ctx)
+{
+    s_lookup.done = done;
+    s_lookup.ctx = ctx;
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "address", address);
+    char *body = cJSON_PrintUnformatted(o);
+    cJSON_Delete(o);
+    if (body) post("/api/location/lookup", body, lookup_done, NULL);
+    else done(false, "Out of memory", NULL, ctx);
+    free(body);
+}
+
+/** A place being kept: what, and whom to tell. */
+static struct {
+    settings_location_t loc;
+    settings_done_cb_t  done;
+    void               *ctx;
+} s_place;
+
+/**
+ * @brief The clock kept the place (or not): remember it, then tell the caller.
+ * @version 1
+ * @callback
+ */
+static void place_saved(bool ok, const char *why, void *ctx)
+{
+    LV_UNUSED(ctx);
+    if (ok) s_location = s_place.loc;
+    s_place.done(ok, why, s_place.ctx);
+}
+
+/**
+ * @brief Send a place and zone to keep.
+ * @version 1
+ * @callback
+ */
+static void http_location_set(const settings_location_t *loc, settings_done_cb_t done, void *ctx)
+{
+    s_place.loc = *loc;
+    s_place.done = done;
+    s_place.ctx = ctx;
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "label", loc->label);
+    cJSON_AddNumberToObject(o, "lat", loc->lat);
+    cJSON_AddNumberToObject(o, "lon", loc->lon);
+    cJSON_AddStringToObject(o, "tz", loc->tz);
+    char *body = cJSON_PrintUnformatted(o);
+    cJSON_Delete(o);
+    if (body) post("/api/location", body, place_saved, NULL);
+    else done(false, "Out of memory", ctx);
+    free(body);
+}
+
 /**
  * @brief What the panel knows about the clock.
  * @version 1
@@ -429,7 +537,8 @@ static bool read_now_and_sun(const cJSON *root)
 /**
  * @brief Read the whole state.
  * v2: no global values.
- * @version 2
+ * v3: the clock's location.
+ * @version 3
  * @utility
  * @return Whether it is usable.
  */
@@ -437,6 +546,13 @@ static bool read_state(const char *json)
 {
     cJSON *root = cJSON_Parse(json);
     copy_str(root, "version", s_version, sizeof(s_version));
+    const cJSON *where = cJSON_GetObjectItemCaseSensitive(root, "location");
+    const cJSON *lat = cJSON_GetObjectItemCaseSensitive(where, "lat");
+    const cJSON *lon = cJSON_GetObjectItemCaseSensitive(where, "lon");
+    copy_str(where, "label", s_location.label, sizeof(s_location.label));
+    copy_str(where, "tz", s_location.tz, sizeof(s_location.tz));
+    s_location.lat = cJSON_IsNumber(lat) ? (float)lat->valuedouble : 0.0f;
+    s_location.lon = cJSON_IsNumber(lon) ? (float)lon->valuedouble : 0.0f;
     const cJSON *lists = cJSON_GetObjectItemCaseSensitive(root, "lists");
     read_list(lists, "backgrounds", SETTINGS_LIST_BACKGROUNDS);
     read_list(lists, "themes", SETTINGS_LIST_THEMES);
@@ -455,7 +571,8 @@ static bool read_state(const char *json)
  * v2: upload.
  * v3: no leave (the phone's menu has no Back).
  * v4: no global setters; save_theme keeps a named theme.
- * @version 4
+ * v5: the location.
+ * @version 5
  * @req REQ-UI-005
  * @return It, or NULL when the state is not usable.
  */
@@ -465,6 +582,8 @@ const settings_backend_t *settings_http_backend(const char *state_json, const ch
         .list = http_list, .schedule_get = http_schedule_get,
         .schedule_set = http_schedule_set, .sun = http_sun, .now = http_now,
         .save_theme = http_save_theme, .about = http_about, .upload = http_upload,
+        .location_get = http_location_get, .location_lookup = http_location_lookup,
+        .location_set = http_location_set,
     };
     snprintf(s_token, sizeof(s_token), "%s", token ? token : "");
     return state_json && read_state(state_json) ? &BE : NULL;

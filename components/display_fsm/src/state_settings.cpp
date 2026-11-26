@@ -7,7 +7,8 @@
  * v4: the Phone screen (QR pairing for the phone panel).
  * v5: no global setters; the theme editor keeps named themes.
  * v6: no animation preview screen (it was a test).
- * @version 6
+ * v7: Location (place and timezone).
+ * @version 7
  * @brief Settings state: the clock's settings backend (NVS settings, SD lists, the schedule
  *        store, the display) for settings_app, the Wi-Fi and Phone screens, and
  *        the FSM state that opens and closes the settings.
@@ -37,6 +38,7 @@ extern "C" {
 #include "phone_view.h"
 #include "auth.h"
 #include "settings_lists.h"
+#include "location.h"
 }
 
 #include <cstring>
@@ -506,11 +508,109 @@ static void be_leave(void)
 }
 
 /**
+ * @brief location_t as the settings screens' place.
+ * @version 1
+ * @utility
+ */
+static void to_settings(const location_t *in, settings_location_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    strlcpy(out->label, in->place.label, sizeof(out->label));
+    out->lat = in->place.lat;
+    out->lon = in->place.lon;
+    strlcpy(out->tz, in->tz, sizeof(out->tz));
+}
+
+/**
+ * @brief Where the clock is (NVS off the LVGL lock).
+ * @version 1
+ * @callback
+ */
+static void be_location_get(settings_location_t *out)
+{
+    location_t loc;
+    lvgl_port_unlock();
+    location_get(&loc);
+    lvgl_port_lock(0);
+    to_settings(&loc, out);
+}
+
+/** An address lookup in flight on its own task. */
+struct lookup_job_t {
+    char                 address[96];
+    settings_lookup_cb_t done;
+    void                *ctx;
+};
+
+/**
+ * @brief The lookup task: ask the geocoder (HTTPS, off the LVGL lock), answer under it, end.
+ * @version 1
+ * @callback
+ */
+static void lookup_task(void *arg)
+{
+    lookup_job_t *job = (lookup_job_t *)arg;
+    location_t found = {};
+    char why[64] = "";
+    bool ok = location_lookup(job->address, &found.place, why, sizeof(why)) == ESP_OK;
+    memset(job->address, 0, sizeof(job->address));   // the address is not kept
+    settings_location_t out;
+    to_settings(&found, &out);
+    lvgl_port_lock(0);
+    job->done(ok, why, ok ? &out : nullptr, job->ctx);
+    lvgl_port_unlock();
+    free(job);
+    vTaskDelete(nullptr);
+}
+
+/**
+ * @brief Look an address up on a task (it takes a second or two over HTTPS).
+ * @version 1
+ * @callback
+ */
+static void be_location_lookup(const char *address, settings_lookup_cb_t done, void *ctx)
+{
+    lookup_job_t *job = (lookup_job_t *)calloc(1, sizeof(lookup_job_t));
+    bool started = job != nullptr;
+    if (job) {
+        strlcpy(job->address, address, sizeof(job->address));
+        job->done = done;
+        job->ctx = ctx;
+        started = xTaskCreate(lookup_task, "loc_lookup", 8192, job, 3, nullptr) == pdPASS;
+        if (!started) free(job);
+    }
+    if (!started) {
+        ESP_LOGE(TAG, "location lookup: could not start");
+        done(false, "Out of memory", nullptr, ctx);
+    }
+}
+
+/**
+ * @brief Keep a place and zone (NVS off the LVGL lock); the weather, sky and schedule follow.
+ * @version 1
+ * @callback
+ */
+static void be_location_set(const settings_location_t *in, settings_done_cb_t done, void *ctx)
+{
+    location_t loc = {};
+    strlcpy(loc.place.label, in->label, sizeof(loc.place.label));
+    loc.place.lat = in->lat;
+    loc.place.lon = in->lon;
+    strlcpy(loc.tz, in->tz, sizeof(loc.tz));
+    lvgl_port_unlock();
+    esp_err_t err = location_save(&loc);
+    lvgl_port_lock(0);
+    if (err == ESP_OK) display_fsm_location_changed();
+    done(err == ESP_OK, err == ESP_ERR_INVALID_ARG ? "Not a place or zone the clock knows" : "Could not save", ctx);
+}
+
+/**
  * @brief The clock's backend.
  * v2: the Phone screen.
  * v3: no global setters (profiles set everything).
  * v4: no animation preview.
- * @version 4
+ * v5: Location.
+ * @version 5
  * @utility
  * @return It (static).
  */
@@ -518,6 +618,9 @@ static const settings_backend_t *clock_backend(void)
 {
     static settings_backend_t be;
     be.list = be_list;
+    be.location_get = be_location_get;
+    be.location_lookup = be_location_lookup;
+    be.location_set = be_location_set;
     be.schedule_get = be_schedule_get;
     be.schedule_set = be_schedule_set;
     be.sun = be_sun;

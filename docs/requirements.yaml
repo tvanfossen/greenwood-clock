@@ -473,6 +473,21 @@ requirements:
       exactly while it is above the horizon, lit on the side towards the sun; Kp matches NOAA's
       current value.
 
+  # ---------------------------------------------------------------- LOC
+  REQ-LOC-001:
+    name: The clock's place and timezone, set from the settings
+    subsystem: LOC
+    description: >-
+      Settings > Location (on the clock and the phone panel) sets where the clock is from an
+      address: the clock asks the US Census Bureau's geocoder over HTTPS once, keeps only the
+      coordinates (to about 100 m) and a short "City, ST" label, and drops the address. The
+      timezone is any IANA zone, picked by region and place, applied at once. The weather, the
+      sky and sun-anchored schedule windows follow the new place.
+    acceptance_criteria: >-
+      Entering a US address shows its city and coordinates for confirmation; after saving, the
+      clock's time follows the chosen zone without a reboot, the forecast and the sky dial are
+      for the new place, and an unmatched address is refused with a reason.
+
   # ---------------------------------------------------------------- SURP
   REQ-SURP-001:
     name: Surprise messages

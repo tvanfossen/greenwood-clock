@@ -14,6 +14,7 @@ idf_component_register(
         nws
         settings
         cjson
+        location
         espcoredump
         esp_partition
         lvgl

@@ -60,6 +60,29 @@ void http_api_set_launch_sem(SemaphoreHandle_t sem)
     s_launch_sem = sem;
 }
 
+static volatile bool s_launched;   // the launch window is over
+
+/**
+ * @brief The launch window is over.
+ * @version 1
+ * @req REQ-LOC-001
+ */
+void http_api_set_launched(void)
+{
+    s_launched = true;
+}
+
+/**
+ * @brief Whether the launch window is over.
+ * @version 1
+ * @req REQ-LOC-001
+ * @return Whether.
+ */
+bool http_api_launched(void)
+{
+    return s_launched;
+}
+
 // Maximum upload size: 10 MB
 #define MAX_UPLOAD_SIZE     (10 * 1024 * 1024)
 #define UPLOAD_BUFFER_SIZE  (4 * 1024)
