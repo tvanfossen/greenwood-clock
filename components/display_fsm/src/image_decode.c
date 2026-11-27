@@ -1,6 +1,11 @@
 /**
  * @file image_decode.c
- * @version 1
+ * v2: one big buffer a decode, not two: stb allocates 64-byte-aligned PSRAM and its output
+ *     becomes the image (converted in place); full-screen RGB565 pictures go into slots
+ *     reserved once (image_pool); the backgrounds share the album's .r565 cache, checked
+ *     against its PNG. Seen on device: 13 MB free, no 2.5 MB block, a background left
+ *     unchanged.
+ * @version 2
  * @brief Shared PNG decoder (stb_image) into persistent SPIRAM ARGB8888/RGB565 LVGL descriptors, plus a raw RGB565 cache format.
  */
 // Shared PNG → persistent SPIRAM ARGB8888 decoder. See image_decode.h.
@@ -14,20 +19,120 @@
 #include "esp_cache.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "image_pool.h"
+#include <sys/stat.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 
+static void *stb_alloc(size_t n);
+static void *stb_realloc_sized(void *p, size_t old_n, size_t n);
+static void stb_free(void *p);
+
 #define STB_IMAGE_IMPLEMENTATION
+#define STBI_MALLOC(sz)                 stb_alloc(sz)   // 64-byte aligned PSRAM: the output is the image
+#define STBI_REALLOC_SIZED(p, old, sz)  stb_realloc_sized(p, old, sz)
+#define STBI_FREE(p)                    stb_free(p)
 #define STBI_ONLY_PNG           // Only compile the PNG decoder
 #define STBI_NO_STDIO           // Decode from memory only
 #define STBI_NO_HDR
 #define STBI_NO_LINEAR
 #include "stb_image.h"
 
+static const char *TAG = "image_decode";
+
 static SemaphoreHandle_t s_decode_mutex;   // decode_lock
 
-static const char *TAG = "image_decode";
+// Full-screen RGB565 slots (background current + incoming, album shown + next): a 1088 px
+// wide stride (a 1025 px background is padded to 1056) by 600 rows.
+#define SLOT_BYTES ((size_t)2176 * 600)
+static image_pool_t s_pool;
+static portMUX_TYPE s_pool_mux = portMUX_INITIALIZER_UNLOCKED;
+
+/**
+ * @brief stb's allocations: 64-byte-aligned PSRAM, so its output can be the image itself.
+ * @version 1
+ * @utility
+ * @return The block, or NULL.
+ */
+static void *stb_alloc(size_t n)
+{
+    return heap_caps_aligned_alloc(64, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+}
+
+/**
+ * @brief stb growing a buffer: a new aligned block with the old one's bytes.
+ * @version 1
+ * @utility
+ * @return The new block (the old one freed), or NULL (the old one kept, as realloc does).
+ */
+static void *stb_realloc_sized(void *p, size_t old_n, size_t n)
+{
+    void *q = stb_alloc(n);
+    if (q && p) memcpy(q, p, old_n < n ? old_n : n);
+    if (q) heap_caps_free(p);
+    return q;
+}
+
+/**
+ * @brief stb freeing.
+ * @version 1
+ * @utility
+ */
+static void stb_free(void *p)
+{
+    heap_caps_free(p);
+}
+
+/**
+ * @brief A buffer of @p size for a full-screen RGB565 picture: a reserved slot when @p pooled
+ *        and one is free, else the heap.
+ * @version 1
+ * @utility
+ * @return It, or NULL.
+ */
+static uint8_t *rgb565_buffer(size_t size, bool pooled)
+{
+    portENTER_CRITICAL(&s_pool_mux);
+    uint8_t *b = pooled ? image_pool_take(&s_pool, size) : NULL;
+    portEXIT_CRITICAL(&s_pool_mux);
+    if (pooled && !b && s_pool.n) ESP_LOGW(TAG, "no free picture slot: %u B from the heap", (unsigned)size);
+    return b ? b : heap_caps_aligned_alloc(64, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+}
+
+/**
+ * @brief Free a picture's pixels: its slot back, or the heap.
+ * @version 1
+ * @utility
+ */
+static void pixels_free(void *px)
+{
+    portENTER_CRITICAL(&s_pool_mux);
+    bool slot = image_pool_give(&s_pool, px);
+    portEXIT_CRITICAL(&s_pool_mux);
+    if (!slot) heap_caps_free(px);
+}
+
+/**
+ * @brief Reserve the full-screen slots (once).
+ * @version 1
+ * @req REQ-BG-001
+ */
+void image_decode_pool_init(void)
+{
+    uint8_t *bufs[IMAGE_POOL_SLOTS];
+    int n = 0;
+    while (s_pool.n == 0 && n < IMAGE_POOL_SLOTS &&
+           (bufs[n] = heap_caps_aligned_alloc(64, SLOT_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) != NULL) {
+        n++;
+    }
+    if (s_pool.n == 0) image_pool_setup(&s_pool, bufs, n, SLOT_BYTES);
+    ESP_LOGI(TAG, "picture slots: %d of %d reserved (%u B each); SPIRAM free %u, largest block %u",
+             s_pool.n, IMAGE_POOL_SLOTS, (unsigned)SLOT_BYTES,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+}
+
 
 // Reject absurd dimensions — also bounds the w*h*4 size math well under UINT32.
 #define IMG_MAX_W 2048
@@ -146,23 +251,32 @@ static lv_image_dsc_t *make_dsc(uint8_t *pixels, int w, int h,
 
 // Build a persistent SPIRAM ARGB8888 descriptor from decoded RGBA pixels.
 /**
- * @brief Build a persistent 64-byte-aligned, cache-synced SPIRAM ARGB8888 descriptor from RGBA pixels.
- * @version 1
+ * @brief Build a persistent 64-byte-aligned, cache-synced SPIRAM ARGB8888 descriptor from RGBA
+ *        pixels, taking @p raw (stb's, freed or kept as the image).
+ * v2: in place when the rows need no padding (one buffer, not two); takes @p raw.
+ * @version 2
  * @utility
  * @return New descriptor, or NULL on allocation failure.
  */
-static lv_image_dsc_t *build_dsc_from_raw(const unsigned char *raw, int w, int h)
+static lv_image_dsc_t *build_dsc_from_raw(unsigned char *raw, int w, int h)
 {
     uint32_t stride = lv_draw_buf_width_to_stride((uint32_t)w, LV_COLOR_FORMAT_ARGB8888);
     uint32_t buf_size = stride * (uint32_t)h;
-    uint8_t *pixels = (uint8_t *)heap_caps_aligned_alloc(64, buf_size,
-                                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    bool in_place = stride == (uint32_t)w * 4;
+    uint8_t *pixels = in_place ? raw
+                               : (uint8_t *)heap_caps_aligned_alloc(64, buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!pixels) {
         ESP_LOGE(TAG, "SPIRAM pixel alloc failed (%lu B)", (unsigned long)buf_size);
+        stbi_image_free(raw);
         return NULL;
     }
-    memset(pixels, 0, buf_size);
-    swizzle_rgba_to_bgra(pixels, stride, raw, w, h);
+    if (in_place) {
+        image_px_swap_rb(pixels, (size_t)w * (size_t)h);
+    } else {
+        memset(pixels, 0, buf_size);
+        swizzle_rgba_to_bgra(pixels, stride, raw, w, h);
+        stbi_image_free(raw);
+    }
     esp_cache_msync(pixels, buf_size,
                     ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
 
@@ -171,58 +285,44 @@ static lv_image_dsc_t *build_dsc_from_raw(const unsigned char *raw, int w, int h
     return dsc;
 }
 
-// RGBA -> RGB565 pack into a stride-aligned buffer (drops alpha; opaque images).
-/**
- * @brief Pack RGBA pixels into a stride-aligned RGB565 buffer, dropping alpha.
- * @version 1
- * @utility
- */
-static void pack_rgba_to_rgb565(uint8_t *dst, uint32_t dstride,
-                                const unsigned char *raw, int w, int h)
-{
-    uint32_t src_stride = (uint32_t)w * 4;
-    for (int y = 0; y < h; y++) {
-        uint16_t *drow = (uint16_t *)(dst + (uint32_t)y * dstride);
-        const uint8_t *srow = raw + (uint32_t)y * src_stride;
-        for (int x = 0; x < w; x++) {
-            uint8_t r = srow[x * 4 + 0], g = srow[x * 4 + 1], b = srow[x * 4 + 2];
-            drow[x] = (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
-        }
-    }
-}
-
 // Build a persistent SPIRAM RGB565 descriptor (opaque images only). RGB565
 // matches the framebuffer, so redraws during animation are straight copies with
 // no per-pixel conversion — far cheaper than ARGB8888 for a full-screen image.
 /**
- * @brief Build a persistent 64-byte-aligned, cache-synced SPIRAM RGB565 descriptor from RGBA pixels (opaque images).
- * @version 1
+ * @brief Build a persistent 64-byte-aligned, cache-synced SPIRAM RGB565 descriptor from RGBA
+ *        pixels (opaque images), taking @p raw: packed in place, then copied into a reserved
+ *        slot (@p pooled) or a heap block of the RGB565 size.
+ * v2: packed in place; a slot when @p pooled; takes @p raw.
+ * @version 2
  * @utility
  * @return New descriptor, or NULL on allocation failure.
  */
-static lv_image_dsc_t *build_dsc_rgb565(const unsigned char *raw, int w, int h)
+static lv_image_dsc_t *build_dsc_rgb565(unsigned char *raw, int w, int h, bool pooled)
 {
     uint32_t stride = lv_draw_buf_width_to_stride((uint32_t)w, LV_COLOR_FORMAT_RGB565);
     uint32_t buf_size = stride * (uint32_t)h;
-    uint8_t *pixels = (uint8_t *)heap_caps_aligned_alloc(64, buf_size,
-                                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    bool fits = stride <= (uint32_t)w * 4;   // packing in place needs the 565 row inside the RGBA one
+    if (fits) image_px_rgba_to_rgb565_inplace(raw, w, h, stride);
+    uint8_t *pixels = fits ? rgb565_buffer(buf_size, pooled) : NULL;
+    if (!fits) ESP_LOGE(TAG, "RGB565: %d px wide is too narrow to pack in place", w);
+    if (pixels) memcpy(pixels, raw, buf_size);
+    stbi_image_free(raw);
     if (!pixels) {
         ESP_LOGE(TAG, "SPIRAM RGB565 alloc failed (%lu B)", (unsigned long)buf_size);
         return NULL;
     }
-    memset(pixels, 0, buf_size);
-    pack_rgba_to_rgb565(pixels, stride, raw, w, h);
     esp_cache_msync(pixels, buf_size,
                     ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
 
     lv_image_dsc_t *dsc = make_dsc(pixels, w, h, stride, buf_size, LV_COLOR_FORMAT_RGB565);
-    if (!dsc) heap_caps_free(pixels);
+    if (!dsc) pixels_free(pixels);
     return dsc;
 }
 
 /**
  * @brief image_decode_png_buf without the decode lock.
- * @version 1
+ * v2: the descriptor takes stb's buffer.
+ * @version 2
  * @utility
  * @return The descriptor, or NULL.
  */
@@ -234,8 +334,7 @@ static lv_image_dsc_t *image_decode_png_buf_unlocked(const uint8_t *png, size_t 
     unsigned char *raw = decode_rgba(png, len, &w, &h);
     if (!raw) return NULL;
 
-    lv_image_dsc_t *dsc = build_dsc_from_raw(raw, w, h);
-    stbi_image_free(raw);
+    lv_image_dsc_t *dsc = build_dsc_from_raw(raw, w, h);   // takes raw
     if (dsc) {
         ESP_LOGI(TAG, "Decoded %dx%d (%lu B) from %zu-byte PNG", w, h,
                  (unsigned long)dsc->data_size, len);
@@ -322,12 +421,13 @@ lv_image_dsc_t *image_decode_png_file(const char *path)
 }
 
 /**
- * @brief image_decode_png_file_rgb565 without the decode lock.
- * @version 1
+ * @brief image_decode_png_file_rgb565 without the decode lock; into a slot when @p pooled.
+ * v2: into a slot when @p pooled; the descriptor takes stb's buffer.
+ * @version 2
  * @utility
  * @return The descriptor, or NULL.
  */
-static lv_image_dsc_t *image_decode_png_file_rgb565_unlocked(const char *path)
+static lv_image_dsc_t *image_decode_png_file_rgb565_unlocked(const char *path, bool pooled)
 {
     if (!path) return NULL;
 
@@ -340,8 +440,7 @@ static lv_image_dsc_t *image_decode_png_file_rgb565_unlocked(const char *path)
     heap_caps_free(png);
     if (!raw) return NULL;
 
-    lv_image_dsc_t *dsc = build_dsc_rgb565(raw, w, h);
-    stbi_image_free(raw);
+    lv_image_dsc_t *dsc = build_dsc_rgb565(raw, w, h, pooled);   // takes raw
     if (dsc) {
         ESP_LOGI(TAG, "Decoded %dx%d RGB565 (%lu B) from %s", w, h,
                  (unsigned long)dsc->data_size, path);
@@ -352,7 +451,8 @@ static lv_image_dsc_t *image_decode_png_file_rgb565_unlocked(const char *path)
 /**
  * @brief Read a PNG file and decode it into a persistent SPIRAM RGB565 descriptor (opaque, framebuffer format).
  * v2: one full decode at a time (decode_lock): two at once doubled the multi-MB peak.
- * @version 2
+ * v3: into the heap, not a slot (the slots are image_decode_cached_rgb565's).
+ * @version 3
  * @req REQ-BG-001
  * @req REQ-PHOTO-001
  * @return New descriptor, or NULL on failure.
@@ -360,7 +460,7 @@ static lv_image_dsc_t *image_decode_png_file_rgb565_unlocked(const char *path)
 lv_image_dsc_t *image_decode_png_file_rgb565(const char *path)
 {
     decode_lock();
-    lv_image_dsc_t *dsc = image_decode_png_file_rgb565_unlocked(path);
+    lv_image_dsc_t *dsc = image_decode_png_file_rgb565_unlocked(path, false);
     decode_unlock();
     return dsc;
 }
@@ -371,11 +471,12 @@ lv_image_dsc_t *image_decode_png_file_rgb565(const char *path)
 
 /**
  * @brief Load a raw RGB565 cache file ([u16 w][u16 h][u32 stride][pixels]) into a persistent SPIRAM descriptor.
- * @version 1
+ * v2: into a slot when @p pooled (was image_decode_load_raw_rgb565).
+ * @version 2
  * @req REQ-PHOTO-001
  * @return New descriptor, or NULL if missing, malformed, oversized or short.
  */
-lv_image_dsc_t *image_decode_load_raw_rgb565(const char *path)
+static lv_image_dsc_t *load_raw(const char *path, bool pooled)
 {
     if (!path) return NULL;
     FILE *f = fopen(path, "rb");
@@ -391,12 +492,11 @@ lv_image_dsc_t *image_decode_load_raw_rgb565(const char *path)
         return NULL;
     }
     uint32_t buf_size = stride * h;
-    uint8_t *pixels = (uint8_t *)heap_caps_aligned_alloc(64, buf_size,
-                                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    uint8_t *pixels = rgb565_buffer(buf_size, pooled);
     if (!pixels) { fclose(f); return NULL; }
 
     if (fread(pixels, 1, buf_size, f) != buf_size) {
-        heap_caps_free(pixels);
+        pixels_free(pixels);
         fclose(f);
         ESP_LOGW(TAG, "r565 short read: %s", path);
         return NULL;
@@ -406,8 +506,98 @@ lv_image_dsc_t *image_decode_load_raw_rgb565(const char *path)
                     ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
 
     lv_image_dsc_t *dsc = make_dsc(pixels, w, h, stride, buf_size, LV_COLOR_FORMAT_RGB565);
-    if (!dsc) heap_caps_free(pixels);
+    if (!dsc) pixels_free(pixels);
     return dsc;
+}
+
+/**
+ * @brief Load a raw RGB565 cache file into a heap descriptor.
+ * v2: through load_raw (a slot when the caller asks: image_decode_cached_rgb565).
+ * @version 2
+ * @req REQ-PHOTO-001
+ * @return New descriptor, or NULL if missing, malformed, oversized or short.
+ */
+lv_image_dsc_t *image_decode_load_raw_rgb565(const char *path)
+{
+    return load_raw(path, false);
+}
+
+/**
+ * @brief The cache file of PNG @p png ("<png>.r565") into @p out.
+ * @version 1
+ * @utility
+ */
+static void cache_path(const char *png, char *out, size_t n)
+{
+    snprintf(out, n, "%s.r565", png);
+}
+
+/**
+ * @brief Whether @p cache is missing or older than @p png (a picture replaced under its name).
+ * @version 1
+ * @utility
+ * @return Whether it must be made again.
+ */
+static bool cache_stale(const char *png, const char *cache)
+{
+    struct stat p, c;
+    return stat(cache, &c) != 0 || (stat(png, &p) == 0 && c.st_mtime < p.st_mtime);
+}
+
+/**
+ * @brief A full-screen opaque picture for showing: its .r565 cache read into a reserved slot,
+ *        or (no cache, or older than the PNG) decoded into one and the cache written.
+ * @version 1
+ * @req REQ-BG-001
+ * @req REQ-PHOTO-001
+ * @return New descriptor (image_decode_free gives its slot back), or NULL.
+ */
+lv_image_dsc_t *image_decode_cached_rgb565(const char *png)
+{
+    char cache[192];
+    cache_path(png, cache, sizeof(cache));
+    lv_image_dsc_t *dsc = cache_stale(png, cache) ? NULL : load_raw(cache, true);
+    if (!dsc) {
+        decode_lock();
+        dsc = image_decode_png_file_rgb565_unlocked(png, true);
+        decode_unlock();
+        if (dsc) image_decode_save_raw_rgb565(cache, dsc);
+    }
+    return dsc;
+}
+
+/**
+ * @brief Make PNG @p png's .r565 cache when missing or stale (the Library's background task:
+ *        heap, not a slot, freed at once).
+ * @version 1
+ * @req REQ-LIB-001
+ * @return Whether a fresh cache exists now.
+ */
+bool image_decode_make_cache_rgb565(const char *png)
+{
+    char cache[192];
+    cache_path(png, cache, sizeof(cache));
+    bool ok = !cache_stale(png, cache);
+    if (!ok) {
+        decode_lock();
+        lv_image_dsc_t *dsc = image_decode_png_file_rgb565_unlocked(png, false);
+        decode_unlock();
+        ok = dsc && image_decode_save_raw_rgb565(cache, dsc);
+        image_decode_free(dsc);
+    }
+    return ok;
+}
+
+/**
+ * @brief Remove PNG @p png's .r565 cache (the picture was deleted or renamed).
+ * @version 1
+ * @req REQ-LIB-001
+ */
+void image_decode_drop_cache(const char *png)
+{
+    char cache[192];
+    cache_path(png, cache, sizeof(cache));
+    remove(cache);
 }
 
 /**
@@ -486,7 +676,8 @@ lv_image_dsc_t *image_decode_halve_argb(const lv_image_dsc_t *src)
 
 /**
  * @brief Free a descriptor and its pixel buffer (no-op if NULL).
- * @version 1
+ * v2: a reserved slot is given back, not freed.
+ * @version 2
  * @req REQ-BG-001
  * @req REQ-PHOTO-001
  * @req REQ-RADAR-001
@@ -494,6 +685,6 @@ lv_image_dsc_t *image_decode_halve_argb(const lv_image_dsc_t *src)
 void image_decode_free(lv_image_dsc_t *dsc)
 {
     if (!dsc) return;
-    if (dsc->data) heap_caps_free((void *)dsc->data);
+    if (dsc->data) pixels_free((void *)dsc->data);   // a slot goes back
     heap_caps_free(dsc);
 }

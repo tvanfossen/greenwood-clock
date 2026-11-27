@@ -5,6 +5,7 @@
  */
 #include "settings_lists.h"
 #include "theme_store.h"
+#include "esp_attr.h"
 #include "clock_anim_pref.h"
 #include "sdcard.h"
 
@@ -57,13 +58,14 @@ static int backgrounds(settings_choice_t *out, int max)
 
 /**
  * @brief The theme files (stem, display name).
- * @version 1
+ * v2: the scan in PSRAM (24 themes).
+ * @version 2
  * @utility
  * @return How many.
  */
 static int themes(settings_choice_t *out, int max)
 {
-    theme_entry_t t[THEME_STORE_MAX];
+    EXT_RAM_BSS_ATTR static theme_entry_t t[THEME_STORE_MAX];   // PSRAM: off the LVGL task's stack
     int n = theme_store_scan(t);
     n = n < max ? n : max;
     for (int i = 0; i < n; i++) {

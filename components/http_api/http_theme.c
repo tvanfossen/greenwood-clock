@@ -19,6 +19,7 @@
 #include "theme_store.h"
 #include "ui_theme.h"
 #include "http_json.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 
 static const char *TAG = "http_theme";
@@ -26,13 +27,14 @@ static const char *TAG = "http_theme";
 /**
  * @brief GET /api/themes: the valid theme files on the SD card.
  * v2: replies through http_json_send.
- * @version 2
+ * v3: its list in PSRAM.
+ * @version 3
  * @callback
  * @return ESP_OK.
  */
 static esp_err_t themes_get_handler(httpd_req_t *req)
 {
-    static theme_entry_t entries[THEME_STORE_MAX];   // static: off the httpd task stack
+    EXT_RAM_BSS_ATTR static theme_entry_t entries[THEME_STORE_MAX];   // static, PSRAM: off the stack and internal RAM
     int n = theme_store_scan(entries);
     cJSON *arr = cJSON_CreateArray();
     for (int i = 0; i < n; i++) {

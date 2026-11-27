@@ -78,6 +78,7 @@ HOST_TESTS = {
     "astro_moon": ("astro_moon",),
     "sky_paint": ("sky_paint", "sky_moon_albedo"),
     "library": ("library",),
+    "image_pool": ("image_pool",),
     "location": (
         "location/src/location_census",
         "location/src/tz",

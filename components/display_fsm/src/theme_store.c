@@ -6,6 +6,7 @@
  */
 
 #include "theme_store.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
 
@@ -18,7 +19,7 @@ static const char *TAG = "theme_store";
 
 #define THEME_FILE_MAX 4096   // a theme file is a few hundred bytes
 
-static theme_entry_t s_entries[THEME_STORE_MAX];
+EXT_RAM_BSS_ATTR static theme_entry_t s_entries[THEME_STORE_MAX];   // PSRAM: internal RAM is short
 static int           s_count = 0;
 
 /**
@@ -108,12 +109,13 @@ int theme_store_scan(theme_entry_t out[THEME_STORE_MAX])
 /**
  * @brief Re-read the list of valid theme files (off-lock), then swap it into the cache under
  *        the LVGL lock, where the menus read it.
- * @version 1
+ * v2: its scratch list in PSRAM (24 themes).
+ * @version 2
  * @req REQ-UI-003
  */
 void theme_store_rescan(void)
 {
-    static theme_entry_t fresh[THEME_STORE_MAX];   // static: 12 x 40 B off the task stack
+    EXT_RAM_BSS_ATTR static theme_entry_t fresh[THEME_STORE_MAX];   // static, PSRAM: off the stack and internal RAM
     int n = theme_store_scan(fresh);
     lvgl_port_lock(0);
     memcpy(s_entries, fresh, sizeof(fresh));

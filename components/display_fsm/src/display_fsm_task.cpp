@@ -337,9 +337,10 @@ static lv_image_dsc_t *s_bg_dsc = NULL;   // persistent decoded background (non-
  * v3: XRGB8888 so background redraws blit on the PPA.
  * v4: back to RGB565: the PPA ARGB path garbled partial redraws of the 1025 px wide
  *     (padded-stride) background on device.
+ * v5: from its .r565 cache into a reserved slot (no multi-MB decode at a profile change).
  *
  * @utility
- * @version 4
+ * @version 5
  * @return Decoded descriptor, or NULL on failure (caller then skips the background).
  */
 static lv_image_dsc_t *predecode_bg(const char *path)
@@ -349,7 +350,7 @@ static lv_image_dsc_t *predecode_bg(const char *path)
     // RGB565 (opaque): matches the framebuffer so the full-screen background redraws as a
     // straight CPU copy. XRGB8888 (to blit on the PPA) garbled partial redraws on device:
     // the 1025 px wide image has padded rows, which the PPA ARGB path mis-strides.
-    lv_image_dsc_t *dsc = image_decode_png_file_rgb565(fs_path);
+    lv_image_dsc_t *dsc = image_decode_cached_rgb565(fs_path);   // its .r565, in a reserved slot
     if (!dsc) {
         ESP_LOGW(TAG, "bg: predecode failed for '%s' (%s) — on-demand fallback",
                  path, fs_path);
@@ -1069,7 +1070,8 @@ static void fsm_task(void *arg)
 /**
  * @brief Create the FSM event queue, the Lottie loader (if enabled), and the FSM task (idempotent).
  *
- * @version 1
+ * v2: reserves the full-screen picture slots first.
+ * @version 2
  * @req REQ-DISP-001
  */
 extern "C" void display_fsm_init(void)
@@ -1078,6 +1080,7 @@ extern "C" void display_fsm_init(void)
         ESP_LOGW(TAG, "display_fsm_init: already initialized");
         return;
     }
+    image_decode_pool_init();   // full-screen picture slots, before the heap fragments
 
     s_event_queue = xQueueCreate(FSM_QUEUE_DEPTH, sizeof(display_event_t));
     configASSERT(s_event_queue);

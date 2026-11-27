@@ -166,8 +166,9 @@ static bool stem_of(const char *fname, const char *want, char *out, size_t n)
 }
 
 /**
- * @brief Make the missing thumbnails of @p kind's pictures.
- * @version 1
+ * @brief Make the missing thumbnails (and .r565 caches) of @p kind's pictures.
+ * v2: also the picture's .r565 cache, so showing it never needs the decoder's peak.
+ * @version 2
  * @utility
  * @return How many were made.
  */
@@ -184,6 +185,7 @@ static int thumbs_for(lib_kind_t kind)
         if (e->d_type != DT_REG || !stem_of(e->d_name, ".png", name, sizeof(name))) continue;
         item_path(kind, name, src, sizeof(src));
         snprintf(dst, sizeof(dst), "%s/%s.png", dirpath, name);
+        if (!image_decode_make_cache_rgb565(src)) ESP_LOGW(TAG, "%s: no .r565 cache yet", name);
         if (!thumb_stale(src, dst)) continue;
         made += make_thumb(src, dst) ? 1 : 0;
         vTaskDelay(pdMS_TO_TICKS(THUMB_GAP_MS));
@@ -343,7 +345,8 @@ static void changed(lib_kind_t kind)
 
 /**
  * @brief Delete an item.
- * @version 1
+ * v2: also its .r565 cache.
+ * @version 2
  * @req REQ-LIB-001
  * @return ESP_OK, ESP_ERR_INVALID_STATE, or ESP_FAIL.
  */
@@ -366,6 +369,7 @@ esp_err_t library_store_delete(lib_kind_t kind, const char *name, char *why, siz
     }
     char thumb[160];
     if (err == ESP_OK && library_store_thumb_path(kind, name, thumb, sizeof(thumb))) remove(thumb);
+    if (err == ESP_OK) image_decode_drop_cache(path);
     if (err == ESP_OK) changed(kind);
     ESP_LOGI(TAG, "delete %s: %s", name, err == ESP_OK ? "done" : why);
     return err;
@@ -416,7 +420,8 @@ static esp_err_t rename_check(lib_kind_t kind, const char *from, const char *to,
 /**
  * @brief Rename an item; the profiles follow.
  * v2: the checks are rename_check.
- * @version 2
+ * v3: drops the old name's .r565 cache (made again under the new one).
+ * @version 3
  * @req REQ-LIB-001
  * @return ESP_OK, ESP_ERR_INVALID_ARG, ESP_ERR_INVALID_STATE, or ESP_FAIL.
  */
@@ -429,6 +434,7 @@ esp_err_t library_store_rename(lib_kind_t kind, const char *from, const char *to
         snprintf(why, n, "Could not rename it");
         err = ESP_FAIL;
     }
+    if (err == ESP_OK) image_decode_drop_cache(a);   // made again under the new name
     if (err == ESP_OK && library_store_thumb_path(kind, from, ta, sizeof(ta))) {
         library_store_thumb_path(kind, to, tb, sizeof(tb));   // the path, whether or not it exists
         rename(ta, tb);
