@@ -79,6 +79,7 @@ HOST_TESTS = {
     "sky_paint": ("sky_paint", "sky_moon_albedo"),
     "library": ("library",),
     "image_pool": ("image_pool",),
+    "net_watch": ("http_client_utils/net_watch",),
     "location": (
         "location/src/location_census",
         "location/src/tz",
@@ -97,6 +98,7 @@ HOST_TEST_INCLUDES = (
     REPO / "components" / "cjson" / "cjson",
     REPO / "components" / "auth" / "include",
     REPO / "components" / "location" / "include",
+    REPO / "components" / "http_client_utils",
     REPO / "tests" / "host" / "stubs",  # minimal lvgl.h for the pure display helpers
 )
 

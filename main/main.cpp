@@ -36,6 +36,8 @@
 #include "log_async.h"
 #include "display_fsm.h"
 #include "library_store.h"
+#include "http_client_utils.h"
+#include "net_watch.h"
 #include "nws.h"
 #include "mdns.h"
 #include "lvgl.h"
@@ -1086,11 +1088,79 @@ static void boot_display_init(const clock_settings_t *cfg)
     ESP_LOGI(TAG, "[BOOT] Display ready");
 }
 
+// esp_hosted (local patch): RX buffer waits and drops, for the health log.
+extern "C" void sdio_drv_rx_alloc_stats(uint32_t *retries, uint32_t *drops);
+
+// Network watchdog (REQ-NET-005): restarts in a row with no server answer since.
+#define NET_WATCH_MAGIC 0x4E455457u
+static RTC_NOINIT_ATTR uint32_t s_net_watch_magic;
+static RTC_NOINIT_ATTR uint32_t s_net_watch_restarts;
+
+/**
+ * @brief The watchdog restarts in a row (0 after a power-on, or garbage RTC memory).
+ * @version 1
+ * @utility
+ * @return The count.
+ */
+static uint32_t net_watch_restarts(void)
+{
+    if (s_net_watch_magic != NET_WATCH_MAGIC || esp_reset_reason() == ESP_RST_POWERON) {
+        s_net_watch_magic = NET_WATCH_MAGIC;
+        s_net_watch_restarts = 0;
+    }
+    return s_net_watch_restarts;
+}
+
+/**
+ * @brief The link's state for the log and a restart's reason: DMA memory, the SDIO RX buffer
+ *        waits and drops, whether the SD log still writes, the last server answer.
+ * @version 1
+ * @utility
+ */
+static void link_state(char *out, size_t n)
+{
+    uint32_t retries = 0, drops = 0;
+    sdio_drv_rx_alloc_stats(&retries, &drops);
+    snprintf(out, n, "dma free=%u largest=%u, spiram largest=%u, sdio rx waits=%lu drops=%lu, sd log %s, last answer %lus",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM),
+             (unsigned long)retries, (unsigned long)drops, debug_log_is_active() ? "on" : "OFF",
+             (unsigned long)http_utils_last_answer_s());
+}
+
+/**
+ * @brief Restart when no server has answered for too long (the coprocessor link can die with
+ *        the clock otherwise running; seen 2026-11-26). The reason and the link's state go to
+ *        RTC memory for the next boot's log; no SD I/O on the way out (the card shares its
+ *        controller with the link and may be stuck with it).
+ * @version 1
+ * @req REQ-NET-005
+ */
+static void net_watchdog_check(void)
+{
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000000);
+    uint32_t ok = http_utils_last_answer_s();
+    uint32_t restarts = net_watch_restarts();
+    if (ok) s_net_watch_restarts = 0;   // the network has worked this boot
+    if (!net_watch_due(now, ok, ok ? 0 : restarts)) return;
+    s_net_watch_restarts = restarts + 1;
+    set_boot_stage("net_watchdog");
+    snprintf(s_crash_reason, sizeof(s_crash_reason), "net watchdog: no answer for %lus (restart %lu)",
+             (unsigned long)(now - ok), (unsigned long)s_net_watch_restarts);
+    link_state(s_crash_details, sizeof(s_crash_details));
+    s_crash_magic = CRASH_MAGIC;
+    ESP_LOGE(TAG, "[NETWD] %s: %s", s_crash_reason, s_crash_details);
+    s_panic_restart = true;   // skip the shutdown hook's SD flush
+    esp_restart();
+}
+
 /**
  * @brief Never-returning loop that logs heap, internal-DRAM low-water, chip temperature and LVGL tick every 60 s.
  * v3: OTA confirmation moved to its own 1 s timer (ota_verify_tick).
  * v4: logs the largest free blocks (internal DMA, PSRAM) each loop.
- * @version 4
+ * v5: the link's state each loop, and the network watchdog.
+ * @version 5
  * @req REQ-BOOT-004
  */
 static void boot_health_loop(void)
@@ -1134,10 +1204,10 @@ static void boot_health_loop(void)
         }
         // Fragmentation, not just totals: the Wi-Fi link needs ~4 KB internal DMA blocks, a
         // full-screen decode ~2.5 MB PSRAM ones (both have failed with plenty free in all).
-        ESP_LOGI(TAG, "[HEALTH] blocks: dma free=%u largest=%u, spiram largest=%u",
-                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
-                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
-                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+        char link[160];
+        link_state(link, sizeof(link));
+        ESP_LOGI(TAG, "[HEALTH] link: %s", link);
+        net_watchdog_check();
 
         // Internal DRAM is the scarce pool (DMA/WiFi/LVGL contend for it). The
         // 60s instantaneous samples miss the transient dips that precede an

@@ -23,6 +23,7 @@ idf_component_register(
         display_fsm                 # Display state machine
         nws                         # NWS weather service
         mdns                        # mDNS service advertisement
+        http_client_utils           # last server answer (network watchdog)
 )
 
 # Intercept esp_panic_handler globally so we can log crash info to SD

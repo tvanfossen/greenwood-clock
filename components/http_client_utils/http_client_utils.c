@@ -10,6 +10,7 @@
 // Only http_request_execute() is exported via the header.
 
 #include "http_client_utils.h"
+#include "esp_timer.h"
 #include "esp_log.h"
 #include <stdlib.h>
 #include <string.h>
@@ -145,6 +146,19 @@ static char *http_read_all(esp_http_client_handle_t client, int hint_len, size_t
     return buf;
 }
 
+static volatile uint32_t s_last_answer_s;   // seconds since start; 0: none yet
+
+/**
+ * @brief When a server last answered a fetch.
+ * @version 1
+ * @req REQ-NET-005
+ * @return Seconds since start, or 0 when none has yet.
+ */
+uint32_t http_utils_last_answer_s(void)
+{
+    return s_last_answer_s;
+}
+
 /**
  * @brief Open connection, fetch headers, and evaluate the HTTP status.
  *
@@ -156,7 +170,8 @@ static char *http_read_all(esp_http_client_handle_t client, int hint_len, size_t
  * @param out_clen  Set to Content-Length from response headers.
  * @param result    Set to retry disposition.
  * @return ESP_OK on successful open; ESP_FAIL otherwise.
- * @version 1
+ * v2: stamps when a server last answered (the network watchdog).
+ * @version 2
  * @req REQ-API-004
  */
 static esp_err_t http_open_and_evaluate(esp_http_client_handle_t client,
@@ -171,6 +186,7 @@ static esp_err_t http_open_and_evaluate(esp_http_client_handle_t client,
     }
     *out_clen = esp_http_client_fetch_headers(client);
     int status = esp_http_client_get_status_code(client);
+    if (status > 0) s_last_answer_s = (uint32_t)(esp_timer_get_time() / 1000000);   // the network works
     *result = evaluate_http_status(status);
     ESP_LOGI(TAG, "HTTP %d Content-Length %d result=%d", status, *out_clen, (int)*result);
     return ESP_OK;

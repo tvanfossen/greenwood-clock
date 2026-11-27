@@ -43,11 +43,21 @@ typedef enum {
  * @param cfg      ESP HTTP client configuration for this request.
  * @param result   Set to the attempt outcome on return.
  * @param out_len  Set to the number of body bytes when @c HTTP_ATTEMPT_OK.
+ * @version 1
+ * @req REQ-API-004
  * @return Null-terminated heap buffer, or NULL.
  */
 char *http_request_execute(const esp_http_client_config_t *cfg,
                             http_attempt_result_t *result,
                             size_t *out_len);
+
+/**
+ * @brief When a server last answered a fetch (the network watchdog, REQ-NET-005).
+ * @version 1
+ * @req REQ-NET-005
+ * @return Seconds since start, or 0 when none has yet.
+ */
+uint32_t http_utils_last_answer_s(void);
 
 #ifdef __cplusplus
 }

@@ -92,6 +92,16 @@
 
 static const char TAG[] = "H_SDIO_DRV";
 
+/* LOCAL PATCH (greenwood): RX buffer waits and drops, for the device's health log. */
+static volatile uint32_t s_rx_alloc_retries;
+static volatile uint32_t s_rx_alloc_drops;
+
+void sdio_drv_rx_alloc_stats(uint32_t *retries, uint32_t *drops)
+{
+	*retries = s_rx_alloc_retries;
+	*drops = s_rx_alloc_drops;
+}
+
 /* when enabled, read all required SDIO slave registers in a single
  * read into a buffer, instead of reading individual SDIO slave
  * registers
@@ -1185,6 +1195,7 @@ static void sdio_read_task(void const* pvParameters)
 		 * for good (seen 2026-11-26: one drop at 110 s, then no network until a reboot).
 		 * Wait for memory to come back before giving up. */
 		for (int tries = 0; !rxbuff && tries < 20; tries++) {
+			s_rx_alloc_retries++;
 			vTaskDelay(pdMS_TO_TICKS(10));
 			rxbuff = sdio_rx_get_buffer(len_from_slave);
 		}
@@ -1192,6 +1203,7 @@ static void sdio_read_task(void const* pvParameters)
 		 * large (but in-bound) length under internal-DRAM pressure glitches the link
 		 * rather than crashing the device. */
 		if (!rxbuff) {
+			s_rx_alloc_drops++;
 			ESP_LOGW(TAG, "rx buffer alloc failed for len %ld — dropping (internal DMA free=%u largest=%u)",
 			         len_from_slave,
 			         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),

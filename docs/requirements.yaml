@@ -105,13 +105,26 @@ requirements:
     subsystem: NET
     status: vendored   # implemented in the vendored esp_hosted patch (not gated): coverage-exempt
     description: >-
-      The host SDIO RX path rejects absurd lengths (> 32 KB) and drops, rather than
-      asserting, when an RX buffer cannot be allocated. Implemented in the vendored
-      esp_hosted copy (patches/esp_hosted-2.12.0-sdio-rx-bound.patch); vendored code is
-      not gated, so this requirement has no @req-tagged implementer.
+      The host SDIO RX path rejects absurd lengths (> 32 KB); when an RX buffer cannot be
+      allocated it waits for memory (20 x 10 ms) before dropping, rather than asserting, and
+      counts both for the health log; a coprocessor RPC with no reply fails instead of
+      faulting. Implemented in the vendored esp_hosted copy (patches/esp_hosted-2.12.0-*.patch);
+      vendored code is not gated, so this requirement has no @req-tagged implementer.
     acceptance_criteria: >-
       Under internal-DRAM pressure or a garbage length from the coprocessor the device drops the
       affected packets and keeps running (no panic); TLS weather fetches succeed in normal operation.
+
+  REQ-NET-005:
+    name: Network watchdog
+    subsystem: NET
+    description: >-
+      When no fetch has reached a server for 10 minutes (the coprocessor link can die with the
+      clock otherwise running), the clock restarts, keeping the reason and the link's state for
+      the next boot's log; restarts that did not help double the wait, up to 2 hours.
+    acceptance_criteria: >-
+      With the network lost and not coming back, the clock restarts by itself within about
+      10 minutes and is online again after it; with the router off it restarts at growing
+      intervals, not every 10 minutes.
 
   # ---------------------------------------------------------------- TIME
   REQ-TIME-001:
