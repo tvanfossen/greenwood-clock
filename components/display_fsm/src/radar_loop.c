@@ -15,6 +15,7 @@
 
 static const char *TAG = "radar_loop";
 
+#define LOOP_HALF_W        512          /* the radar's width (shown at 2x) */
 #define LOOP_FRAME_MS      900          /* time per frame: the crossfade, then the clock's roll */
 #define LOOP_FADE_MS       450          /* crossfade into each frame (within LOOP_FRAME_MS) */
 #define LOOP_HOLD_TICKS    2            /* extra ticks on the newest frame (1.8 s) */
@@ -52,7 +53,8 @@ void radar_loop_arm(void)
  * @brief Decode history frame @p i into s_frames at half resolution, if memory allows.
  * v2: frames are kept at half resolution (0.6 MB instead of 2.4 MB) and shown at 2x: four
  *     full frames took SPIRAM down to ~6 MB and a fifth decode failed (outofmem) on device.
- * @version 2
+ * v3: frames are fetched at 512x300 and kept as they are; only an older full-size one is halved.
+ * @version 3
  * @utility
  * @return true if the frame was decoded.
  */
@@ -66,9 +68,12 @@ static bool decode_frame(int i)
     }
     char path[48];
     nws_radar_history_path(s_list[i], path, sizeof(path));
-    lv_image_dsc_t *full = image_decode_png_file(path);
-    lv_image_dsc_t *dsc = full ? image_decode_halve_argb(full) : NULL;
-    image_decode_free(full);
+    lv_image_dsc_t *dsc = image_decode_png_file(path);   // 512x300 now: shown at 2x as it is
+    if (dsc && dsc->header.w > LOOP_HALF_W) {            // a full-size frame from before: halve it
+        lv_image_dsc_t *full = dsc;
+        dsc = image_decode_halve_argb(full);
+        image_decode_free(full);
+    }
     if (!dsc) {
         ESP_LOGW(TAG, "decode %s failed", path);
         return false;

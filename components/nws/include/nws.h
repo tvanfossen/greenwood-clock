@@ -172,9 +172,10 @@ time_t nws_get_radar_ts(void);
 
 /**
  * @brief Check if cached radar data shows precipitation.
- * Uses PNG size heuristic (>20KB = precipitation present).
+ * Uses PNG size heuristic (> 8000 B for the 512x300 image = precipitation present).
  * @return true if radar data exists and indicates precipitation.
- * @version 1
+ * v2: the threshold for a 512x300 image.
+ * @version 2
  */
 bool nws_radar_has_precipitation(void);
 

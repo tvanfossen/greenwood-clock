@@ -119,13 +119,14 @@ time_t nws_get_radar_ts(void)
 }
 
 // Precipitation detection via PNG size heuristic.
-// An all-transparent 1024×600 PNG32 compresses to ~5-15KB.
-// Meaningful reflectivity data pushes well past 20KB.
-#define RADAR_PRECIP_SIZE_THRESHOLD 20000
+// The radar is 512x300 (it was 1024x600, where an all-transparent PNG32 compressed to
+// ~5-15 KB and reflectivity pushed well past 20 KB); the same picture is ~2.6x smaller now.
+#define RADAR_PRECIP_SIZE_THRESHOLD 8000
 
 /**
- * @brief Whether the cached radar image indicates precipitation (PNG > 20000 B).
- * @version 1
+ * @brief Whether the cached radar image indicates precipitation (PNG > 8000 B).
+ * v2: the threshold for a 512x300 image.
+ * @version 2
  * @req REQ-RADAR-002
  * @return true if a radar PNG is cached and exceeds the size threshold.
  */

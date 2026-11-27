@@ -19,7 +19,7 @@ static const char *TAG = "nws_radar";
     "radar/radar_base_reflectivity_time/ImageServer"
 #define NWS_RADAR_URL_FMT \
     NWS_RADAR_BASE "/exportImage?bbox=%.4f,%.4f,%.4f,%.4f" \
-    "&bboxSR=4326&size=1024,600&format=png32&transparent=true&f=image" \
+    "&bboxSR=4326&size=512,300&format=png32&transparent=true&f=image" \
     "&mosaicRule=%%7B%%22mosaicMethod%%22%%3A%%22esriMosaicLockRaster%%22" \
     "%%2C%%22lockRasterIds%%22%%3A%%5B%lld%%5D%%7D"
 // The images covering the bbox, with their validity (epoch ms).
@@ -95,11 +95,12 @@ static char *radar_get(const char *url, size_t *len)
 }
 
 /**
- * @brief Fetch radar image @p id (from nws_radar_rasters) as a 1024x600 transparent
- *        base-reflectivity PNG for a 4-degree box centred on @p lat / @p lon.
+ * @brief Fetch radar image @p id (from nws_radar_rasters) as a 512x300 transparent
+ *        base-reflectivity PNG for a 4-degree box centred on @p lat / @p lon (shown at 2x).
  * v2: by image id (the no-time default view lagged behind the newest image); retries shared
  *     with the image list query (radar_get).
- * @version 2
+ * v3: 512x300 (shown at 2x): a 1024x600 frame's decode needed two 2.46 MB blocks and failed once PSRAM fragmented; NOAA's cells are coarser than that anyway.
+ * @version 3
  * @req REQ-RADAR-001
  * @req REQ-RADAR-003
  * @return ESP_OK with a SPIRAM buffer in @p png_buf (caller frees), ESP_ERR_NO_MEM,
