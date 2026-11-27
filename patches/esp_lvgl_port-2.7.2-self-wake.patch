@@ -1,0 +1,18 @@
+--- a/components/espressif__esp_lvgl_port/src/lvgl9/esp_lvgl_port.c	2026-11-27 16:10:12.599058811 -0500
++++ b/components/espressif__esp_lvgl_port/src/lvgl9/esp_lvgl_port.c	2026-11-27 16:10:21.675308684 -0500
+@@ -160,6 +160,15 @@
+         return ESP_ERR_INVALID_STATE;
+     }
+ 
++    /* LOCAL PATCH (greenwood): the LVGL task waking itself is a no-op. An invalidation from
++     * inside lv_timer_handler (an animation timer) resumes the refresh timer, and the task
++     * sleeps only until that is due; setting the event bits as well just made it loop once
++     * more. Snowfall invalidates ~140 areas a frame from its timer: ~1-2 ms of event-group
++     * calls a frame (measured invalidation 25 us each). */
++    if (xPortInIsrContext() == pdFALSE && xTaskGetCurrentTaskHandle() == lvgl_port_ctx.lvgl_task) {
++        return ESP_OK;
++    }
++
+     /* Get unprocessed bits */
+     if (xPortInIsrContext() == pdTRUE) {
+         bits = xEventGroupGetBitsFromISR(lvgl_port_ctx.lvgl_events);

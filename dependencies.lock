@@ -108,18 +108,10 @@ dependencies:
       type: service
     version: 1.2.0~1
   espressif/esp_lvgl_port:
-    component_hash: b6360960f47b6776462e7092861b3ea66477ffb762a01baa0aecbb3d74cd50f4
-    dependencies:
-    - name: idf
-      require: private
-      version: '>=5.1'
-    - name: lvgl/lvgl
-      registry_url: https://components.espressif.com
-      require: public
-      version: '>=8,<10'
+    dependencies: []
     source:
-      registry_url: https://components.espressif.com/
-      type: service
+      path: /home/tvanfossen/Projects/greenwood-clock/components/espressif__esp_lvgl_port
+      type: local
     version: 2.7.2
   espressif/esp_serial_slave_link:
     component_hash: ac1776806de0a6e371c84e87898bb983e19ce62aa7f1e2e5c4a3b0234a575d2c
@@ -186,6 +178,6 @@ direct_dependencies:
 - espressif/mdns
 - idf
 - lvgl/lvgl
-manifest_hash: dedb3406312119a8dd897cab97923e6811d6a094ea0c41406ad50d65f31db3fe
+manifest_hash: 4e4bfd1b25951d9e9917b0136ddddd9a8c4904688424a13e7ce2f346a6dc2d5b
 target: esp32p4
 version: 2.0.0

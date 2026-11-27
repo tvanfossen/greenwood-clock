@@ -14,7 +14,10 @@ dependencies:
   # Transitive deps pinned to the versions this firmware was validated on, so an
   # IDF bump or lock re-solve can't silently upgrade the display/touch stack.
   # Bump deliberately, then re-verify on hardware.
-  espressif/esp_lvgl_port: "2.7.2"
+  # Vendored with a local patch (patches/esp_lvgl_port-2.7.2-self-wake.patch).
+  espressif/esp_lvgl_port:
+    version: "2.7.2"
+    override_path: "../components/espressif__esp_lvgl_port"
   espressif/esp_lcd_touch_gt911: "1.2.0~1"
   espressif/esp_lcd_lt8912b: "0.2.0"
   espressif/eppp_link: "1.1.4"

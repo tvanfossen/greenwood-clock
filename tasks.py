@@ -80,6 +80,7 @@ HOST_TESTS = {
     "library": ("library",),
     "image_pool": ("image_pool",),
     "particle_index": ("particle_index",),
+    "mem_cache": ("lvgl_mem_esp/mem_cache",),
     "net_watch": ("http_client_utils/net_watch",),
     "location": (
         "location/src/location_census",
@@ -100,6 +101,7 @@ HOST_TEST_INCLUDES = (
     REPO / "components" / "auth" / "include",
     REPO / "components" / "location" / "include",
     REPO / "components" / "http_client_utils",
+    REPO / "components" / "lvgl_mem_esp",
     REPO / "tests" / "host" / "stubs",  # minimal lvgl.h for the pure display helpers
 )
 
