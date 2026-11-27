@@ -1089,7 +1089,8 @@ static void boot_display_init(const clock_settings_t *cfg)
 /**
  * @brief Never-returning loop that logs heap, internal-DRAM low-water, chip temperature and LVGL tick every 60 s.
  * v3: OTA confirmation moved to its own 1 s timer (ota_verify_tick).
- * @version 3
+ * v4: logs the largest free blocks (internal DMA, PSRAM) each loop.
+ * @version 4
  * @req REQ-BOOT-004
  */
 static void boot_health_loop(void)
@@ -1131,6 +1132,12 @@ static void boot_health_loop(void)
                      (unsigned long)spiram_free,
                      (long)(free_heap - last_free_heap));
         }
+        // Fragmentation, not just totals: the Wi-Fi link needs ~4 KB internal DMA blocks, a
+        // full-screen decode ~2.5 MB PSRAM ones (both have failed with plenty free in all).
+        ESP_LOGI(TAG, "[HEALTH] blocks: dma free=%u largest=%u, spiram largest=%u",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
 
         // Internal DRAM is the scarce pool (DMA/WiFi/LVGL contend for it). The
         // 60s instantaneous samples miss the transient dips that precede an

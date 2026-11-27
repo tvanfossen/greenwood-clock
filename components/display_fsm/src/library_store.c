@@ -28,7 +28,8 @@
 static const char *TAG = "library";
 
 #define THUMB_DIR   ".thumbs"
-#define THUMB_GAP_MS 150   // between thumbnails: the display keeps its share of the CPU
+#define THUMB_GAP_MS   1000       // between pictures: the display, Wi-Fi and SD keep their share
+#define MAKER_DELAY_MS (120 * 1000)   // after start: let the boot's fetches and decodes settle
 
 static TaskHandle_t s_maker;
 
@@ -196,12 +197,14 @@ static int thumbs_for(lib_kind_t kind)
 
 /**
  * @brief The thumbnail maker: make what is missing, then wait to be told of a change.
- * @version 1
+ * v2: starts 2 minutes after the display (a burst of SD writes at boot starved the Wi-Fi link's DMA memory).
+ * @version 2
  * @callback
  */
 static void maker_task(void *arg)
 {
     (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(MAKER_DELAY_MS));
     for (;;) {
         int made = sdcard_is_mounted() ? thumbs_for(LIB_BACKGROUNDS) + thumbs_for(LIB_ALBUM) : 0;
         if (made) ESP_LOGI(TAG, "%d thumbnail(s) made", made);

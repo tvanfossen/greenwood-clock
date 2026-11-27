@@ -547,7 +547,8 @@ static bool cache_stale(const char *png, const char *cache)
 /**
  * @brief A full-screen opaque picture for showing: its .r565 cache read into a reserved slot,
  *        or (no cache, or older than the PNG) decoded into one and the cache written.
- * @version 1
+ * v2: the cache write under the decode lock.
+ * @version 2
  * @req REQ-BG-001
  * @req REQ-PHOTO-001
  * @return New descriptor (image_decode_free gives its slot back), or NULL.
@@ -558,10 +559,10 @@ lv_image_dsc_t *image_decode_cached_rgb565(const char *png)
     cache_path(png, cache, sizeof(cache));
     lv_image_dsc_t *dsc = cache_stale(png, cache) ? NULL : load_raw(cache, true);
     if (!dsc) {
-        decode_lock();
+        decode_lock();   // the cache write too: two writers shared its .tmp
         dsc = image_decode_png_file_rgb565_unlocked(png, true);
-        decode_unlock();
         if (dsc) image_decode_save_raw_rgb565(cache, dsc);
+        decode_unlock();
     }
     return dsc;
 }
@@ -569,7 +570,8 @@ lv_image_dsc_t *image_decode_cached_rgb565(const char *png)
 /**
  * @brief Make PNG @p png's .r565 cache when missing or stale (the Library's background task:
  *        heap, not a slot, freed at once).
- * @version 1
+ * v2: the cache write under the decode lock, staleness checked again inside it.
+ * @version 2
  * @req REQ-LIB-001
  * @return Whether a fresh cache exists now.
  */
@@ -579,10 +581,10 @@ bool image_decode_make_cache_rgb565(const char *png)
     cache_path(png, cache, sizeof(cache));
     bool ok = !cache_stale(png, cache);
     if (!ok) {
-        decode_lock();
-        lv_image_dsc_t *dsc = image_decode_png_file_rgb565_unlocked(png, false);
+        decode_lock();   // the cache write too: two writers shared its .tmp
+        lv_image_dsc_t *dsc = cache_stale(png, cache) ? image_decode_png_file_rgb565_unlocked(png, false) : NULL;
+        ok = dsc ? image_decode_save_raw_rgb565(cache, dsc) : !cache_stale(png, cache);
         decode_unlock();
-        ok = dsc && image_decode_save_raw_rgb565(cache, dsc);
         image_decode_free(dsc);
     }
     return ok;

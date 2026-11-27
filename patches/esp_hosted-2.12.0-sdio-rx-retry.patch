@@ -1,0 +1,19 @@
+diff --git a/components/espressif__esp_hosted/host/drivers/transport/sdio/sdio_drv.c b/components/espressif__esp_hosted/host/drivers/transport/sdio/sdio_drv.c
+index af2426f..130f528 100644
+--- a/components/espressif__esp_hosted/host/drivers/transport/sdio/sdio_drv.c
++++ b/components/espressif__esp_hosted/host/drivers/transport/sdio/sdio_drv.c
+@@ -1180,6 +1180,14 @@ static void sdio_read_task(void const* pvParameters)
+ 
+ 		/* Allocate rx buffer */
+ 		rxbuff = sdio_rx_get_buffer(len_from_slave);
++		/* LOCAL PATCH (greenwood): internal DMA memory is often short for a moment (SD
++		 * writes, TLS); dropping the read without taking the slave's data broke the link
++		 * for good (seen 2026-11-26: one drop at 110 s, then no network until a reboot).
++		 * Wait for memory to come back before giving up. */
++		for (int tries = 0; !rxbuff && tries < 20; tries++) {
++			vTaskDelay(pdMS_TO_TICKS(10));
++			rxbuff = sdio_rx_get_buffer(len_from_slave);
++		}
+ 		/* LOCAL PATCH (greenwood): drop instead of assert() on alloc failure so a
+ 		 * large (but in-bound) length under internal-DRAM pressure glitches the link
+ 		 * rather than crashing the device. */
