@@ -79,6 +79,7 @@ HOST_TESTS = {
     "sky_paint": ("sky_paint", "sky_moon_albedo"),
     "library": ("library",),
     "image_pool": ("image_pool",),
+    "particle_index": ("particle_index",),
     "net_watch": ("http_client_utils/net_watch",),
     "location": (
         "location/src/location_census",

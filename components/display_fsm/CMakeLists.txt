@@ -52,6 +52,7 @@ idf_component_register(
         "src/settings_location.c"
         "src/library.c"
         "src/image_pool.c"
+        "src/particle_index.c"
         "src/library_store.c"
         "src/library_thumb.c"
         "src/library_backend.c"

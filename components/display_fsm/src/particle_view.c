@@ -2,18 +2,23 @@
  * @file particle_view.c
  * v3: one rect per particle unless the join is huge; display render/refresh perf stats.
  * v4: display stats come from the shared refresh probe.
- * @version 4
+ * v5: each redraw area draws only the particles that can touch it (a band index of this
+ *     frame's boxes) instead of testing all of them: same particles, same order.
+ * @version 5
  * @brief Shared particle-field renderer: one custom-draw object, per-particle dirty rects.
  */
 #include "particle_view.h"
 #include "src/misc/lv_area_private.h"  /* lv_area_intersect / lv_area_join (private API) */
 #include "refresh_probe.h"
+#include "particle_index.h"
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
 static const char *TAG = "particles";
+
+_Static_assert(PARTICLE_VIEW_MAX <= PARTICLE_INDEX_MAX, "the band index must hold every particle");
 
 /** Simulation/redraw period (30 Hz target; LVGL load decides what is achieved). */
 #define PARTICLE_PERIOD_MS 33
@@ -29,6 +34,8 @@ struct particle_view_t {
     lv_timer_t  *timer;
     uint32_t     last_tick;
     lv_area_t    before[PARTICLE_VIEW_MAX];  /* per-frame scratch; SPIRAM with the view */
+    lv_area_t    now[PARTICLE_VIEW_MAX];     /* where each particle is drawn this frame */
+    particle_index_t index;                  /* which of them each redraw area can touch */
     uint32_t     stats_start;
     uint32_t     stats_ticks;
     int64_t      stats_cost_us;
@@ -92,19 +99,29 @@ static void pv_stats(particle_view_t *v, uint32_t now, int64_t cost_us)
 
 /**
  * @brief DRAW_MAIN: draw only particles intersecting the current clip area.
- * @version 1
+ * v2: only the particles the band index says can touch the area (same set and order as testing all).
+ * @version 2
  * @callback
  */
 static void pv_draw_cb(lv_event_t *e)
 {
     particle_view_t *v = (particle_view_t *)lv_event_get_user_data(e);
     lv_layer_t *layer = lv_event_get_layer(e);
+    uint8_t hit[PARTICLE_VIEW_MAX];
+    int k = particle_index_query(&v->index, v->now, &layer->_clip_area, hit);
+    for (int j = 0; j < k; j++) v->ops->draw(v->model, hit[j], layer);
+}
+
+/**
+ * @brief Record where every particle is drawn this frame and index them by band.
+ * @version 1
+ * @utility
+ */
+static void pv_snapshot(particle_view_t *v)
+{
     int n = pv_count(v);
-    for (int i = 0; i < n; i++) {
-        lv_area_t a, clipped;
-        v->ops->bounds(v->model, i, &a);
-        if (lv_area_intersect(&clipped, &a, &layer->_clip_area)) v->ops->draw(v->model, i, layer);
-    }
+    for (int i = 0; i < n; i++) v->ops->bounds(v->model, i, &v->now[i]);
+    particle_index_build(&v->index, v->now, n);
 }
 
 /**
@@ -135,7 +152,8 @@ static void pv_invalidate_move(lv_obj_t *obj, const lv_area_t *before, const lv_
  * @brief Frame timer: step the model, then invalidate each particle's old and new rectangles.
  * v2: joins old/new only when they overlap (pv_invalidate_move); a respawn or wrap used to
  *     dirty a screen-spanning rectangle.
- * @version 3
+ * v4: keeps this frame's boxes and their band index (pv_snapshot).
+ * @version 4
  * @callback
  */
 static void pv_timer_cb(lv_timer_t *t)
@@ -150,12 +168,9 @@ static void pv_timer_cb(lv_timer_t *t)
     int n = pv_count(v);
     for (int i = 0; i < n; i++) v->ops->bounds(v->model, i, &v->before[i]);
     v->ops->step(v->model, dt);
+    pv_snapshot(v);   // where they are drawn now, indexed for the redraw
     n = pv_count(v);
-    for (int i = 0; i < n; i++) {
-        lv_area_t after;
-        v->ops->bounds(v->model, i, &after);
-        pv_invalidate_move(v->obj, &v->before[i], &after);
-    }
+    for (int i = 0; i < n; i++) pv_invalidate_move(v->obj, &v->before[i], &v->now[i]);
     pv_stats(v, now, esp_timer_get_time() - t0);
 }
 
@@ -193,7 +208,8 @@ particle_view_t *particle_view_create(lv_obj_t *parent, const particle_view_ops_
 /**
  * @brief Run or freeze; resuming resets dt and the perf window so nothing jumps.
  * v2: arms the refresh probe only while running.
- * @version 2
+ * v3: indexes the particles before the first frame.
+ * @version 3
  * @req REQ-ANIM-004
  */
 void particle_view_set_running(particle_view_t *v, bool running)
@@ -201,6 +217,7 @@ void particle_view_set_running(particle_view_t *v, bool running)
     if (!v) return;
     if (running) {
         v->last_tick = lv_tick_get();
+        pv_snapshot(v);   // drawn before the first tick too
         pv_stats_reset(v, v->last_tick, true);
         lv_obj_clear_flag(v->obj, LV_OBJ_FLAG_HIDDEN);
         lv_timer_resume(v->timer);

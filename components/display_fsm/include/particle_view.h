@@ -19,7 +19,7 @@ extern "C" {
 #endif
 
 /** Upper bound on particles per view (dirty-rect scratch is sized to this). */
-#define PARTICLE_VIEW_MAX 192
+#define PARTICLE_VIEW_MAX 192   /* = PARTICLE_INDEX_MAX (particle_index.h) */
 
 /** Effect-specific behaviour; @p model is the effect's own state. */
 typedef struct {
