@@ -110,23 +110,22 @@ static void shadow_sync(lv_obj_t *lbl)
 // Position constants for full / minimized modes
 // ---------------------------------------------------------------------------
 
-// All non-full modes reserve ALERT_BANNER_HEIGHT (50px) at the top so the alert
-// banner never overlaps minimized/topbar content.  Full mode keeps y=8 because the
-// 256pt time text is tall enough that a 50px banner overlap is < 7% and acceptable.
+// The alert banner is at the bottom of the screen (LAYOUT_BOTTOM_CLEAR), so every mode
+// starts at the top.
 //
 // Full mode:      1008×350 at (8, 8)
-// Minimized:      420×180  at (588, 58)  — 8px below alert zone
-// Topbar:         1008×56  at (8, 54)    — 4px below alert zone
+// Minimized:      420×180  at (588, 8)
+// Topbar:         1008×56  at (8, 4)
 #define FULL_X  8
 #define FULL_Y  8
 #define FULL_W  1008
 #define FULL_H  350
 #define MIN_W   420
 #define MIN_X   (1024 - MIN_W - 16)  // right-aligned with 16px margin
-#define MIN_Y   (ALERT_BANNER_HEIGHT + 8)   // 58 — below alert banner zone
+#define MIN_Y   8
 #define MIN_H   180
 #define BAR_X   8
-#define BAR_Y   (ALERT_BANNER_HEIGHT + 4)   // 54 — below alert banner zone
+#define BAR_Y   4
 #define BAR_W   1008
 #define BAR_H   56
 

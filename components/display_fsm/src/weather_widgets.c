@@ -245,7 +245,8 @@ static float kmh_to_mph(float k) { return k * 0.621371f; }
  * v3: colours from the theme roles (ui_theme), no literals.
  * v4: colours bound to theme roles (ui_bind_*): repainted live on a theme change.
  * v5: "°F" unit (Montserrat, which has the degree sign).
- * @version 5
+ * v6: at the top (the banner moved to the bottom).
+ * @version 6
  * @return New card, or NULL on allocation failure (logged).
  * @req REQ-WX-002
  */
@@ -264,7 +265,7 @@ weather_card_t *weather_card_create(lv_obj_t *parent)
     // gap. (Was 380 → bottom 446, which overlapped the strip top by ~14px.)
     w->container = lv_obj_create(parent);
     lv_obj_set_size(w->container, 556, 350);
-    lv_obj_align(w->container, LV_ALIGN_TOP_LEFT, 16, ALERT_BANNER_HEIGHT + 16);
+    lv_obj_align(w->container, LV_ALIGN_TOP_LEFT, 16, 16);   // the banner is at the bottom
     ui_bind_fill(w->container, UI_SLOT_CARD);
     lv_obj_set_style_bg_opa(w->container, LV_OPA_70, 0);
     lv_obj_set_style_radius(w->container, 12, 0);
@@ -612,7 +613,8 @@ static void strip_create_column(forecast_strip_t *s, int i)
  * @brief Create the 7-day forecast strip along the bottom of @p parent.
  * v3: colours from the theme roles (ui_theme), no literals.
  * v4: fill bound to the strip slot (ui_bind_fill).
- * @version 4
+ * v5: above the banner at the bottom.
+ * @version 5
  * @req REQ-WX-006
  * @return New strip, or NULL on allocation failure (logged).
  */
@@ -627,7 +629,7 @@ forecast_strip_t *forecast_strip_create(lv_obj_t *parent)
 
     s->container = lv_obj_create(parent);
     lv_obj_set_size(s->container, 992, 160);
-    lv_obj_align(s->container, LV_ALIGN_BOTTOM_MID, 0, -8);
+    lv_obj_align(s->container, LV_ALIGN_BOTTOM_MID, 0, -(LAYOUT_BOTTOM_CLEAR + 8));   // above the banner
     ui_bind_fill(s->container, UI_SLOT_STRIP);
     lv_obj_set_style_bg_opa(s->container, LV_OPA_80, 0);
     lv_obj_set_style_border_width(s->container, 0, 0);

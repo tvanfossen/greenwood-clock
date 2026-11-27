@@ -68,12 +68,13 @@ static void banner_click_cb(lv_event_t *e)
 }
 
 /**
- * @brief Create a hidden full-width banner (1024 x ALERT_BANNER_HEIGHT) at the top
+ * @brief Create a hidden full-width banner (1024 x ALERT_BANNER_HEIGHT) at the bottom
  *        of @p parent with a circular-scrolling headline label.
  * v2: colours from the theme roles (ui_theme), no literals.
  * v3: fill and text bound to the theme.
  * v4: tappable: opens the details card; a fixed 'Details >' at the right.
- * @version 4
+ * v5: at the bottom, opaque (cheaper to draw over the snow and the picture).
+ * @version 5
  * @req REQ-ALERT-001
  * @return The new banner, or NULL if allocation failed.
  */
@@ -86,12 +87,13 @@ alert_banner_t *alert_banner_create(lv_obj_t *parent)
     }
     memset(b, 0, sizeof(*b));
 
-    // Full-width banner at top of screen
+    // Full-width banner at the bottom of the screen, opaque: LVGL then skips what is under it
+    // (at 90% every frame re-blended the picture and the snow beneath it: ~7-10 ms a frame).
     b->container = lv_obj_create(parent);
     lv_obj_set_size(b->container, 1024, BANNER_HEIGHT);
-    lv_obj_align(b->container, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_align(b->container, LV_ALIGN_BOTTOM_MID, 0, 0);
     ui_bind_fill(b->container, UI_SLOT_ALERT_SEVERE);
-    lv_obj_set_style_bg_opa(b->container, LV_OPA_90, 0);
+    lv_obj_set_style_bg_opa(b->container, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(b->container, 0, 0);
     lv_obj_set_style_pad_all(b->container, 0, 0);
     lv_obj_set_style_radius(b->container, 0, 0);

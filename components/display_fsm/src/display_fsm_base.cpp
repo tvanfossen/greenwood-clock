@@ -272,7 +272,8 @@ void DisplayFsm::transit_to(display_state_id_t id)
  * @brief Create the carousel dot indicator (one dot per carousel state) at the bottom of the top layer; once only.
  * v2: colours from the theme roles (ui_theme), no literals.
  * v3: colours bound to the theme (ui_bind_*): repainted live on a theme change.
- * @version 3
+ * v4: above the alert banner (now at the bottom).
+ * @version 4
  * @req REQ-DISP-003
  */
 void DisplayFsm::create_dot_indicator()
@@ -284,7 +285,7 @@ void DisplayFsm::create_dot_indicator()
     s_dot_container = lv_obj_create(parent);
     lv_obj_remove_style_all(s_dot_container);
     lv_obj_set_size(s_dot_container, total_w, DOT_SIZE_ACTIVE + 4);
-    lv_obj_align(s_dot_container, LV_ALIGN_BOTTOM_MID, 0, -DOT_BOTTOM_MARGIN);
+    lv_obj_align(s_dot_container, LV_ALIGN_BOTTOM_MID, 0, -(DOT_BOTTOM_MARGIN + LAYOUT_BOTTOM_CLEAR));   // above the banner
     lv_obj_clear_flag(s_dot_container, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(s_dot_container, LV_OBJ_FLAG_IGNORE_LAYOUT);
     lv_obj_set_style_pad_all(s_dot_container, 0, 0);

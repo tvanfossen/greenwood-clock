@@ -21,7 +21,7 @@ extern "C" {
 #endif
 
 /** The clock's frame area: centred below its top-bar clock (the default). */
-#define SETTINGS_FRAME_Y 114
+#define SETTINGS_FRAME_Y 64   // under the top-bar clock (4 + 56); the banner is at the bottom
 #define SETTINGS_FRAME_W 800
 #define SETTINGS_FRAME_H 478
 /** Frames narrower than this stack each field's label over its value. */

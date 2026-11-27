@@ -26,7 +26,7 @@ forecast_strip_t  *WeatherOverlay::s_strip     = nullptr;
 lv_obj_t          *WeatherOverlay::s_dial      = nullptr;
 
 #define DIAL_X 588   // under the minimised clock, beside the card, above the strip
-#define DIAL_Y 250
+#define DIAL_Y 200   // 50 up: the banner moved to the bottom
 #define DIAL_W 420
 #define DIAL_H 166
 

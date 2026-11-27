@@ -23,6 +23,9 @@ extern "C" {
 
 // Height of alert banner — used by clock widget and states to offset content
 #define ALERT_BANNER_HEIGHT 50
+// The banner sits at the bottom of the screen: layouts keep this band at the bottom clear
+// (they start at the top; it used to be the other way round).
+#define LAYOUT_BOTTOM_CLEAR ALERT_BANNER_HEIGHT
 
 // ---------------------------------------------------------------------------
 // ClockWidget — time/date display with full/minimized modes

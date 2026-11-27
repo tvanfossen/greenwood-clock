@@ -337,7 +337,8 @@ static void sample_moment(int mon, int day, int hour, int min, sky_data_t *d)
  * v4: the sky dial, at a given time.
  * v5: any date (the moon's place and phase vary with it).
  * v6: an optional sky (@p desc, e.g. "Clear"): the card's condition and its icon.
- * @version 6
+ * v7: the dial 50 px up (the banner moved to the bottom).
+ * @version 7
  * @utility
  */
 static void scene_weather_on(int mon, int day, int hour, int min, const char *desc)
@@ -345,7 +346,7 @@ static void scene_weather_on(int mon, int day, int hour, int min, const char *de
     lv_obj_t *scr = fresh_screen(true);
     sky_data_t sky;
     sample_moment(mon, day, hour, min, &sky);
-    sky_dial_create(scr, &sky, 588, 250, 420, 166);
+    sky_dial_create(scr, &sky, 588, 200, 420, 166);   // as state_weather.cpp (DIAL_X, DIAL_Y, ...)
     nws_conditions_t c;
     nws_forecast_t fc;
     fake_weather(&c, &fc);
@@ -695,6 +696,29 @@ static void fake_alerts(void)
     s_alerts.valid = true;
 }
 
+
+/**
+ * @brief The alert banner over the full clock and over the weather screen (a long headline,
+ *        mid-scroll), into <stem>_banner_clock / _banner_weather.
+ * @version 1
+ * @utility
+ */
+static void scene_banners(const char *out_dir, const char *stem)
+{
+    char file[512];
+    fake_alerts();
+    for (int i = 0; i < 2; i++) {
+        if (i == 0) scene_clock();
+        else scene_weather(12, 9);
+        alert_banner_t *b = alert_banner_create(lv_layer_top());
+        alert_banner_show(b, &s_alerts.alerts[0]);
+        settle(1500);   // the headline part-way through its scroll
+        snprintf(file, sizeof(file), "%s/%s_banner_%s.ppm", out_dir, stem, i ? "weather" : "clock");
+        write_frame(file);
+        alert_banner_destroy(b);
+    }
+}
+
 /**
  * @brief The alert details card over the weather screen (as a banner tap opens it).
  * v2: the weather scene takes a time.
@@ -823,7 +847,8 @@ static void render_edit_demo(const char *out_dir, const char *path)
  * v13: sky dial moments (the real moon, by day and night).
  * v14: no sky screen (it is gone: the forecast's dial shows the sky).
  * v15: the Library (its grid and an item).
- * @version 15
+ * v16: the alert banner over the clock and the weather screen.
+ * @version 16
  * @utility
  * @return Whether the theme parsed.
  */
@@ -863,6 +888,7 @@ static bool render_theme(const char *out_dir, const char *path)
     write_frame(file);
     settings_app_close();
     scene_library(out_dir, stem);
+    scene_banners(out_dir, stem);
     scene_alert();
     snprintf(file, sizeof(file), "%s/%s_alert.ppm", out_dir, stem);
     write_frame(file);

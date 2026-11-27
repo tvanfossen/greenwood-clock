@@ -32,16 +32,17 @@ static inline int info_panel_wrap_day_minutes(int m)
  * @brief Create the rounded, non-scrolling 556x470 surface panel below the alert-banner zone.
  * v2: fill from the theme's SURFACE role.
  * v3: fill bound to the card slot.
- * @version 3
+ * v4: at the top (the banner moved to the bottom).
+ * @version 4
  * @utility
  * @return The panel container.
  */
 static inline lv_obj_t *info_panel_create(lv_obj_t *screen)
 {
-    // Semi-opaque surface panel. Y=66: reserves 50px alert banner zone + 16px margin.
+    // Semi-opaque surface panel at the top (the alert banner is at the bottom).
     lv_obj_t *c = lv_obj_create(screen);
     lv_obj_set_size(c, 556, 470);
-    lv_obj_align(c, LV_ALIGN_TOP_LEFT, 16, ALERT_BANNER_HEIGHT + 16);
+    lv_obj_align(c, LV_ALIGN_TOP_LEFT, 16, 16);
     ui_bind_fill(c, UI_SLOT_CARD);
     lv_obj_set_style_bg_opa(c, LV_OPA_70, 0);
     lv_obj_set_style_radius(c, 12, 0);

@@ -1114,19 +1114,21 @@ static uint32_t net_watch_restarts(void)
 /**
  * @brief The link's state for the log and a restart's reason: DMA memory, the SDIO RX buffer
  *        waits and drops, whether the SD log still writes, the last server answer.
- * @version 1
+ * v2: the last answer as its age (the timestamp read as an age).
+ * @version 2
  * @utility
  */
 static void link_state(char *out, size_t n)
 {
     uint32_t retries = 0, drops = 0;
     sdio_drv_rx_alloc_stats(&retries, &drops);
-    snprintf(out, n, "dma free=%u largest=%u, spiram largest=%u, sdio rx waits=%lu drops=%lu, sd log %s, last answer %lus",
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000000), ok = http_utils_last_answer_s();
+    snprintf(out, n, "dma free=%u largest=%u, spiram largest=%u, sdio rx waits=%lu drops=%lu, sd log %s, last answer %lus ago",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM),
              (unsigned long)retries, (unsigned long)drops, debug_log_is_active() ? "on" : "OFF",
-             (unsigned long)http_utils_last_answer_s());
+             (unsigned long)(now - ok));
 }
 
 /**
